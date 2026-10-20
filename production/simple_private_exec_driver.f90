@@ -1,6 +1,8 @@
 !@descr: callable driver for simple_private_exec private commander dispatch
 module simple_private_exec_driver
 use simple_private_exec_api
+use simple_commanders_klem_board, only: commander_klem_board_part
+use simple_commanders_klem_tree,  only: commander_klem_tree
 use simple_syslib, only: redirect_stdout_stderr, restore_stdout_stderr
 use simple_memory_monitor, only: mem_monitor_init, mem_monitor_finish
 implicit none
@@ -196,6 +198,8 @@ contains
         logical,          intent(out)   :: l_silent
         ! PRE-PROCESSING PROGRAMS
         type(commander_preprocess)              :: xpreprocess
+        type(commander_klem_board_part)         :: xklem_board_part
+        type(commander_klem_tree)               :: xklem_tree
         type(commander_extract)                 :: xextract
         type(commander_reextract)               :: xreextract
         type(commander_motion_correct)          :: xmotion_correct
@@ -386,6 +390,10 @@ contains
             ! PARALLEL PROCESSING PROGRAMS
             case( 'split' )
                 call xsplit%execute(cline)
+            case( 'klem_board_part' )
+                call xklem_board_part%execute(cline)
+            case( 'klem_tree' )
+                call xklem_tree%execute(cline)
             case DEFAULT
                 THROW_HARD('prg='//trim(prg)//' is unsupported')
         end select

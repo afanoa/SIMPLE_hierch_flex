@@ -8,6 +8,9 @@ use simple_commanders_volops,    only: commander_postprocess
 use simple_commanders_rec,       only: commander_rec3D
 use simple_commanders_refine3D,  only: commander_refine3D, commander_refine3D_auto, commander_refine3D_states, &
     &commander_refine3D_states_cavgs, commander_classify3D_refs, commander_bootstrap_rec3D
+use simple_commanders_klem,      only: commander_klem_estep
+use simple_commanders_klem_board, only: commander_klem_board, commander_klem_board_part
+use simple_commanders_klem_tree, only: commander_klem_tree
 implicit none
 
 public :: exec_refine3D_commander
@@ -23,6 +26,10 @@ type(commander_refine3D_states_cavgs) :: xrefine3D_states_cavgs
 type(commander_classify3D_refs)       :: xclassify3D_refs
 type(commander_refine3D)              :: xrefine3D
 
+type(commander_klem_estep)      :: xklem_estep
+type(commander_klem_board)      :: xklem_board
+type(commander_klem_board_part) :: xklem_board_part
+type(commander_klem_tree)       :: xklem_tree
 contains
 
     subroutine exec_refine3D_commander(which, cline, l_silent, l_did_execute)
@@ -72,6 +79,14 @@ contains
                 else
                     call xclassify3D_refs%execute(cline)
                 endif
+            case( 'klem_estep' )
+                call xklem_estep%execute(cline)
+            case( 'klem_board' )
+                call xklem_board%execute(cline)
+            case( 'klem_board_part' )
+                call xklem_board_part%execute(cline)
+            case( 'klem_tree' )
+                call xklem_tree%execute(cline)
             case default
                 l_did_execute = .false.
         end select
