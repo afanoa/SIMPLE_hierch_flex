@@ -1,0 +1,10 @@
+#!/bin/bash
+#SBATCH -J rnasep_recovered_fig
+#SBATCH -p csbdevel
+#SBATCH -c 2
+#SBATCH --mem=16G
+#SBATCH -t 00:30:00
+#SBATCH --mail-type=NONE
+#SBATCH -o /mnt/beegfs/elmlund/afan/rnasep_klem/%x.%j.out
+PY=/mnt/nasapps/production/python/3.12/bin/python3; W=/mnt/beegfs/elmlund/afan/routes/toy55; P=/mnt/beegfs/elmlund/afan/rnasep_klem/expand1/fam1_pipeline/klem_fb/matched_rec
+$PY $W/recovered_fig.py $P/maps $P/recovered_conformers.png

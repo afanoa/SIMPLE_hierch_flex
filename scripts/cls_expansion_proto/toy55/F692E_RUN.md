@@ -1,5 +1,7 @@
 # f692e snapshot: RNase P real data, delivered 2026-10-18 14:05
 
+This file describes tag `f692e-2026-10-18`. The branch head `klem-f692e` holds the code as of 2026-10-19 on top of it.
+
 This commit preserves the code that produced the f692e results on the 692k refined RNase P particles:
 63 leaf states, 212 zoomed sub-states including the pure closed state (zoom state 1, closed-arm occupancy 0.94,
 4,896 particles), and the composed maps on per-family parents.

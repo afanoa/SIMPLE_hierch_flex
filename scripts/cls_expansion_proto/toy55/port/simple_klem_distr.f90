@@ -27,8 +27,8 @@ integer, parameter :: REQ_CONS = 1, REQ_SCALE = 2, REQ_NOISE = 3, REQ_MSTEP = 4,
 integer, parameter :: WAIT_START = 21600, WAIT_MAX = 3600   ! the first worker reply may wait for queued workers (6 h); later waits 1 h    ! seconds a worker/master waits for the other side before giving up (a dead master frees its workers within the hour)
 
 type klem_cfg
-    integer :: n1 = 7, n2 = 7, nfree = 2, nsub = 0, seed = 1, conv = 0, balance_until = 0, write_halves = 0, pose_every = 0, pnoise = 0, pscale = 0, ctfabs = 1, nthr_part = 0, kmax_load = 0
-    real    :: stop_frac = 0.03, shrink = 0.02, eps0f = 0.05, balance = 0.5, sshift = -1., fscale = 1., csign = 1., pose_step = 3., pose_prior = 4., devw = 0.
+    integer :: n1 = 7, n2 = 7, nfree = 2, nsub = 0, seed = 1, conv = 0, balance_until = 0, write_halves = 0, pose_every = 0, pnoise = 0, pscale = 0, ctfabs = 1, nthr_part = 0, kmax_load = 0, gridding = 0
+    real    :: stop_frac = 0.03, shrink = 0.02, eps0f = 0.05, balance = 0.5, sshift = -1., fscale = 1., csign = 1., pose_step = 3., pose_prior = 4., devw = 0., hp = 0.
     real,    allocatable :: lps(:), sigmas(:)
     character(len=512) :: focus = 'none', subset = 'none', init = 'none', server_list = 'none', solvent = 'none'
 end type klem_cfg
@@ -74,9 +74,11 @@ contains
                 case('pose_prior');    read(tok(2),*) cfg%pose_prior
                 case('devw');          read(tok(2),*) cfg%devw
                 case('pnoise');        read(tok(2),*) cfg%pnoise
+                case('hp');            read(tok(2),*) cfg%hp
                 case('pscale');        read(tok(2),*) cfg%pscale
                 case('stop_frac');     read(tok(2),*) cfg%stop_frac
                 case('kmax_load');     read(tok(2),*) cfg%kmax_load
+                case('gridding');      read(tok(2),*) cfg%gridding
                 case('server_list');   cfg%server_list = trim(tok(2))
                 case('nthr_part');     read(tok(2),*) cfg%nthr_part
                 case('init_file');     cfg%init = tok(2)
@@ -234,6 +236,8 @@ contains
         real     :: lp, sigma, eps, eps0, cur_lp, fsc_s, tmp, pgain, pgain_all
         integer  :: n, nparts, ngrid, ncl, nit, it, ireq, ip, i, j, q, u, ih, ic, h, k, l, kmax, kmaxf, n3, nhs, ish, ncal, nmoved, nmoved_all, c2, nthr_w, io, cnt, nchg, nchg_all
         logical  :: l_focus, l_solv
+        real,    allocatable :: dm(:,:,:)
+        complex, allocatable :: G0d(:,:,:,:)
         real,    allocatable :: sm(:,:,:)
         complex, allocatable :: G0(:,:,:,:)
         cfgb = cfg; odirb = odir; g1b = g1; g2b = g2; nboards = 1; if( present(cfgs_more) ) nboards = 1 + size(cfgs_more)
@@ -291,6 +295,10 @@ contains
         boards: do
         write(logfhandle,'(A,I0,A,I0,A)') '>>> board ', ib, ' of ', nboards, ': '//trim(odirb); flush(logfhandle)
         nit = size(cfgb%lps); l_focus = trim(cfgb%focus) /= 'none'; l_solv = trim(cfgb%solvent) /= 'none'; cur_lp = -1.; it = 0
+        call klem_set_gridding(cfgb%gridding)
+        if( klem_gridding_on() )then
+            allocate(dm(box,box,box)); call klem_deapod_envelope(box, 4., dm); write(logfhandle,'(A)') '>>> gridding on (1 = Kaiser-Bessel 3x3x3, 2 = trilinear 2x2x2): stencil insertion/interpolation + real-space deapodisation (gain capped at 4)'
+        endif
         if( allocated(Vprev) ) deallocate(Vprev)
         do
             it = it + 1; if( it > nit ) exit
@@ -370,6 +378,7 @@ contains
                 do q = 1,bd%nband
                     sig2(q) = 1.
                     if( bd%shell(q) <= kmax ) sig2(q) = real(sig2_sh(bd%shell(q)))
+                    if( cfg%hp > 0. .and. real(bd%shell(q)) < real(box) * smpd / cfg%hp ) sig2(q) = 1.e30
                 enddo
                 sig2_base = sig2; wsh = 1.
                 write(logfhandle,'(A,F5.1,A,ES9.2)') '>>> band ', lp, ' A: shrinkage eps ', eps
@@ -406,6 +415,9 @@ contains
                     V(:,:,:,ic,ih) = cmplx((num(:,:,:,ic,ih) + real(eps,dp) * Gc(:,:,:,ih)) / (den(:,:,:,ic,ih) + real(eps,dp)))
                 enddo
             enddo
+            if( klem_gridding_on() )then   ! deapodise the gridded cells before the focus
+                allocate(G0d(-kmax:kmax,-kmax:kmax,-kmax:kmax,2), source=cmplx(0.,0.)); call apply_focus_d(V, G0d, dm, kmax, ncl, box, smpd); deallocate(G0d)
+            endif
             if( l_focus ) call apply_focus_d(V, Gc, fm, kmax, ncl, box, smpd)
             if( l_solv )then
                 allocate(G0(-kmax:kmax,-kmax:kmax,-kmax:kmax,2), source=cmplx(0.,0.)); call apply_focus_d(V, G0, sm, kmax, ncl, box, smpd); deallocate(G0)
@@ -779,6 +791,7 @@ contains
         logical  :: ctfabs
         ip = params%part; nparts = params%nparts; ddir = trim(params%dir%to_char())//'/distr'; box = params%box; smpd = params%smpd
         call klem_read_cfg(params%infile%to_char(), cfg); ctfabs = cfg%ctfabs /= 0; ngrid = cfg%n1 * cfg%n2; ncl = ngrid + cfg%nfree
+        call klem_set_gridding(cfg%gridding)
         call spproj%read(params%projfile)
         ! ---- the part's particles: rows, halves, lattice start positions
         n = 0
@@ -871,6 +884,7 @@ contains
                         do q = 1,bd%nband
                             sig2(q) = 1.
                             if( bd%shell(q) <= kmax ) sig2(q) = real(sig2_sh(bd%shell(q)))
+                            if( cfg%hp > 0. .and. real(bd%shell(q)) < real(box) * smpd / cfg%hp ) sig2(q) = 1.e30
                         enddo
                     endif
                     if( cfg%pscale /= 0 )then   ! per-particle contrast scale against the other half's consensus, folded into the CTF weights (ratio: C persists across bands)

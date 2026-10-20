@@ -13,10 +13,12 @@ use simple_image,      only: image
 use simple_string,     only: string
 use simple_stack_io,   only: stack_io
 use simple_srch_sort_loc, only: hpsort
+use simple_kbinterpol,    only: kbinterpol
 !$ use omp_lib
 implicit none
 public :: klem_band, klem_data, klem_band_new, klem_load_particles, klem_project_cell, klem_estep_ll, klem_mstep_accum
 public :: klem_lattice_kernel, klem_sinkhorn, klem_rotmat, klem_write_volume, klem_pose_step, klem_rotmat2euler
+public :: klem_set_gridding, klem_gridding_on, klem_deapod_envelope
 private
 #include "simple_local_flags.inc"
 
@@ -34,7 +36,90 @@ type klem_data
     integer, allocatable :: eo(:)      ! 0 even, 1 odd
 end type klem_data
 
+! Kaiser-Bessel gridding (M-step insertion and E-step slice interpolation) instead of nearest voxel / trilinear; off by default
+type(kbinterpol), save :: kbw
+logical,          save :: l_grid = .false.
+integer,          save :: grid_mode = 0   ! 1 = Kaiser-Bessel 3x3x3, 2 = trilinear 2x2x2
+
 contains
+
+    subroutine klem_set_gridding( mode )
+        integer, intent(in) :: mode
+        grid_mode = mode; l_grid = mode /= 0
+        if( l_grid ) kbw = kbinterpol(KBWINSZ, KBALPHA)
+    end subroutine klem_set_gridding
+
+    !> stencil weight at integer offset d from a fractional position t in [0,1): KB (mode 1) or linear (mode 2)
+    pure real function gw( x )
+        real, intent(in) :: x
+        if( grid_mode == 2 )then
+            gw = max(0., 1. - abs(x))
+        else
+            gw = kbw%apod(x)
+        endif
+    end function gw
+
+    pure logical function klem_gridding_on()
+        klem_gridding_on = l_grid
+    end function klem_gridding_on
+
+    !> real-space deapodisation envelope of the discrete KB stencil (half-width KBWINSZ, offsets -1..1, period box):
+    !! e(x) = sum_d w(d) cos(2 pi d x / box) per axis, normalised, squared (M-step insertion and E-step interpolation),
+    !! inverted and capped at gmax
+    subroutine klem_deapod_envelope( box, gmax, dm )
+        integer, intent(in)  :: box
+        real,    intent(in)  :: gmax
+        real,    intent(out) :: dm(box,box,box)
+        real    :: w(-1:1), e1d(box), x, e
+        integer :: d, i, j, k, c
+        if( grid_mode == 2 )then
+            w = [0.25, 0.5, 0.25]
+        else
+            do d = -1,1
+                w(d) = kbw%apod(real(d))
+            enddo
+        endif
+        w = w / sum(w); c = box / 2 + 1
+        do i = 1,box
+            x = real(i - c) / real(box); e = 0.
+            do d = -1,1
+                e = e + w(d) * cos(2. * PI * real(d) * x)
+            enddo
+            e1d(i) = e
+        enddo
+        do k = 1,box
+            do j = 1,box
+                do i = 1,box
+                    e = (e1d(i) * e1d(j) * e1d(k))**2
+                    dm(i,j,k) = min(gmax, 1. / max(e, 1.e-6))
+                enddo
+            enddo
+        enddo
+    end subroutine klem_deapod_envelope
+
+    !> Kaiser-Bessel interpolation on the centred grid (3x3x3 stencil, indices clamped), normalised by the stencil sum
+    pure function klem_kbinterp( Vc, kmax, loc ) result( val )
+        integer, intent(in) :: kmax
+        complex, intent(in) :: Vc(-kmax:kmax,-kmax:kmax,-kmax:kmax)
+        real,    intent(in) :: loc(3)
+        complex :: val
+        real    :: x(3), w, wx, wy, wsum
+        integer :: ix, iy, iz, cx, cy, cz, d
+        do d = 1,3
+            x(d) = min(max(loc(d), -real(kmax)), real(kmax))
+        enddo
+        cx = nint(x(1)); cy = nint(x(2)); cz = nint(x(3)); val = cmplx(0.,0.); wsum = 0.
+        do ix = max(cx-1,-kmax), min(cx+1,kmax)
+            wx = gw(x(1) - real(ix))
+            do iy = max(cy-1,-kmax), min(cy+1,kmax)
+                wy = wx * gw(x(2) - real(iy))
+                do iz = max(cz-1,-kmax), min(cz+1,kmax)
+                    w = wy * gw(x(3) - real(iz)); val = val + w * Vc(ix,iy,iz); wsum = wsum + w
+                enddo
+            enddo
+        enddo
+        if( wsum > 0. ) val = val / wsum
+    end function klem_kbinterp
 
     !> the half-plane band of a box to shell kmax
     subroutine klem_band_new( bd, kmax )
@@ -209,7 +294,11 @@ contains
             loc(1) = bd%kx(q) * M(1,1) + bd%ky(q) * M(2,1)
             loc(2) = bd%kx(q) * M(1,2) + bd%ky(q) * M(2,2)
             loc(3) = bd%kx(q) * M(1,3) + bd%ky(q) * M(2,3)
-            P(q) = klem_trilinear(Vc, kc, loc)
+            if( l_grid )then
+                P(q) = klem_kbinterp(Vc, kc, loc)
+            else
+                P(q) = klem_trilinear(Vc, kc, loc)
+            endif
         enddo
     end subroutine klem_project_cell
 
@@ -253,12 +342,12 @@ contains
         real,            intent(in)    :: W(ncl,dat%n)
         complex(dp),     intent(inout) :: num(-kc:kc,-kc:kc,-kc:kc,ncl,2)
         real(dp),        intent(inout) :: den(-kc:kc,-kc:kc,-kc:kc,ncl,2)
-        real     :: M(3,3), loc(3), wt
+        real     :: M(3,3), loc(3), wt, gx, gy, g
         real(dp) :: c2
         complex  :: cf
-        integer  :: ic, i, q, ih, ix, iy, iz, kmax
+        integer  :: ic, i, q, ih, ix, iy, iz, jx, jy, jz, kmax
         kmax = kc
-        !$omp parallel do default(shared) schedule(dynamic,1) proc_bind(close) private(ic,i,q,ih,ix,iy,iz,M,loc,wt,c2,cf)
+        !$omp parallel do default(shared) schedule(dynamic,1) proc_bind(close) private(ic,i,q,ih,ix,iy,iz,jx,jy,jz,M,loc,wt,c2,cf,gx,gy,g)
         do ic = 1,ncl
             do i = 1,dat%n
                 wt = W(ic,i)
@@ -276,7 +365,25 @@ contains
                     loc(3) = bd%kx(q) * M(1,3) + bd%ky(q) * M(2,3)
                     ix = nint(loc(1)); iy = nint(loc(2)); iz = nint(loc(3))
                     cf = wt * dat%C(q,i) * dat%F(q,i); c2 = real(wt * dat%C(q,i) * dat%C(q,i), dp)
-                    if( abs(ix) <= kmax .and. abs(iy) <= kmax .and. abs(iz) <= kmax )then
+                    if( l_grid )then
+                        do jx = ix-1,ix+1
+                            if( abs(jx) > kmax ) cycle
+                            gx = gw(loc(1) - real(jx)); if( gx < 1.e-6 ) cycle
+                            do jy = iy-1,iy+1
+                                if( abs(jy) > kmax ) cycle
+                                gy = gx * gw(loc(2) - real(jy)); if( gy < 1.e-6 ) cycle
+                                do jz = iz-1,iz+1
+                                    if( abs(jz) > kmax ) cycle
+                                    g = gy * gw(loc(3) - real(jz))
+                                    if( g < 1.e-6 ) cycle
+                                    num(jx,jy,jz,ic,ih) = num(jx,jy,jz,ic,ih) + g * cf
+                                    den(jx,jy,jz,ic,ih) = den(jx,jy,jz,ic,ih) + real(g,dp) * c2
+                                    num(-jx,-jy,-jz,ic,ih) = num(-jx,-jy,-jz,ic,ih) + g * conjg(cf)
+                                    den(-jx,-jy,-jz,ic,ih) = den(-jx,-jy,-jz,ic,ih) + real(g,dp) * c2
+                                enddo
+                            enddo
+                        enddo
+                    else if( abs(ix) <= kmax .and. abs(iy) <= kmax .and. abs(iz) <= kmax )then
                         num(ix,iy,iz,ic,ih) = num(ix,iy,iz,ic,ih) + cf
                         den(ix,iy,iz,ic,ih) = den(ix,iy,iz,ic,ih) + c2
                         num(-ix,-iy,-iz,ic,ih) = num(-ix,-iy,-iz,ic,ih) + conjg(cf)

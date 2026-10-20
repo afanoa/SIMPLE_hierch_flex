@@ -21,7 +21,7 @@ K=$(grep -vc "^#" $C/groups.txt); L=$C/fam0/regionall/level1; mkdir -p $L/states
 # the consensus); a merged state with particles in both families keeps the map of the family holding more of them
 CH=${CHUNK:-60}; NCH=$(( (K + CH - 1) / CH ))   # reconstruct3D takes at most ~100 states at once: chunks of CH
 for F in 1 2; do
-  PS=$(ls -td $R/fam$F/refine/*_refine3D_states 2>/dev/null | head -1)/p.simple; [ -f "$PS" ] || PS=$R/fam$F/refine/p.simple; [ -f "$PS" ] || PS=${SRC:-$A/rnasep_coupled/full692k_2d/rnasep.simple}; log "family $F poses from $PS"
+  PS=$(ls -td $R/fam$F/refine/*_refine3D_states 2>/dev/null | head -1)/p.simple; [ -f "$PS" ] || PS=$R/fam$F/refine/p.simple; [ -f "$PS" ] || PS=${SRC:-$A/rnasep_coupled/full692k_2d/rnasep.simple}; eval "ov=\${PS_F$F:-}"; [ -n "$ov" ] && PS=$ov; log "family $F poses from $PS"
   for q in $(seq 0 $((NCH - 1))); do
     $PY - <<PYEOF
 import numpy as np

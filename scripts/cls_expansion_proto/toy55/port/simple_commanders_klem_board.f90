@@ -5,6 +5,8 @@
 !!   eps0 0.05 | balance 0.5 | balance_until 0 | focus_mask none|FILE | subset none|FILE (1-based project rows) |
 !!   nsub 0 | seed 1 | ss -1 | fs 1 | conv 0 | sign 1 | ctfabs 1 | write_halves 0 | pose_every 0 | pose_step 3 | pose_prior 4 |
 !!   devw 0 (0.05 = deviation-FSC shell weights) | pnoise 0|1 (per-particle noise factor) | init_file none|FILE (pind g1 g2)
+!!   specmatch 0|1 (every grid cell's radial amplitude spectrum matched to its half's consensus after the M-step)
+!!   hp 0 (A; > 0: shells coarser than hp carry no likelihood, so image background/offset noise cannot select particles)
 !! Outputs in dir: klem_latent.txt, klem_states.txt, klem_resp.bin, klem_halves.bin, cells/cell_XX_YY.mrc (+ cells_half/).
 module simple_commanders_klem_board
 use simple_core_module_api
@@ -57,8 +59,8 @@ contains
         real(dp) :: tsum, t0, eps0med, acc, accn, accd
         real     :: shrink, eps0f, balance, sshift, fscale, csign, cur_lp, lp, sigma, eps, eps0, dmax, smpd, mx, s, tmp
         integer  :: n1, n2, nfree, ngrid, ncl, nit, seed, nsub, conv, balance_until, write_halves, ntok, io, u, i, j, m, ic, it, pose_every, nmoved
-        real     :: pose_step, pose_prior, pgain, devw, fsc_s, pmed
-        integer  :: pnoise, pscale, nchg
+        real     :: pose_step, pose_prior, pgain, devw, fsc_s, pmed, hp
+        integer  :: pnoise, pscale, nchg, specmatch
         real     :: stop_frac
         integer, allocatable :: am_prev(:)
         character(len=512) :: cfg_init, cfg_boards
@@ -69,13 +71,15 @@ contains
         real,    allocatable :: sig2_base(:), wsh(:), pfac(:), pres(:), gi1(:), gi2(:), psc(:), pscn(:)
         real(dp), allocatable :: fnum(:), fd0(:), fd1(:)
         complex  :: d0c, d1c
-        integer  :: box, kmax, n, nall, q, ih, h, k, l, ncal, nsh, ish, cnt, n3, ib, nbm, c2, ctfabs_i
+        integer  :: box, kmax, n, nall, q, ih, h, k, l, ncal, nsh, ish, cnt, n3, ib, nbm, c2, ctfabs_i, gridding_i
+        real,    allocatable :: dm(:,:,:)
+        complex, allocatable :: G0d(:,:,:,:)
         logical  :: ctfabs, l_focus, l_solv, l_exists
         real,    allocatable :: sm(:,:,:)
         complex, allocatable :: G0(:,:,:,:)
         ! ---- defaults and config
         n1 = 7; n2 = 7; nfree = 2; shrink = 0.02; eps0f = 0.05; balance = 0.5; balance_until = 0; cfg_focus = 'none'; cfg_solv = 'none'; cfg_subset = 'none'
-        nsub = 0; seed = 1; sshift = -1.; fscale = 1.; conv = 0; csign = 1.; ctfabs_i = 1; write_halves = 0; pose_every = 0; pose_step = 3.; pose_prior = 4.; devw = 0.; pnoise = 0; pscale = 0; stop_frac = 0.03; cfg_init = 'none'; cfg_boards = 'none'
+        nsub = 0; seed = 1; sshift = -1.; fscale = 1.; conv = 0; csign = 1.; ctfabs_i = 1; write_halves = 0; pose_every = 0; pose_step = 3.; pose_prior = 4.; devw = 0.; pnoise = 0; pscale = 0; specmatch = 0; hp = 0.; stop_frac = 0.03; gridding_i = 0; cfg_init = 'none'; cfg_boards = 'none'
         allocate(lps(9), sigmas(9)); lps = [12.,12.,10.,10.,8.,8.,8.,8.,8.]; sigmas = [1.2,1.2,1.0,1.0,0.8,0.8,0.7,0.7,0.7]
         call params%new(cline)
         open(newunit=u, file=params%infile%to_char(), status='old', action='read')
@@ -96,6 +100,7 @@ contains
                 case('balance_until'); read(tok(2),*) balance_until
                 case('focus_mask');    cfg_focus = tok(2)
                 case('solvent_mask');  cfg_solv = tok(2)
+                case('gridding');      read(tok(2),*) gridding_i
                 case('subset');        cfg_subset = tok(2)
                 case('nsub');          read(tok(2),*) nsub
                 case('seed');          read(tok(2),*) seed
@@ -110,7 +115,9 @@ contains
                 case('pose_prior');    read(tok(2),*) pose_prior
                 case('devw');          read(tok(2),*) devw
                 case('pnoise');        read(tok(2),*) pnoise
+                case('hp');            read(tok(2),*) hp
                 case('pscale');        read(tok(2),*) pscale
+                case('specmatch');     read(tok(2),*) specmatch
                 case('stop_frac');     read(tok(2),*) stop_frac
                 case('init_file');     cfg_init = tok(2)
                 case('boards_more');   cfg_boards = tok(2)
@@ -128,6 +135,7 @@ contains
         enddo
         close(u)
         if( size(lps) /= size(sigmas) ) THROW_HARD('lps and sigmas must have the same length')
+        call klem_set_gridding(gridding_i)
         nit = size(lps); ctfabs = ctfabs_i /= 0; l_focus = trim(cfg_focus) /= 'none'; l_solv = trim(cfg_solv) /= 'none'; odir = trim(params%dir%to_char())
         call simple_mkdir(trim(odir)); call simple_mkdir(trim(odir)//'/cells')
         if( write_halves /= 0 ) call simple_mkdir(trim(odir)//'/cells_half')
@@ -314,6 +322,7 @@ contains
                 do q = 1,bd%nband
                     sig2(q) = 1.
                     if( bd%shell(q) <= kmax ) sig2(q) = sig2_sh(bd%shell(q))
+                    if( hp > 0. .and. real(bd%shell(q)) < real(box) * smpd / hp ) sig2(q) = 1.e30
                 enddo
                 if( allocated(sig2_base) ) deallocate(sig2_base, wsh)
                 allocate(sig2_base(bd%nband), wsh(0:kmax)); sig2_base = sig2; wsh = 1.
@@ -393,6 +402,13 @@ contains
                     V(:,:,:,ic,ih) = cmplx((num(:,:,:,ic,ih) + real(eps,dp) * Gc(:,:,:,ih)) / (den(:,:,:,ic,ih) + real(eps,dp)))
                 enddo
             enddo
+            if( specmatch /= 0 ) call match_cell_spectra()
+            if( klem_gridding_on() )then
+                if( .not. allocated(dm) )then
+                    allocate(dm(box,box,box)); call klem_deapod_envelope(box, 4., dm); write(logfhandle,'(A)') '>>> gridding on (1 = Kaiser-Bessel 3x3x3, 2 = trilinear 2x2x2): stencil insertion/interpolation + real-space deapodisation (gain capped at 4)'
+                endif
+                allocate(G0d(-kmax:kmax,-kmax:kmax,-kmax:kmax,2), source=cmplx(0.,0.)); call apply_focus_d(V, G0d, dm, kmax, ncl, box, smpd); deallocate(G0d)
+            endif
             if( l_focus ) call apply_focus()
             if( l_solv )then
                 allocate(G0(-kmax:kmax,-kmax:kmax,-kmax:kmax,2), source=cmplx(0.,0.)); call apply_focus_d(V, G0, sm, kmax, ncl, box, smpd); deallocate(G0)
@@ -571,6 +587,48 @@ contains
       contains
 
         !> cells = consensus + mask x (cell - consensus), the mask applied in real space at the full even box
+        subroutine match_cell_spectra()   ! grid cells cannot differ from the consensus by sharpness: per-shell amplitude match (0.5..2 clip), free components untouched
+            real(dp) :: pv(0:kmax), pg(0:kmax)
+            real     :: w(0:kmax)
+            integer  :: ic, ih, h, k, l, ish
+            do ih = 1,2
+                pg = 0.d0
+                do l = -kmax,kmax
+                    do k = -kmax,kmax
+                        do h = -kmax,kmax
+                            ish = nint(sqrt(real(h*h + k*k + l*l)))
+                            if( ish <= kmax ) pg(ish) = pg(ish) + real(abs(Gc(h,k,l,ih)),dp)**2
+                        enddo
+                    enddo
+                enddo
+                !$omp parallel do default(shared) private(ic,h,k,l,ish,pv,w)
+                do ic = 1,ngrid
+                    pv = 0.d0
+                    do l = -kmax,kmax
+                        do k = -kmax,kmax
+                            do h = -kmax,kmax
+                                ish = nint(sqrt(real(h*h + k*k + l*l)))
+                                if( ish <= kmax ) pv(ish) = pv(ish) + real(abs(V(h,k,l,ic,ih)),dp)**2
+                            enddo
+                        enddo
+                    enddo
+                    w = 1.
+                    do ish = 2,kmax
+                        if( pv(ish) > 0.d0 .and. pg(ish) > 0.d0 ) w(ish) = real(min(max(sqrt(pg(ish) / pv(ish)), 0.5d0), 2.d0))
+                    enddo
+                    do l = -kmax,kmax
+                        do k = -kmax,kmax
+                            do h = -kmax,kmax
+                                ish = nint(sqrt(real(h*h + k*k + l*l)))
+                                if( ish <= kmax ) V(h,k,l,ic,ih) = V(h,k,l,ic,ih) * w(ish)
+                            enddo
+                        enddo
+                    enddo
+                enddo
+                !$omp end parallel do
+            enddo
+        end subroutine match_cell_spectra
+
         subroutine apply_focus()   ! the distributed board's parallel version, one image per thread
             call apply_focus_d(V, Gc, fm, kmax, ncl, box, smpd)
         end subroutine apply_focus

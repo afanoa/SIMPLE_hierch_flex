@@ -45,7 +45,7 @@ if [ ! -s $D/refined_ptcl3D.txt ] && [ ! -f $D/refine/FAILED ]; then
   [ "${LOCALDEV:-0}" = 1 ] && simple_exec prg=update_project projfile=p.simple qsys_name=local nparts=$NP nthr=8 mkdir=no > up.log 2>&1
   simple_exec prg=selection projfile=p.simple oritype=ptcl3D infile=$D/states.txt mkdir=no > sel.log 2>&1 || { log "selection FAILED"; exit 1; }
   export OMP_NUM_THREADS=${NTHR_PART:-8}; log "refine3D_states nstates=$K local ${LPSTART:-20}->8 A maxits ${MAXITS:-6} nparts $NP x ${NTHR_PART:-8} threads, master threads ${NTHR_REF:-8}"   # the parts inherit OMP_NUM_THREADS, the master gets nthr
-  if simple_exec prg=refine3D_states projfile=p.simple nstates=$K pose_policy=local lpstart=${LPSTART:-20} lpstop=8 maxits=${MAXITS:-6} mskdiam=220 pgrp=c1 nparts=$NP nthr=${NTHR_REF:-8} ${REFINE_EXTRA:-} > refine.log 2>&1 && grep -a -q ">>> ITERATION" refine.log; then   # exit 0 without an iteration = a silent abort (e.g. a missing state volume)
+  if simple_exec prg=refine3D_states projfile=p.simple nstates=$K pose_policy=local lpstart=${LPSTART:-20} lpstop=8 maxits=${MAXITS:-6} mskdiam=220 pgrp=c1 nparts=$NP nthr=${NTHR_REF:-8} ${REFINE_EXTRA:-filt_mode=none} > refine.log 2>&1 && grep -a -q ">>> ITERATION" refine.log; then   # exit 0 without an iteration = a silent abort (e.g. a missing state volume)
     RD=$(ls -td $D/refine/*_refine3D_states | head -1); mkdir -p $D/maps; for w in $(seq -f %02g 1 $K); do cp -f $RD/recvol_state$w.mrc $D/maps/ 2>/dev/null; done
     simple_exec prg=print_project_field projfile=$RD/p.simple oritype=ptcl3D mkdir=no 2>/dev/null > $D/refined_ptcl3D.txt
   else
