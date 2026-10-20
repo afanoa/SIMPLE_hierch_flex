@@ -43,6 +43,8 @@ Each stage is the same program with `stage` set; the chain submits the others as
   odd half; even/odd is read from the project.
 - Zooms run one job per leaf state (`zparmax` at a time); a zoom whose reconstruction failed is redone on resume.
 - `subset` replaces SUBSETFILE; `partition` replaces the norm/unl copies of the scripts.
+- The map folders of the results (consolidation `maps/`, `composed/`, `parents/`) hold full maps only; their even/odd
+  halves are in a `halves/` subfolder.
 
 ## Differences from the bash/Python route
 

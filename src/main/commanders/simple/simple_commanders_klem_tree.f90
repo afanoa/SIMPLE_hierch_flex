@@ -1104,10 +1104,11 @@ contains
         character(len=PLEN), allocatable :: sfiles(:), names(:)
         character(len=PLEN) :: tag, C, Lc, out, ps, qd, rr, f, figs
         character(len=4096) :: line
-        character(len=8)    :: suf(3)
+        character(len=8)    :: suf(3), hdir(3)
         logical :: ok
         integer :: nl, nkeep, K, fam, q, nch, lo, hi, ns, i, s, u, io, best, h, nsf, sl, np_, cnt
-        suf = ['        ', '_even   ', '_odd    ']
+        suf  = ['        ', '_even   ', '_odd    ']
+        hdir = ['        ', 'halves/ ', 'halves/ ']
         tag = pool_tag(cfg, cfg%tag)
         out = trim(R)//'/merge_'//trim(tag)//'_'//fr(real(cfg%floor,dp),0)
         C   = trim(R)//'/consolidated_'//fr(real(cfg%floor,dp),0)//'_'//trim(tag)
@@ -1124,7 +1125,7 @@ contains
             endif
             if( nkeep == 0 ) THROW_HARD('no leaf states to merge ('//trim(cfg%tag)//')')
             call tree_consolidate(leaves, keepl, lab, nkeep, nrows, cfg%minp, cfg%uncap /= 0, cfg%floor, C, K)
-            call simple_mkdir(trim(Lc)//'/maps')
+            call simple_mkdir(trim(Lc)//'/maps/halves')
             call simple_mkdir(trim(Lc)//'/states_dir')
             call read_ints(trim(C)//'/states.txt', st)
             allocate(nf(cfg%nfam,K), source=0)
@@ -1173,7 +1174,7 @@ contains
                 rr   = latest_dir(trim(C)//'/rec'//int2str(best)//'/q'//int2str(q))
                 do h = 1,3
                     f = trim(rr)//'/recvol_state'//int2str_pad(sl,2)//trim(suf(h))//'.mrc'
-                    if( file_exists(trim(f)) ) call copyf(f, trim(Lc)//'/maps/recvol_state'//int2str_pad(s,2)//trim(suf(h))//'.mrc')
+                    if( file_exists(trim(f)) ) call copyf(f, trim(Lc)//'/maps/'//trim(hdir(h))//'recvol_state'//int2str_pad(s,2)//trim(suf(h))//'.mrc')
                 enddo
                 f = trim(rr)//'/recvol_state'//int2str_pad(sl,2)//'.mrc'
                 if( file_exists(trim(f)) ) call copyf(f, trim(Lc)//'/states_dir/state_'//int2str_pad(s,2)//'.mrc')
@@ -1228,15 +1229,16 @@ contains
         type(sp_project) :: spproj
         integer, allocatable :: st(:)
         character(len=PLEN) :: O, D, ps, rr, f, part
-        character(len=8)    :: suf(3)
+        character(len=8)    :: suf(3), hdir(3)
         logical :: ok
         integer :: fam, i, n, h
         type(string), allocatable :: parts(:)
-        suf = ['_even   ', '_odd    ', '        ']
-        O   = trim(R)//'/parents'
-        call simple_mkdir(trim(O))
+        suf  = ['_even   ', '_odd    ', '        ']
+        hdir = ['halves/ ', 'halves/ ', '        ']
+        O    = trim(R)//'/parents'
+        call simple_mkdir(trim(O)//'/halves')
         do fam = 1,cfg%nfam
-            if( file_exists(trim(O)//'/fam'//int2str(fam)//'_even.mrc') ) cycle
+            if( file_exists(trim(O)//'/fam'//int2str(fam)//'.mrc') ) cycle
             D  = trim(O)//'/rec'//int2str(fam)
             ps = refined_proj(trim(R)//'/fam'//int2str(fam), src)
             call simple_mkdir(trim(D))
@@ -1268,7 +1270,7 @@ contains
             do h = 1,3
                 f = trim(rr)//'/recvol_state01'//trim(suf(h))//'.mrc'
                 if( .not. file_exists(trim(f)) ) THROW_HARD('parent map missing: '//trim(f))
-                call copyf(f, trim(O)//'/fam'//int2str(fam)//trim(suf(h))//'.mrc')
+                call copyf(f, trim(O)//'/'//trim(hdir(h))//'fam'//int2str(fam)//trim(suf(h))//'.mrc')
             enddo
             call simple_list_files(trim(rr)//'/*_part*.mrc', parts)
             if( allocated(parts) )then

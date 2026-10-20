@@ -2903,13 +2903,13 @@ contains
         real(dp), allocatable :: P(:,:,:,:), Pl(:,:,:), Se(:,:,:,:), M(:,:,:,:), mk(:,:,:), sph(:,:,:), wm(:,:,:), lps(:,:,:)
         integer,  allocatable :: sh(:,:,:)
         logical,  allocatable :: supp(:,:,:)
-        character(len=PLEN) :: leaf, mf, fe, fo, ff, pfam
+        character(len=PLEN) :: leaf, mf, fe, fo, ff, pfam, pf
         character(len=8192) :: line
         character(len=8)    :: suf(3)
         integer  :: n, n3(3), u, io, s, np_, h, curfam, fam
         real(dp) :: sn, sx, sxx, sy, sxy, det, a, b
         suf = ['_even   ', '_odd    ', '        ']
-        call simple_mkdir(trim(outdir))
+        call simple_mkdir(trim(outdir)//'/halves')
         curfam = -1
         n      = 0
         pfam   = ''
@@ -2935,7 +2935,9 @@ contains
                 curfam = fam
                 pfam   = trim(parents_dir)//'/fam'//int2str(fam)
                 do h = 1,3
-                    call read_mrc(trim(pfam)//trim(suf(h))//'.mrc', vin, n3)
+                    pf = trim(parents_dir)//'/halves/fam'//int2str(fam)//trim(suf(h))//'.mrc'
+                    if( h == 3 .or. .not. file_exists(trim(pf)) ) pf = trim(pfam)//trim(suf(h))//'.mrc'
+                    call read_mrc(trim(pf), vin, n3)
                     if( .not. allocated(P) )then
                         n = n3(1)
                         allocate(P(n,n,n,3), Pl(n,n,n), Se(n,n,n,3), M(n,n,n,3), mk(n,n,n), wm(n,n,n), lps(n,n,n), supp(n,n,n))
@@ -2979,8 +2981,8 @@ contains
                 M(:,:,:,h)  = P(:,:,:,h) + mk * (Se(:,:,:,h) - P(:,:,:,h))
             enddo
             call write_mrc(trim(outdir)//'/state_'//int2str_pad(s,2)//'.mrc',      M(:,:,:,3), smpd)
-            call write_mrc(trim(outdir)//'/state_'//int2str_pad(s,2)//'_even.mrc', M(:,:,:,1), smpd)
-            call write_mrc(trim(outdir)//'/state_'//int2str_pad(s,2)//'_odd.mrc',  M(:,:,:,2), smpd)
+            call write_mrc(trim(outdir)//'/halves/state_'//int2str_pad(s,2)//'_even.mrc', M(:,:,:,1), smpd)
+            call write_mrc(trim(outdir)//'/halves/state_'//int2str_pad(s,2)//'_odd.mrc',  M(:,:,:,2), smpd)
             wm   = mk**2 * sph
             line = int2str(s)//'  '//int2str(np_)//'  '//trim(leaf)//' '//fr(sum(mk)/real(size(mk),dp),2)//'   '//&
                 &fr(kt_fsc_res(Se(:,:,:,1), Se(:,:,:,2), sph, sh, smpd),1)//' -> '//fr(kt_fsc_res(M(:,:,:,1), M(:,:,:,2), sph, sh, smpd),1)//'   '//&
@@ -3211,7 +3213,7 @@ contains
         real(dp), allocatable :: sph(:,:,:), e(:,:,:), o(:,:,:)
         integer,  allocatable :: order(:), sh(:,:,:), conf(:), snum(:)
         logical,  allocatable :: supp(:,:,:), outside(:,:,:)
-        character(len=PLEN) :: L1, cname
+        character(len=PLEN) :: L1, cname, fe, fo
         character(len=8192) :: line
         integer  :: nf, n3(3), n, i, j, k, u, io, npage, pg, r0, nr, ip, x, y, st, nc, nsl, cf
         real(dp) :: vmin, vmax, dmax, val, ms, cr
@@ -3266,11 +3268,14 @@ contains
         sph = kt_sphere(n)
         res = -1.d0
         do i = 1,nf
-            if( file_exists(trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_even.mrc') .and. &
-               &file_exists(trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_odd.mrc') )then
-                call read_mrc(trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_even.mrc', vin, n3)
+            fe = trim(L1)//'/maps/halves/recvol_state'//int2str_pad(snum(i),2)//'_even.mrc'
+            fo = trim(L1)//'/maps/halves/recvol_state'//int2str_pad(snum(i),2)//'_odd.mrc'
+            if( .not. file_exists(trim(fe)) ) fe = trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_even.mrc'
+            if( .not. file_exists(trim(fo)) ) fo = trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_odd.mrc'
+            if( file_exists(trim(fe)) .and. file_exists(trim(fo)) )then
+                call read_mrc(trim(fe), vin, n3)
                 e = real(vin, dp)
-                call read_mrc(trim(L1)//'/maps/recvol_state'//int2str_pad(snum(i),2)//'_odd.mrc', vin, n3)
+                call read_mrc(trim(fo), vin, n3)
                 o = real(vin, dp)
                 res(i) = kt_fsc_res(e, o, sph, sh, smpd)
             endif
