@@ -1117,6 +1117,11 @@ contains
             call build_leaves(R, cfg%tag, cfg%nfam, leaves, nl)
             write(logfhandle,'(A)') '== data-derived merge of the '//trim(cfg%tag)//' leaves of '//trim(R)//', floor '//fr(real(cfg%floor,dp),0)//' A'
             call tree_merge_leaves(R, cfg%cons, leaves, nl, cfg%floor, smpd, cfg%fscmax, cfg%minrec_leaf, out, keepl, lab, nkeep)
+            if( nkeep == 0 .and. trim(cfg%tag) == 'zoom' )then
+                call klog('pool', 'no zoom leaf states to merge')
+                call touch(trim(R)//'/pool_'//trim(cfg%tag)//'/DONE')
+                return
+            endif
             if( nkeep == 0 ) THROW_HARD('no leaf states to merge ('//trim(cfg%tag)//')')
             call tree_consolidate(leaves, keepl, lab, nkeep, nrows, cfg%minp, cfg%uncap /= 0, cfg%floor, C, K)
             call simple_mkdir(trim(Lc)//'/maps')

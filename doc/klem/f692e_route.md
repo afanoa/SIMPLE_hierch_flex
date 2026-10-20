@@ -16,7 +16,8 @@ settings. `run` is the output directory, `meta` the npz with the initial latent 
 merge, readouts and the arm readout), `subset` an optional parent subset (one 1-based project row per line), `partition`
 an optional SLURM partition for every job. Every stage resumes from its outputs: resubmit the same command after a
 failure. The launcher refuses a non-empty `run` directory that it did not start, so a run never resumes from another
-route's outputs.
+route's outputs. A run keeps its private copy of the binaries in `run/klem_bin`; remove `run/klem_bin/bin` before
+resubmitting to resume on a newer build.
 
 ## Stages
 

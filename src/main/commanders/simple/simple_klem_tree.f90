@@ -3106,7 +3106,7 @@ contains
         real(dp) :: c1, c2
         open(newunit=u, file=trim(matches), status='old', action='read')
         read(u,'(A)') line
-        p    = index(line, 'conformer') + 9
+        p    = index(line, 'conformer', back=.true.) + 9
         line = line(p:)
         nd   = count_tokens(line)
         allocate(ids(nd))
