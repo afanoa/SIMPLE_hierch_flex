@@ -6,7 +6,6 @@ implicit none
 type(category_descriptor), parameter :: UI_CATEGORY = category_descriptor('refine3d', 'Refine 3D Workflows', 60)
 type(ui_program), target :: refine3D
 type(ui_program), target :: refine3D_auto
-type(ui_program), target :: klem_estep
 type(ui_program), target :: klem_board
 type(ui_program), target :: klem_board_part
 type(ui_program), target :: klem_tree
@@ -17,7 +16,6 @@ contains
         class(ui_hash), intent(inout) :: prgtab
         call new_refine3D(prgtab)
         call new_refine3D_auto(prgtab)
-        call new_klem_estep(prgtab)
         call new_klem_board(prgtab)
         call new_klem_board_part(prgtab)
         call new_klem_tree(prgtab)
@@ -300,37 +298,6 @@ contains
 
 
 
-    subroutine new_klem_estep( prgtab )
-        class(ui_hash), intent(inout) :: prgtab
-        ! PROGRAM SPECIFICATION
-        call klem_estep%new(&
-        &'klem_estep',&                                                                            ! name
-        &'Kernel-latent EM E-step: cross-half log-likelihoods against cell volumes',&               ! summary
-        &'is a program scoring every particle against K cell volumes of the other data half at its own pose, band-limited (the klem E-step)',& ! help
-        &'simple_exec',&                                                                           ! executable
-        &.true.,&                                                                                  ! requires sp_project
-        &visibility=UI_VIS_ADVANCED, display_name='klem E-step')
-        ! INPUT PARAMETER SPECIFICATIONS
-        ! image input/output
-        call klem_estep%add_input(UI_FILE, 'dir', 'dir', 'Cell volumes directory', 'Directory with cell_NN_even.mrc and cell_NN_odd.mrc on the coarse grid', 'e.g. cells_half', .true., '')
-        call klem_estep%add_input(UI_FILE, 'infile', 'file', 'Noise/scale table', 'Per-shell noise variance and reference scale: shell sig2 scale', 'e.g. sig2_scale.txt', .true., '')
-        call klem_estep%add_input(UI_FILE, 'outfile', 'file', 'Output stream file', 'Binary stream with the per-particle cell log-likelihoods and comparison samples', 'e.g. klem_estep.bin', .true., '')
-        ! parameter input/output
-        call klem_estep%add_input(UI_PARM, 'nstates', 'num', 'Number of cells', 'Number of cell volumes K', '# cells', .true., 0.0)
-        call klem_estep%add_input(UI_PARM, 'lp', 'num', 'Band limit', 'Low-pass limit of the band in Angstroms', 'in A', .true., 0.0)
-        ! alternative inputs
-        ! <empty>
-        ! search controls
-        ! <empty>
-        ! filter controls
-        ! <empty>
-        ! mask controls
-        ! <empty>
-        ! computer controls
-        call klem_estep%add_input(UI_COMP, nthr)
-        call add_ui_program('klem_estep', klem_estep, prgtab, UI_CATEGORY)
-    end subroutine new_klem_estep
-
     subroutine new_klem_board( prgtab )
         class(ui_hash), intent(inout) :: prgtab
         ! PROGRAM SPECIFICATION
@@ -397,13 +364,13 @@ contains
         call klem_tree%new(&
         &'klem_tree',&                                                                             ! name
         &'Kernel-latent EM tree: the full landscape workflow around the klem board',&              ! summary
-        &'is a program running the kernel-latent EM tree (parent board, families, pose refinement, feedback boards, data-derived regions, states, level 2, landscape count) as one resumable workflow; stages run as jobs of this program',& ! help
+        &'is a program running the kernel-latent EM tree (parent board, families, pose refinement, feedback boards, data-derived regions, states, level 2, zooms, data-derived merge, consolidation, composed maps, readouts) as one resumable workflow; stages run as jobs of this program',& ! help
         &'simple_exec',&                                                                           ! executable
         &.true.,&                                                                                  ! requires sp_project
         &visibility=UI_VIS_ADVANCED, display_name='klem tree')
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
-        call klem_tree%add_input(UI_FILE, 'infile', 'file', 'Tree config', 'Config file with key value lines (run, stage, nparts, nthr_part, np_refine, maxreg, nl2, parmax, skip_refine, norec, docked_list, cons, meta_init, ...)', 'e.g. tree.txt', .true., '')
+        call klem_tree%add_input(UI_FILE, 'infile', 'file', 'Tree config', 'Config file with key value lines (run, rtag, meta, cons, docked, docked_all, closed, nparts, nthr_part, np_refine, maxreg, nl2, parmax, zparmax, partition, ...)', 'e.g. tree.txt', .true., '')
         ! parameter input/output
         ! <empty>
         ! alternative inputs

@@ -1,0 +1,17 @@
+run /mnt/beegfs/elmlund/afan/rnasep_klem/f692k
+rtag f692k
+meta /mnt/beegfs/elmlund/afan/rnasep_coupled/basis_span_all/meta_all.npz
+cons /mnt/beegfs/elmlund/afan/routes/toy55/maps160/toy_consensus.mrc
+docked /mnt/beegfs/elmlund/afan/routes/toy55/maps160/docked
+docked_all /mnt/beegfs/elmlund/afan/routes/toy55/maps160/docked_all
+closed /mnt/beegfs/elmlund/afan/routes/toy55/maps160/docked/conf18_emd74209_m160.mrc
+nparts 20
+nthr_part 8
+np_refine 20
+parmax 4
+zparmax 16
+server 1
+ctfabs 1
+pscale 1
+nfree_sub 1
+refine_extra ml_reg=no
