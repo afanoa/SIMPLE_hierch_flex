@@ -24,6 +24,7 @@ contains
         call test_gen_job_descr()
         call test_read_line_typed_values()
         call test_set_from_text_and_copy_arg()
+        call test_all_state_volume_keys()
         ! call report_summary()
     end subroutine run_all_cmdline_tests
 
@@ -302,5 +303,25 @@ contains
         call dst%kill()
         call sval%kill
     end subroutine test_set_from_text_and_copy_arg
+
+    subroutine test_all_state_volume_keys()
+        type(cmdline) :: cl
+        type(string)  :: sval
+        integer       :: i
+        write(*,'(A)') 'test_all_state_volume_keys'
+        call cl%kill()
+        call cl%read('vol21=state21.mrc vol'//int2str(MAXS)//'=last.mrc')
+        sval = cl%get_carg('vol21')
+        call assert_string_eq('state21.mrc', sval, 'read accepts the volume key of state 21')
+        sval = cl%get_carg('vol'//int2str(MAXS))
+        call assert_string_eq('last.mrc', sval, 'read accepts the volume key of the last state, MAXS')
+        call cl%kill()
+        do i = 1, MAXS + 50
+            call cl%set('key'//int2str(i), real(i))
+        end do
+        call assert_int(MAXS + 50, cl%get_argcnt(), 'a command line holds a key per state and 50 more')
+        call cl%kill()
+        call sval%kill
+    end subroutine test_all_state_volume_keys
 
 end module simple_cmdline_tester

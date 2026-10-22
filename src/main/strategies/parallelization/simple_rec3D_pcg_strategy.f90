@@ -131,10 +131,12 @@ contains
         class(image),    optional, intent(in)    :: state_support
         logical,         optional, intent(in)    :: l_state_support
         type(image) :: mskvol
+        real        :: wfloor
         logical     :: l_state
         if( params%pcg_mskfile%is_allocated() )then
             if( len_trim(params%pcg_mskfile%to_char()) > 0 )then
                 call mskvol%read_and_crop(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop)
+                if( params%l_pcg_focus ) call floor_focus_window(mskvol, wfloor)
                 call pcgop%set_window_volume(mskvol)
                 call mskvol%kill
                 return
@@ -149,6 +151,17 @@ contains
         call pcgop%set_window_sphere(params%msk_crop)
     end subroutine set_pcg_solve_support
 
+    subroutine floor_focus_window( mskvol, wfloor )
+        class(image), intent(inout) :: mskvol
+        real,         intent(out)   :: wfloor
+        real, allocatable :: rmat(:,:,:)
+        rmat   = mskvol%get_rmat()
+        wfloor = max(0., -minval(rmat))
+        if( wfloor <= 0. ) return
+        where( rmat <= wfloor ) rmat = 0.
+        call mskvol%set_rmat(rmat, .false.)
+    end subroutine floor_focus_window
+
     !> The state's solve support: an explicit pcg_mskfile, else under automsk
     !! the density envelope of the lag-one reference; without a reference the
     !! base bootstraps on the sphere (reconstruct3D_pcg_policy.md, section 3).
@@ -159,6 +172,7 @@ contains
         logical,           intent(out)   :: l_have
         character(len=*),  intent(out)   :: support_kind
         type(image)  :: vol_prev
+        real         :: wfloor
         l_have = .false.
         support_kind = 'sphere'
         call support%kill_bimg
@@ -167,8 +181,14 @@ contains
         if( params%pcg_mskfile%is_allocated() )then
             if( len_trim(params%pcg_mskfile%to_char()) > 0 )then
                 call support%read_and_crop(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop)
-                write(logfhandle,'(A,I0,A)') '>>> PCG SOLVE SUPPORT: STATE ', state_here, &
-                    &', explicit pcg_mskfile '//params%pcg_mskfile%to_char()//' constrains base and replay'
+                if( params%l_pcg_focus )then
+                    call floor_focus_window(support, wfloor)
+                    write(logfhandle,'(A,I0,A,ES10.3)') '>>> PCG SOLVE SUPPORT: STATE ', state_here, &
+                        &', focus mask '//params%pcg_mskfile%to_char()//' (pcg_focus), resampling floor ', wfloor
+                else
+                    write(logfhandle,'(A,I0,A)') '>>> PCG SOLVE SUPPORT: STATE ', state_here, &
+                        &', explicit pcg_mskfile '//params%pcg_mskfile%to_char()//' constrains base and replay'
+                endif
                 l_have = .true.
                 support_kind = 'explicit'
                 return
@@ -540,6 +560,9 @@ contains
         type(distributed_half_job) :: even_job, odd_job
         type(image_msk) :: state_support_msk
         type(image)     :: solvent_weight(2)
+        type(image)     :: fbg(2), fbg_ml(2), dev_even, dev_odd, dev_avg
+        real, allocatable :: fbg_fsc(:)
+        real            :: fbg_res(3)
         logical :: l_state_support, l_base_support_constrained, l_nu_base_constrained
         logical :: l_has_updates, l_sample_seed, l_chain_carry, l_even_chain, l_odd_chain
         logical :: l_shipped_support_constrained, l_solvent_weight
@@ -559,7 +582,9 @@ contains
 
         if( L_BENCH_GLOB ) t_bench = tic()
         call validate_pcg_common(params)
+        if( params%l_pcg_focus .and. params%l_state_defined ) THROW_HARD('pcg_focus=yes reconstructs every state; no state=')
         solvent_lambda_eff = 0.
+        l_solvent_weight   = .false.
         ! add-on chains reconstruct by gridding only: the frozen-set handshakes have no PCG side
         if( cline%defined('frozen_rec') .or. cline%defined('frozen_seed') )then
             THROW_HARD('frozen sets are gridding only; rec_backend=pcg takes no frozen_rec or frozen_seed')
@@ -639,9 +664,14 @@ contains
             bt%nthr_master = pcg_master_nthreads
             bt%nthr_half   = pcg_half_nthreads
         endif
+        if( params%l_pcg_focus ) call solve_focus_background
         do state = 1, params%nstates
             ! state= reconstructs that state alone: the other states' parts are empty by construction
             if( params%l_state_defined .and. state /= params%state ) cycle
+            if( params%l_pcg_focus .and. state_empty(state) )then
+                call ship_focus_background(state)
+                cycle
+            endif
             ! the gridding rule (volassemble's dropped states): a state without particles, while
             ! another state has some, is dropped for this iteration and its previous maps are
             ! carried forward; a trailing chain it still has is carried by the chain path below
@@ -737,6 +767,10 @@ contains
                     endif
                 endif
             endif
+            if( params%l_pcg_focus .and. (n_even < 1 .or. n_odd < 1) )then
+                call ship_focus_background(state)
+                cycle
+            endif
             if( n_even == 0 .and. n_odd == 0 )then
                 write(logfhandle,'(A,I0,A)') '>>> PCG DISTRIBUTED: STATE ', state, &
                     &' HAS NO SELECTED PARTICLES; SKIPPING'
@@ -784,8 +818,20 @@ contains
             endif
             t_state_phase = tic()
             ! the FSC pair is the current base pair, which also seeds the NU bank
-            call calculate_pcg_state_diagnostics(params, state, 'DISTRIBUTED', half_even, &
-                &half_odd, merged, hm_diag, l_base_support_constrained, base_support_kind)
+            if( params%l_pcg_focus )then
+                call dev_even%copy(half_even)
+                call dev_even%subtr(fbg(1))
+                call dev_odd%copy(half_odd)
+                call dev_odd%subtr(fbg(2))
+                call dev_avg%copy(dev_even)
+                call dev_avg%add(dev_odd)
+                call dev_avg%mul(0.5)
+                call calculate_pcg_state_diagnostics(params, state, 'DISTRIBUTED', dev_even, &
+                    &dev_odd, dev_avg, hm_diag, l_base_support_constrained, base_support_kind)
+            else
+                call calculate_pcg_state_diagnostics(params, state, 'DISTRIBUTED', half_even, &
+                    &half_odd, merged, hm_diag, l_base_support_constrained, base_support_kind)
+            endif
             fsc             = hm_diag%fsc
             res0143s(state) = hm_diag%res_fsc0143
             res05s(state)   = hm_diag%res_fsc05
@@ -887,6 +933,9 @@ contains
             state_written(state) = .true.
             call half_even%kill
             call half_odd%kill
+            call dev_even%kill
+            call dev_odd%kill
+            call dev_avg%kill
             call solvent_even%kill
             call solvent_odd%kill
             call atm_even%kill
@@ -954,6 +1003,10 @@ contains
         endif
         call raw_fname%kill
         call state_support_msk%kill_bimg
+        call fbg(1)%kill
+        call fbg(2)%kill
+        call fbg_ml(1)%kill
+        call fbg_ml(2)%kill
         call wset%kill
         ! operators a skipped state kept for its regularized pair
         call even_job%pcgop%kill
@@ -1082,6 +1135,124 @@ contains
                 &file_exists(refine3D_state_halfvol_fname(state_here, 'odd')) .and. &
                 &file_exists(refine3D_fsc_fname(state_here))
         end function previous_state_maps_exist
+
+        subroutine solve_focus_background
+            type(halfmap_diagnostics_result) :: bg_diag
+            type(image) :: bg_avg
+            call prepare_focus_background_job(0, 'even', even_job)
+            call prepare_focus_background_job(1, 'odd',  odd_job)
+            call solve_distributed_half_pair(even_job, odd_job)
+            call finish_distributed_half_job(even_job, fbg(1))
+            call finish_distributed_half_job(odd_job,  fbg(2))
+            call bg_avg%copy(fbg(1))
+            call bg_avg%add(fbg(2))
+            call bg_avg%mul(0.5)
+            call calculate_pcg_state_diagnostics(params, 0, 'FOCUS BACKGROUND', fbg(1), fbg(2), bg_avg, bg_diag, &
+                &.false., 'sphere')
+            fbg_fsc = bg_diag%fsc
+            fbg_res = [bg_diag%res_fsc0143, bg_diag%res_fsc05, bg_diag%cfar]
+            call bg_diag%kill
+            if( params%l_ml_reg )then
+                call prepare_distributed_half_job(0, 0, 'even', 'ml', even_job, fbg_fsc, fbg(1))
+                call prepare_distributed_half_job(0, 1, 'odd',  'ml', odd_job,  fbg_fsc, fbg(2))
+                call solve_distributed_half_pair(even_job, odd_job)
+                call finish_distributed_half_job(even_job, fbg_ml(1), fbg(1))
+                call finish_distributed_half_job(odd_job,  fbg_ml(2), fbg(2))
+            else
+                call fbg_ml(1)%copy(fbg(1))
+                call fbg_ml(2)%copy(fbg(2))
+            endif
+            call bg_avg%copy(fbg_ml(1))
+            call bg_avg%add(fbg_ml(2))
+            call bg_avg%mul(0.5)
+            call bg_avg%write(string('recvol_focus_bg'//MRC_EXT), del_if_exists=.true.)
+            call bg_avg%kill
+        end subroutine solve_focus_background
+
+        subroutine prepare_focus_background_job( eo_here, half, job )
+            integer,                    intent(in)    :: eo_here
+            character(len=*),           intent(in)    :: half
+            type(distributed_half_job), intent(inout) :: job
+            type(string) :: fname
+            integer(timer_int_kind) :: t_phase
+            real(dp) :: part_mass
+            integer  :: istate, ipart, n_part
+            job%state      = 0
+            job%eo         = eo_here
+            job%half       = half
+            job%solve_kind = 'base'
+            job%nptcls     = 0
+            job%mass       = 0.0_dp
+            job%niters     = 0
+            job%ready       = .false.
+            job%l_atm_solve = .false.
+            job%l_ml_solve  = .false.
+            job%l_keep_op   = .false.
+            if( allocated(job%x) )            deallocate(job%x)
+            if( allocated(job%rel_res_hist) ) deallocate(job%rel_res_hist)
+            if( allocated(job%d_raw) )        deallocate(job%d_raw)
+            call job%pcgop%new(params%box_crop, params%smpd_crop, PCG_LAMBDA, fft_nthreads=pcg_half_nthreads)
+            call job%pcgop%set_window_sphere(params%msk_crop)
+            call job%pcgop%begin_reduction
+            t_phase = tic()
+            do istate = 1, params%nstates
+                do ipart = 1, params%nparts
+                    fname = refine3D_pcg_raw_accum_fname(istate, ipart, params%numlen, half)
+                    call job%pcgop%add_raw_accum_weighted(fname, istate, eo_here, ipart, params%nparts, &
+                        &provenance, 1.0, n_part, mass=part_mass)
+                    job%nptcls = job%nptcls + n_part
+                    job%mass   = job%mass   + part_mass
+                enddo
+            enddo
+            call fname%kill
+            job%time_reduce = real(toc(t_phase),dp)
+            if( job%nptcls == 0 ) THROW_HARD('pcg_focus=yes: a half holds no particles for the consensus background')
+            t_phase = tic()
+            if( params%l_ml_reg )then
+                call job%pcgop%end_accum(.true., job%d_raw)
+                job%l_keep_op  = .true.
+                job%nptcls_raw = job%nptcls
+                job%mass_raw   = job%mass
+            else
+                call job%pcgop%end_accum(.true.)
+            endif
+            call job%pcgop%set_op_mode(PCG_OP_KERNEL)
+            job%time_finalize = real(toc(t_phase),dp)
+            allocate(job%x(params%box_crop,params%box_crop,params%box_crop), source=0.0)
+            job%l_nonzero = .false.
+            job%ready     = .true.
+        end subroutine prepare_focus_background_job
+
+        subroutine ship_focus_background( state_here )
+            integer, intent(in) :: state_here
+            type(image)  :: bg_avg
+            type(string) :: fname
+            if( params%l_ml_reg )then
+                call fbg(1)%write(refine3D_state_halfvol_fname(state_here, 'even', unfil=.true.), del_if_exists=.true.)
+                call fbg(2)%write(refine3D_state_halfvol_fname(state_here, 'odd',  unfil=.true.), del_if_exists=.true.)
+            endif
+            call fbg_ml(1)%write(refine3D_state_halfvol_fname(state_here, 'even'), del_if_exists=.true.)
+            call fbg_ml(2)%write(refine3D_state_halfvol_fname(state_here, 'odd'),  del_if_exists=.true.)
+            call bg_avg%copy(fbg_ml(1))
+            call bg_avg%add(fbg_ml(2))
+            call bg_avg%mul(0.5)
+            fname = refine3D_state_vol_fname(state_here)
+            call bg_avg%write(fname, del_if_exists=.true.)
+            call write_support_provenance(fname, .false., trim(merge('regularized', 'base       ', params%l_ml_reg)), 'sphere')
+            call arr2file(fbg_fsc, refine3D_fsc_fname(state_here))
+            res0143s(state_here) = fbg_res(1)
+            res05s(state_here)   = fbg_res(2)
+            cfars(state_here)    = fbg_res(3)
+            params%vols(state_here)      = fname
+            params%vols_even(state_here) = refine3D_state_halfvol_fname(state_here, 'even')
+            params%vols_odd(state_here)  = refine3D_state_halfvol_fname(state_here, 'odd')
+            call cline%set('vol'//int2str(state_here), fname)
+            state_written(state_here) = .true.
+            write(logfhandle,'(A,I0,A)') '>>> PCG FOCUS: STATE ', state_here, &
+                &' HAS NO PARTICLES IN A HALF; SHIPPING THE CONSENSUS BACKGROUND'
+            call bg_avg%kill
+            call fname%kill
+        end subroutine ship_focus_background
 
         !> contributors of the full population of a state half (the rows a chain represents)
         integer function count_full_state_half( state_here, eo_here ) result(n)
@@ -1588,6 +1759,7 @@ contains
                 &fft_nthreads=pcg_half_nthreads)
             ! serial: the spherical mask memoizes coordinates at module scope
             call set_pcg_solve_support(job%pcgop, params, state_support_msk, l_state_support)
+            if( params%l_pcg_focus ) call job%pcgop%set_fixed_background(fbg(eo_here+1)%get_rmat())
             call job%pcgop%begin_reduction
             if( L_BENCH_GLOB ) bt%rt_op_setup = bt%rt_op_setup + toc(t_bench_half)
             ! the reduction's summation and scaling are timed apart from its read I/O
@@ -1681,6 +1853,7 @@ contains
             if( L_BENCH_GLOB ) bt%rt_finalize(1) = bt%rt_finalize(1) + job%time_finalize
             ! the base solve starts from zero
             allocate(job%x(params%box_crop,params%box_crop,params%box_crop), source=0.0)
+            if( params%l_pcg_focus ) job%x = fbg(eo_here+1)%get_rmat()
             job%l_nonzero = .false.
             job%ready = .true.
         end subroutine prepare_distributed_half_job
@@ -1701,7 +1874,12 @@ contains
             job%mass        = job%mass_raw
             job%time_reduce = 0.0_dp
             if( L_BENCH_GLOB ) t_phase = tic()
-            call set_pcg_solve_support(job%pcgop, params, state_support_msk, l_state_support)
+            if( job%state == 0 )then
+                call job%pcgop%set_window_sphere(params%msk_crop)
+            else
+                call set_pcg_solve_support(job%pcgop, params, state_support_msk, l_state_support)
+                if( params%l_pcg_focus ) call job%pcgop%set_fixed_background(fbg_ml(job%eo+1)%get_rmat())
+            endif
             if( L_BENCH_GLOB ) bt%rt_op_setup = bt%rt_op_setup + toc(t_phase)
             t_phase = tic()
             call job%pcgop%set_ml_prior(fsc_prior, params%tau, params%hp)
@@ -1715,6 +1893,8 @@ contains
             ! the regularized map is the closed-form P_tau optimum of the
             ! current base solution (shrink_by_ml_prior); nothing is solved
             job%x = warm_start%get_rmat()
+            if( params%l_pcg_focus .and. job%state > 0 ) &
+                &job%x = job%x - fbg(job%eo+1)%get_rmat() + fbg_ml(job%eo+1)%get_rmat()
             job%l_nonzero = .false.
             job%ready = .true.
         end subroutine prepare_regularized_half_job

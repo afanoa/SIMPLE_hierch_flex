@@ -122,6 +122,13 @@ contains
         &'system P H P; experimental focused/support mode); spherical mskdiam support when absent', &
         &'e.g. focusmask.mrc', .false., '', group="filter", visibility=UI_VIS_ADVANCED, &
         &activation=ui_activation_equals_any('rec_backend', [character(len=3) :: 'pcg']))
+        call reconstruct3D%add_input(UI_FILT, 'pcg_focus', 'binary', 'PCG fixed-background focused mode', &
+        &'Focused mode of the PCG solve with pcg_mskfile as the focus mask: every state is the consensus of all particles '//&
+        &'(each half its own) outside the mask plus its own deviation from it inside, x = x_fix + P delta solved from '//&
+        &'P(b - H x_fix); focused classification without particle signal subtraction. The state FSC and its ML prior '//&
+        &'are those of the deviation; a state without particles in both halves ships the consensus(yes|no){no}', '', &
+        &.false., 'no', group="filter", visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']), &
+        &activation=ui_activation_equals_any('rec_backend', [character(len=3) :: 'pcg']))
         call reconstruct3D%add_input(UI_MASK, mskdiam, &
         &visibility=UI_VIS_STANDARD)
         ! computer controls

@@ -362,6 +362,28 @@ override and constrains every solve regardless of `automsk`; it is reported as
 the state support, so the FSC mode, the support-provenance sidecar and the NU
 evidence null regime all see a constrained pair.
 
+With `pcg_focus=yes` (2026-10-20) `pcg_mskfile` is instead the focus mask of
+the fixed-background focused mode, focused classification without particle
+signal subtraction. Before any state, the master solves the consensus pair:
+per half, the raw accumulators of every state summed, on the spherical
+support (base solve and, under `ml_reg`, its closed-form regularized pair;
+the merged consensus is written as `recvol_focus_bg.mrc`). Each state then
+solves only its deviation from the consensus of its own half inside the mask,
+`x = x_fix + P delta` with `(P H P) delta = P (b - H_data x_fix)`. `H_data`
+is the kernel data operator without the ridge or priors, so every prior acts
+on the deviation; the base solve uses the base consensus, the replay the
+regularized one. Outside the mask every state ships the consensus exactly,
+and the soft mask tapers the deviation at its edge. At a cropped box the
+Fourier-resampled mask is floored at the depth of its resampling ringing (its
+most negative value, logged per state as the resampling floor), so the ringing
+tail lies outside the support; without a crop the floor is zero. The state FSC, the
+resolution fields and the replay's ML prior are those of the deviation pair
+`x - x_fix`, so a deviation the halves do not reproduce is shrunk back to the
+consensus. A state without particles in both halves ships the consensus pair
+and its FSC. The mode is refused with `trail_rec`, `automsk`, `envfsc`,
+`pcg_solvent`, `atm_prior`, nonuniform filtering and `state=`, and is gated
+by the `focused_pcg` sub-suite of `unit_reconstruction`.
+
 The original-sampling final reconstructions launched by `solve3D` and
 `refine3D_auto` are cold solves. They use a PCG iteration budget of at least
 five; a larger user-supplied `maxits_pcg` remains in force. An explicit

@@ -10,7 +10,7 @@ private
 public :: cmdline, cmdline_err
 #include "simple_local_flags.inc"
 
-integer, parameter :: MAX_CMDARGS = 100
+integer, parameter :: MAX_CMDARGS = 200
 logical, parameter :: DEBUG_HERE  = .false.
 ! In-process handshakes set by one commander on the command line of another
 ! (never by a user): they are outside the generated argument vocabulary, so a
@@ -74,6 +74,7 @@ contains
         logical :: skip_required_keys
         ! parse command line
         self%argcnt = command_argument_count()
+        if( self%argcnt > MAX_CMDARGS ) THROW_HARD('more command-line arguments than MAX_CMDARGS; parse')
         call get_command(self%entire_line)
         cmdline_glob = trim(self%entire_line)
         call get_command_argument(0,buffer)
@@ -214,6 +215,7 @@ contains
         logical :: skip_required_keys
         ! parse command line
         self%argcnt = command_argument_count()
+        if( self%argcnt > MAX_CMDARGS ) THROW_HARD('more command-line arguments than MAX_CMDARGS; parse_private')
         call get_command(self%entire_line)
         cmdline_glob = trim(self%entire_line)
         if( .not. str_has_substr(self%entire_line,'prg=') ) THROW_HARD('prg= flag must be set on command line')
@@ -311,11 +313,12 @@ contains
         character(len=*), intent(in)    :: line
         type(string), allocatable       :: keys_required(:), defined_keys(:)
         type(args)                      :: allowed_args
-        character(len=XLONGSTRLEN)      :: arg(MAX_CMDARGS)
+        character(len=XLONGSTRLEN), allocatable :: arg(:)
         type(ui_program), pointer       :: ptr2prg => null()
         integer :: i, ikey, pos, sz_keys_req, nargs_required
         logical :: skip_required_keys
         call self%kill
+        allocate(arg(MAX_CMDARGS))
         self%entire_line = adjustl(trim(line))
         cmdline_glob     = trim(self%entire_line)
         if( .not. str_has_substr(self%entire_line,'prg=') ) THROW_HARD('prg= flag must be set on private command line')

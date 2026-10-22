@@ -970,6 +970,24 @@ contains
             if( self%l_pcg_solvent ) THROW_HARD('atm_prior=yes and pcg_solvent=yes are exclusive')
             if( self%l_nonuniform ) THROW_HARD('atm_prior=yes takes no nonuniform filtering')
         endif
+        select case(trim(self%pcg_focus))
+            case('yes')
+                self%l_pcg_focus = .true.
+            case('no')
+                self%l_pcg_focus = .false.
+            case DEFAULT
+                THROW_HARD('pcg_focus must be yes or no')
+        end select
+        if( self%l_pcg_focus )then
+            if( trim(self%rec_backend) /= 'pcg' )    THROW_HARD('pcg_focus=yes requires rec_backend=pcg')
+            if( .not. cline%defined('pcg_mskfile') ) THROW_HARD('pcg_focus=yes requires the focus mask pcg_mskfile')
+            if( self%l_trail_rec )   THROW_HARD('pcg_focus=yes requires trail_rec=no')
+            if( self%l_pcg_solvent ) THROW_HARD('pcg_focus=yes requires pcg_solvent=no')
+            if( self%l_atm_prior )   THROW_HARD('pcg_focus=yes requires atm_prior=no')
+            if( self%l_nonuniform )  THROW_HARD('pcg_focus=yes takes no nonuniform filtering')
+            if( trim(self%automsk) /= 'no' ) THROW_HARD('pcg_focus=yes requires automsk=no')
+            if( self%l_envfsc )      THROW_HARD('pcg_focus=yes requires envfsc=no')
+        endif
         if( self%lambda_atm < 0. ) THROW_HARD('lambda_atm must be non-negative (0 = estimated)')
         if( self%bfac_data < 0. )  THROW_HARD('bfac_data must be non-negative')
         if( self%maxits_atm < 1 )  THROW_HARD('maxits_atm must be at least 1')

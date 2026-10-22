@@ -53,6 +53,7 @@ type :: parameters
     character(len=3)          :: exit_collapse='no'   !< early exit on state collapse(yes|no){no}
     character(len=3)          :: envfsc='no'          !< envelope solvent correction for FSC calculation(yes|no){no}
     character(len=3)          :: pcg_solvent='no'     !< PCG soft solvent prior on the base solve: per-half real-space ridge in solvent identified from a prior-free solve, then the same cold solve again(yes|no){no}
+    character(len=3)          :: pcg_focus='no'
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
     character(len=3)          :: pcg_solvent_check='no' !< PCG solvent prior: re-solve the strength grid for real and print it beside the closed-form estimate (validation only)(yes|no){no}
     character(len=3)          :: eo_stage='yes'       !< Whether the last stage of solve2D uses a resolution limit determined with e/o pairs(yes|no){yes}
@@ -636,6 +637,7 @@ type :: parameters
     logical :: l_eer_fraction    = .false.
     logical :: l_envfsc          = .false.
     logical :: l_pcg_solvent     = .false.
+    logical :: l_pcg_focus       = .false.
     logical :: l_pcg_solvent_check = .false.
     logical :: l_pcg_solvent_lambda_auto = .true. !< pcg_solvent_lambda not given: estimated per state and iteration
     logical :: l_atm_prior       = .false.

@@ -278,6 +278,7 @@ contains
         call child_cline%delete('pcg_solvent')
         call child_cline%delete('pcg_solvent_lambda')
         call child_cline%delete('pcg_solvent_check')
+        call child_cline%delete('pcg_focus')
     end subroutine strip_pcg_backend_keys
 
     ! Copy only controls that genuinely define the reconstruction performed at

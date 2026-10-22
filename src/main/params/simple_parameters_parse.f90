@@ -80,6 +80,7 @@ contains
         call reg%add_char('element', self%element)
         call reg%add_char('envfsc', self%envfsc)
         call reg%add_char('pcg_solvent', self%pcg_solvent)
+        call reg%add_char('pcg_focus', self%pcg_focus)
         call reg%add_char('pcg_solvent_check', self%pcg_solvent_check)
         call reg%add_char('atm_prior', self%atm_prior)
         call reg%add_char('eo_stage', self%eo_stage)

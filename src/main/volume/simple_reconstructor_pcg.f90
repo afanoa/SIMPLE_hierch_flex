@@ -85,6 +85,8 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     complex, allocatable :: b_work(:,:,:)            !< RHS accumulator, full-range
     real,    allocatable :: b_rhs(:,:,:)             !< folded/deapodized/masked RHS, box^3
     real,    allocatable :: b_rhs_nosupp(:,:,:)      !< the RHS before the support, kept for regularize_finalized
+    real,    allocatable :: xfix(:,:,:)
+    logical              :: l_fixbg = .false.
     logical              :: l_accum = .false.
     logical              :: l_rhs   = .false.
     integer              :: reduction_next_part = 1  !< fixed raw-artifact association order
@@ -169,6 +171,8 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     procedure :: fit_atom_amplitudes
     procedure :: atomic_model_map
     procedure :: get_solve_support
+    procedure :: set_fixed_background
+    procedure, private :: subtract_fixed_background
     procedure, private :: add_ridge
     procedure, private :: build_env
     procedure, private :: build_hk_luts
@@ -566,6 +570,27 @@ contains
         endif
     end subroutine get_solve_support
 
+    subroutine set_fixed_background( self, xfix )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(in)    :: xfix(:,:,:)
+        if( .not. self%l_mask ) THROW_HARD('a fixed background needs the solve support installed first; set_fixed_background')
+        if( any(shape(xfix) /= self%box) ) THROW_HARD('fixed background dimensions differ from the solve box; set_fixed_background')
+        if( .not. all(ieee_is_finite(xfix)) ) THROW_HARD('non-finite fixed background; set_fixed_background')
+        self%xfix    = xfix
+        self%l_fixbg = .true.
+    end subroutine set_fixed_background
+
+    subroutine subtract_fixed_background( self )
+        class(reconstructor_pcg), intent(inout) :: self
+        real, allocatable :: xf(:,:,:), hx(:,:,:)
+        if( .not. self%l_kernel ) THROW_HARD('a fixed background needs the kernel operator; subtract_fixed_background')
+        allocate(xf, source=self%xfix)
+        hx = self%apply_normal_kernel(xf, data_only=.true.)
+        call self%mask_mul(hx)
+        self%b_rhs = self%b_rhs - hx
+        deallocate(xf, hx)
+    end subroutine subtract_fixed_background
+
     !> Jacobi term of the real-space ridges, the solvent ridge lambda_s (1-w(r)) and the atomicity prior lambda_A:
     !! neither is Fourier-diagonal, so the solvent ridge's mean over the solve domain and lambda_A enter the measured
     !! voxels as c/padsc^2 like the ML prior. Idempotent: the last folded constant is replaced
@@ -646,12 +671,13 @@ contains
         v = v * self%invenv
     end subroutine deapod_mul
 
-    !> x = window*u, the shipped map
+    !> x = x_fix + window*u, the shipped map (x_fix = 0 without a fixed background)
     pure subroutine window_mul( self, v )
         class(reconstructor_pcg), intent(in)    :: self
         real,                     intent(inout) :: v(self%box,self%box,self%box)
         if( .not. self%l_mask ) return
         v = v * self%window
+        if( self%l_fixbg ) v = v + self%xfix
     end subroutine window_mul
 
     !> output-space initial guess (x = window*u, every shipped half map) -> CG
@@ -664,6 +690,7 @@ contains
         class(reconstructor_pcg), intent(in)    :: self
         real,                     intent(inout) :: v(self%box,self%box,self%box)
         if( .not. self%l_mask ) return
+        if( self%l_fixbg ) v = v - self%xfix
         where( self%window >= PCG_SUPPORT_DIV_MIN )
             v = v / self%window
         elsewhere
@@ -706,6 +733,8 @@ contains
         if( allocated(self%b_work)   ) deallocate(self%b_work)
         if( allocated(self%b_rhs)    ) deallocate(self%b_rhs)
         if( allocated(self%b_rhs_nosupp) ) deallocate(self%b_rhs_nosupp)
+        if( allocated(self%xfix)     ) deallocate(self%xfix)
+        self%l_fixbg = .false.
         self%l_accum = .false.
         self%l_rhs   = .false.
         call self%kill_lattice
@@ -1098,15 +1127,19 @@ contains
 
     !> kernelized (Toeplitz/Gram) operator H_data p = crop(IFFT(Khat FFT(pad p))),
     !! O(box^3 log box) and independent of the particle count; see build_kernel
-    function apply_normal_kernel( self, p ) result( hp )
+    function apply_normal_kernel( self, p, data_only ) result( hp )
         class(reconstructor_pcg), intent(inout) :: self
         real,                     intent(in)    :: p(self%box,self%box,self%box)
+        logical,        optional, intent(in)    :: data_only
         real,    allocatable :: hp(:,:,:), work(:,:,:)
         complex, allocatable :: cmat(:,:,:)
         real                    :: kv
         integer                 :: cdim(3), i, j, k
         integer(timer_int_kind) :: tp
+        logical                 :: l_prior
         if( .not. self%l_kernel ) THROW_HARD('build_kernel has not been called; apply_normal_kernel')
+        l_prior = self%l_ml_prior
+        if( present(data_only) ) l_prior = l_prior .and. .not. data_only
         call self%ensure_wimg
         allocate(work(self%box,self%box,self%box), source=p)
         ! Khat is the bare Toeplitz T; with deapodization off the matrix-free
@@ -1127,7 +1160,7 @@ contains
             do j = 1, cdim(2)
                 do i = 1, cdim(1)
                     kv = self%Khat(i,j,k)
-                    if( self%l_ml_prior  .and. self%l_deapod ) kv = kv + self%ml_prior(i,j,k)
+                    if( l_prior .and. self%l_deapod ) kv = kv + self%ml_prior(i,j,k)
                     cmat(i,j,k) = cmat(i,j,k) * kv
                 end do
             end do
@@ -1140,8 +1173,11 @@ contains
         hp = center_crop_real3d(self%wimg%get_rmat(),self%box)
         if( self%l_profile ) self%t_fold = self%t_fold + pcg_toc(tp)
         if( .not. self%l_deapod ) hp = hp * self%env
-        if( self%l_ml_prior .and. .not. self%l_deapod )then
+        if( l_prior .and. .not. self%l_deapod )then
             hp = hp + self%apply_fourier_diagonal(p, self%ml_prior)
+        endif
+        if( present(data_only) )then
+            if( data_only ) return
         endif
         ! band precision on the deapodized domain (+ the solvent ridge when set);
         ! attachment mode enforced upstream
@@ -1774,6 +1810,7 @@ contains
             deallocate(dwork)
         endif
         if( l_kernel ) call self%finalize_khat
+        if( self%l_fixbg ) call self%subtract_fixed_background
         self%l_accum = .false.
     end subroutine end_accum
 
@@ -1804,6 +1841,7 @@ contains
         call self%mask_mul(self%b_rhs)
         call self%finalize_density_accum(d, .true., .false.)
         deallocate(d)
+        if( self%l_fixbg ) call self%subtract_fixed_background
     end subroutine regularize_finalized
 
     ! SETUP: PRECONDITIONER AND KERNEL

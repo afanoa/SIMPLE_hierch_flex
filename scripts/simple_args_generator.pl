@@ -61,7 +61,11 @@ foreach my$i (0..$#vars){
 @vars = grep defined, @vars;
 
 # add wanted stuff (volumes)
-foreach my$i (1 .. 20){
+open(DEFS, "< ../../defs/simple_defs.f90") or die "Cannot open simple_defs.f90\n";
+my ($maxs) = map { /\bMAXS\s*=\s*(\d+)/ ? $1 : () } <DEFS>;
+close(DEFS);
+defined($maxs) or die "MAXS not found in simple_defs.f90\n";
+foreach my$i (1 .. $maxs){
     my$str = 'vol'.$i;
     push(@vars,$str);
 }

@@ -3240,6 +3240,9 @@ the acceptable-looking outputs do not validate the prior.
      variant (+ lambda_m diag((1-M)^2)) and the fixed-background
      focused mode (x = x_fix + P*delta, RHS = P(b - A x_fix)) -- both
      drop out of the same set_mask_volume machinery when wanted.
+     The focused mode was implemented 2026-10-20 as `pcg_focus=yes`
+     (x_fix = the consensus of every state, per half;
+     reconstruct3D_pcg_policy.md section 3).
      Mode semantics for the record: HARD is a change of variables
      (x = P u), so out-of-support unknowns are REMOVED -- no strength
      parameter exists, conditioning improves by the support fraction,
