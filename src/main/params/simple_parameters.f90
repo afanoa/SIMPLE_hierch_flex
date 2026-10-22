@@ -79,6 +79,7 @@ type :: parameters
     character(len=3)          :: interactive='no'     !< Whether job is interactive
     character(len=3)          :: iterstats='no'       !< Whether to keep track alignment stats throughout iterations
     character(len=3)          :: json='no'            !< Print in json format (mainly for nice)
+    character(len=3)          :: junk_screen='yes'
     character(len=3)          :: keepvol='no'         !< dev flag for preserving iterative volumes in refine3d
     character(len=3)          :: lam_anneal='no'      !< anneal lambda parameter
     character(len=3)          :: loc_sdev='no'        !< Whether to calculate local standard deviations(yes|no){no}
@@ -598,7 +599,7 @@ type :: parameters
     real    :: phshift_max=180.    !< maximum fitted phase shift(in degrees){180}
     real    :: phshift_min=0.      !< minimum fitted phase shift(in degrees){0}
     real    :: phshift_step=10.    !< phase-shift grid step(in degrees){10}
-    real    :: pole_merge=0.95
+    real    :: pole_merge=0.
     real    :: prob_athres=10.     !< angle threshold for prob distribution samplings
     real    :: rec_athres=10.      !< angle threshold for reconstruction
     real    :: regpass_fsc=0.143   !< refine3D_auto: FSC value of the startup pair defining the registration-pass band{0.143}

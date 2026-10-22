@@ -114,6 +114,7 @@ contains
         call reg%add_char('interactive', self%interactive)
         call reg%add_char('iterstats', self%iterstats)
         call reg%add_char('json', self%json)
+        call reg%add_char('junk_screen', self%junk_screen)
         call reg%add_char('keepvol', self%keepvol)
         call reg%add_char('keys', self%keys)
         call reg%add_char('lam_anneal', self%lam_anneal)

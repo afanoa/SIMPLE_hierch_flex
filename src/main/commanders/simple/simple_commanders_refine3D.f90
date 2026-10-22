@@ -79,6 +79,11 @@ type, extends(commander_base) :: commander_site_discover
     procedure :: execute      => exec_site_discover
 end type commander_site_discover
 
+type, extends(commander_base) :: commander_landscape_sample
+  contains
+    procedure :: execute      => exec_landscape_sample
+end type commander_landscape_sample
+
 contains
 
     subroutine exec_refine3D_auto( self, cline )
@@ -2190,7 +2195,8 @@ contains
     end subroutine exec_state_split
 
     subroutine exec_site_rank( self, cline )
-        use simple_state_mergeup,     only: state_mergeup, merge_poles
+        use simple_state_mergeup,     only: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, &
+                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG
         use simple_eo_partition,      only: ensure_field_halves
         use simple_srch_sort_loc,     only: hpsort
         use simple_string_utils,      only: list_of_ints2arr
@@ -2203,12 +2209,17 @@ contains
         type(sp_project)     :: spproj
         type(state_mergeup)  :: site
         type(string), allocatable :: names(:)
-        real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:)
-        integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:)
-        logical, allocatable :: seed(:)
+        real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:), posth(:), curveh(:,:)
+        real,    allocatable :: craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:)
+        integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsh(:,:), nsx(:), twin(:)
+        integer, allocatable :: gm(:)
+        logical, allocatable :: seed(:), allsel(:), hsel(:,:), qsel(:,:), ok(:), starts(:,:)
+        complex, allocatable :: devs(:,:,:,:), dall(:,:,:,:,:,:), dq(:,:,:,:,:,:)
         character(len=:), allocatable :: tag, members
+        character(len=2048) :: line
         real    :: smpd
-        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie
+        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq
+        logical :: l_halves
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
         call cline%set('hp',      40.)
@@ -2243,60 +2254,120 @@ contains
         endif
         eo    = [(build%spproj_field%get_eo(rows(i)), i=1,n)]
         ntail = min(15000, n / 6)
-        allocate(posts(n,2*size(dirs)), names(2*size(dirs)))
-        do idir = 1, size(dirs)
-            ord = [(i, i=1,n)]
-            key = z(rows,idir)
-            call hpsort(key, ord)
-            do itail = 1, 2
-                ie  = 2 * (idir - 1) + itail
-                tag = TAILS(itail)
-                if( dirs(idir) > 0 ) tag = 'z'//int2str(dirs(idir))//tag
-                names(ie) = tag
-                allocate(seed(n), source=.false.)
-                if( itail == 1 )then
-                    seed(ord(1:ntail)) = .true.
-                else
-                    seed(ord(n-ntail+1:n)) = .true.
-                endif
-                write(logfhandle,'(A)') '>>> SITE_RANK '//tag//' tail: '//int2str(ntail)//' of '//int2str(n)//' particles'
-                call site%site_em(seed, params%pcg_mskfile, post, nstar, curve)
-                posts(:,ie) = post
-                allocate(top(nrows), source=0)
-                do ih = 0, 1
-                    sel  = pack([(i, i=1,n)], eo == ih)
-                    ordh = [(i, i=1,size(sel))]
-                    key  = -post(sel)
-                    call hpsort(key, ordh)
-                    top(rows(sel(ordh(1:min(nstar/2, size(sel)))))) = 1
-                end do
-                call write_rows('site_post_'//tag//'.txt', post)
-                call write_ints('site_top_'//tag//'.txt', top)
-                call fopen(funit, string('site_curve_'//tag//'.txt'), status='replace', action='write', iostat=ios)
-                call fileiochk('site_rank: cannot write site_curve_'//tag//'.txt', ios)
-                write(funit,'(A)') '# N holdout_corr'
-                do i = 1, size(curve,2)
-                    write(funit,'(I0,1X,F8.4)') nint(curve(1,i)), curve(2,i)
-                end do
-                call fclose(funit)
-                write(logfhandle,'(A,A,A,I0,A,F7.1)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ', site class weight ', sum(post)
-                deallocate(seed, top)
+        call starts_of
+        ne = size(names)
+        allocate(posts(n,ne), nsh(ne,2), nsx(ne))
+        l_halves = params%pole_merge <= 0.
+        allocate(allsel(n), source=.true.)
+        allocate(hsel(n,2), qsel(n,4))
+        do i = 1, n
+            hsel(i,1) = mod((rows(i) - 1) / 2, 2) == 0
+            do h = 1, 4
+                qsel(i,h) = 2 * mod((rows(i) - 1) / 2, 2) + mod((rows(i) - 1) / 4, 2) + 1 == h
             end do
         end do
-        call merge_poles(posts, params%pole_merge, PROB_MULTISTATE_MIN_POP + 1, sp, grp, seeds)
+        hsel(:,2) = .not. hsel(:,1)
+        do ie = 1, ne
+            tag  = names(ie)%to_char()
+            seed = starts(:,ie)
+            write(logfhandle,'(A)') '>>> SITE_RANK '//tag//' start: '//int2str(count(seed))//' of '//int2str(n)//' particles'
+            call site%site_em(seed, allsel, params%pcg_mskfile, post, nstar, curve, devs, [real ::])
+            posts(:,ie) = post
+            nsx(ie)     = nstar
+            if( l_halves )then
+                do h = 1, 2
+                    call site%site_em(seed .and. hsel(:,h), hsel(:,h), params%pcg_mskfile, posth, nsh(ie,h), curveh, devs, [real ::])
+                    if( .not. allocated(dall) ) allocate(dall(size(devs,1),size(devs,2),size(devs,3),2,ne,2))
+                    dall(:,:,:,:,ie,h) = devs
+                    write(logfhandle,'(A,I0,A,I0)') '>>> SITE_RANK '//tag//' half ', h, ' pole: N* ', nsh(ie,h)
+                end do
+                do h = 1, 4
+                    call site%site_em(seed .and. qsel(:,h), qsel(:,h), params%pcg_mskfile, posth, nstarq, curveh, devs, [real ::])
+                    if( .not. allocated(dq) ) allocate(dq(size(devs,1),size(devs,2),size(devs,3),2,ne,4))
+                    dq(:,:,:,:,ie,h) = devs
+                end do
+            endif
+            allocate(top(nrows), source=0)
+            do ih = 0, 1
+                sel  = pack([(i, i=1,n)], eo == ih)
+                ordh = [(i, i=1,size(sel))]
+                key  = -post(sel)
+                call hpsort(key, ordh)
+                top(rows(sel(ordh(1:min(nstar/2, size(sel)))))) = 1
+            end do
+            call write_rows('site_post_'//tag//'.txt', post)
+            call write_ints('site_top_'//tag//'.txt', top)
+            call fopen(funit, string('site_curve_'//tag//'.txt'), status='replace', action='write', iostat=ios)
+            call fileiochk('site_rank: cannot write site_curve_'//tag//'.txt', ios)
+            write(funit,'(A)') '# N holdout_corr'
+            do i = 1, size(curve,2)
+                write(funit,'(I0,1X,F8.4)') nint(curve(1,i)), curve(2,i)
+            end do
+            call fclose(funit)
+            write(logfhandle,'(A,A,A,I0,A,F7.1)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ', site class weight ', sum(post)
+            deallocate(top)
+        end do
+        call merge_poles(posts, merge(2., params%pole_merge, l_halves), PROB_MULTISTATE_MIN_POP + 1, sp, grp, seeds)
+        if( l_halves )then
+            call halves_matrices
+            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .true., [(.false., i=1,ne)], &
+                &grp, seeds, ok, twin, gm)
+            if( maxval([0, seeds]) > maxval([0, grp]) ) call test_rest
+            call fopen(funit, string('site_halves.txt'), status='replace', action='write', iostat=ios)
+            call fileiochk('site_rank: cannot write site_halves.txt', ios)
+            write(funit,'(A)') '# endpoint, N* in half 1 / 2, reliability of its half-1 / half-2 version, correlation of its '//&
+                &'half-1 version with every endpoint''s half-2 version, self-match / noise ceiling, pole (0 = rejected or dropped)'
+            do i = 1, size(names)
+                write(line,'(1X,I0,1X,I0,2(1X,F6.3))') nsh(i,1), nsh(i,2), rel1(i), rel2(i)
+                members = names(i)%to_char()//trim(line)//' |'
+                do j = 1, size(names)
+                    write(line,'(1X,F6.3)') craw(i,j)
+                    members = members//trim(line)
+                end do
+                write(line,'(F6.3)') craw(i,i) / sqrt(max(rel1(i), 1.e-3) * max(rel2(i), 1.e-3))
+                members = members//' | '//trim(adjustl(line))//' | '//int2str(grp(i))
+                write(funit,'(A)') members
+                write(logfhandle,'(A)') '>>> SITE_RANK halves '//members
+            end do
+            call halves_margins
+            do i = 1, size(names)
+                if( twin(i) == 0 ) cycle
+                members = 'twin '//names(i)%to_char()//' '//names(twin(i))%to_char()//' '//trim(merge('accepted', 'rejected', ok(i)))
+                write(funit,'(A)') members
+                write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' joins '//names(twin(i))%to_char()//&
+                    &' (each other''s best partner in both directions): '//trim(merge('accepted', 'rejected', ok(i)))
+            end do
+            call fclose(funit)
+        endif
         do i = 1, size(names)
-            if( grp(i) == 0 ) write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' dropped (technical): '//&
+            if( grp(i) /= 0 ) cycle
+            if( l_halves )then
+                if( .not. ok(i) )then
+                    write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' rejected: its half-versions '//&
+                        &'are not each other''s best matches'
+                    cycle
+                endif
+            endif
+            write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' dropped (technical): '//&
                 &'its pole drew fewer than '//int2str(PROB_MULTISTATE_MIN_POP + 1)//' seeds, the fewest refine3D refines as a state'
         end do
+        call fopen(funit, string('site_starts.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_rank: cannot write site_starts.txt', ios)
+        write(funit,'(A)') '# start, seed particles, N*, pole it reached (0 = rejected or dropped)'
+        do i = 1, ne
+            write(funit,'(A,3(1X,I0))') names(i)%to_char(), count(starts(:,i)), nsx(i), grp(i)
+        end do
+        call fclose(funit)
         call fopen(funit, string('site_spearman.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('site_rank: cannot write site_spearman.txt', ios)
-        do i = 1, size(names)
-            do j = i + 1, size(names)
+        do i = 1, ne
+            do j = i + 1, ne
                 write(logfhandle,'(A,F7.3)') '>>> SITE_RANK Spearman '//names(i)%to_char()//' vs '//names(j)%to_char()//' ', sp(i,j)
                 write(funit,'(A,F7.3)') names(i)%to_char()//' '//names(j)%to_char()//' ', sp(i,j)
             end do
         end do
         call fclose(funit)
+        if( params%junk_screen .eq. 'yes' ) call site%junk_screen(seeds)
         allocate(top(nrows), source=0)
         top(rows) = seeds
         call write_ints('site_seeds.txt', top)
@@ -2310,12 +2381,190 @@ contains
             write(funit,'(I0,1X,I0,A)') j, count(seeds == j), members
             write(logfhandle,'(A)') '>>> SITE_RANK pole '//int2str(j)//':'//members//', '//int2str(count(seeds == j))//' seeds'
         end do
+        j = maxval([0, seeds])
+        if( j > maxval([0, grp]) )then
+            write(funit,'(I0,1X,I0,A)') j, count(seeds == j), ' rest'
+            write(logfhandle,'(A)') '>>> SITE_RANK rest state '//int2str(j)//': '//int2str(count(seeds == j))//&
+                &' seeds (best pole posterior < 0.5)'
+        endif
         call fclose(funit)
         call site%kill
         call build%kill_general_tbox
         call simple_end('**** SIMPLE_SITE_RANK NORMAL STOP ****')
 
     contains
+
+        subroutine halves_matrices
+            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
+            integer :: a, b, k, m
+            m = size(names)
+            if( allocated(craw) ) deallocate(craw, rel1, rel2, cq, r1q, r2q)
+            allocate(craw(m,m), rel1(m), rel2(m), cq(m,m,4), r1q(m,4), r2q(m,4))
+            do a = 1, m
+                rel1(a) = site%half_rel(dall(:,:,:,:,a,1))
+                rel2(a) = site%half_rel(dall(:,:,:,:,a,2))
+                do b = 1, m
+                    craw(a,b) = site%half_corr(dall(:,:,:,:,a,1), dall(:,:,:,:,b,2))
+                end do
+                do k = 1, 4
+                    r1q(a,k) = site%half_rel(dq(:,:,:,:,a,QA(k)))
+                    r2q(a,k) = site%half_rel(dq(:,:,:,:,a,QB(k)))
+                    do b = 1, m
+                        cq(a,b,k) = site%half_corr(dq(:,:,:,:,a,QA(k)), dq(:,:,:,:,b,QB(k)))
+                    end do
+                end do
+            end do
+        end subroutine halves_matrices
+
+        ! the rest (particles no accepted pole claims at 0.5) is ranked by 1 - its best pole posterior and tested as one more endpoint
+        subroutine test_rest
+            type(string), allocatable :: nm2(:)
+            complex,      allocatable :: d2(:,:,:,:,:,:), q2(:,:,:,:,:,:)
+            real,         allocatable :: gmax(:), rscore(:), p2(:,:)
+            integer,      allocatable :: s2(:,:)
+            integer :: g, m, k
+            m = size(names)
+            allocate(gmax(n), source=0.)
+            do g = 1, maxval(grp)
+                gmax = max(gmax, sum(posts(:,pack([(k, k=1,m)], grp == g)), dim=2) / real(count(grp == g)))
+            end do
+            rscore = 1. - gmax
+            allocate(d2(size(dall,1),size(dall,2),size(dall,3),2,m+1,2), q2(size(dq,1),size(dq,2),size(dq,3),2,m+1,4))
+            d2(:,:,:,:,1:m,:) = dall
+            q2(:,:,:,:,1:m,:) = dq
+            allocate(s2(m+1,2), p2(n,m+1))
+            s2(1:m,:) = nsh
+            p2(:,1:m) = posts
+            p2(:,m+1) = rscore
+            do h = 1, 2
+                call site%site_em(hsel(:,h), hsel(:,h), params%pcg_mskfile, posth, s2(m+1,h), curveh, devs, rscore)
+                d2(:,:,:,:,m+1,h) = devs
+            end do
+            do k = 1, 4
+                call site%site_em(qsel(:,k), qsel(:,k), params%pcg_mskfile, posth, nstarq, curveh, devs, rscore)
+                q2(:,:,:,:,m+1,k) = devs
+            end do
+            nm2 = [names, string('rest')]
+            call move_alloc(nm2, names)
+            call move_alloc(d2, dall)
+            call move_alloc(q2, dq)
+            call move_alloc(s2, nsh)
+            call move_alloc(p2, posts)
+            call halves_matrices
+            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
+                &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm)
+            write(logfhandle,'(A)') '>>> SITE_RANK rest state (best pole posterior < 0.5): '//trim(merge('accepted as a state       ', &
+                &'rejected, to its best pole', grp(m+1) > 0))
+        end subroutine test_rest
+
+        subroutine halves_margins
+            logical, allocatable :: cnd(:), solo(:), pt(:)
+            integer :: a, b, k, m
+            m    = size(names)
+            cnd  = halves_cand(craw, rel1, rel2, cq)
+            solo = [(names(a)%to_char() == 'rest', a=1,m)]
+            write(funit,'(A)') '# merge tests: endpoint pair, margin min(cross) - min(self), SE over the four cross-half quarter '//&
+                &'pairs (sd / sqrt 2), floor = the larger SE of the two normalised self-matches, margin / max(SE, floor) (groups merge, '//&
+                &'closest first, when every cross pair is above -'//int2str(nint(HALVES_KSIG))//'; only candidates, a self-match '//&
+                &int2str(nint(HALVES_KSIG))//' SE above 0, merge, the rest never), merged'
+            do a = 1, m
+                do b = a + 1, m
+                    call emit_margin('merge '//names(a)%to_char()//' '//names(b)%to_char(), halves_merge_margin(craw, rel1, rel2, a, b),&
+                        &[(halves_merge_margin(cq(:,:,k), r1q(:,k), r2q(:,k), a, b), k=1,4)], gm(a) == gm(b), &
+                        &halves_floor(cq, r1q, r2q, a, b))
+                end do
+            end do
+            write(funit,'(A)') '# accept tests: endpoint, its self correlation minus the best candidate partner outside its group '//&
+                &'(half 1 to half 2, then half 2 to half 1; accepted at '//int2str(nint(HALVES_KSIG))//' SE; the rest is no partner of '//&
+                &'the poles and is tested last, against the accepted poles), SE, margin / SE, accepted'
+            do a = 1, m
+                pt = cnd .and. .not. solo
+                if( solo(a) ) pt = ok .and. .not. solo
+                call emit_margin('accept '//names(a)%to_char()//' row', halves_accept_margin(craw, gm, pt, a, .true.), &
+                    &[(halves_accept_margin(cq(:,:,k), gm, pt, a, .true.), k=1,4)], ok(a), -1.)
+                call emit_margin('accept '//names(a)%to_char()//' column', halves_accept_margin(craw, gm, pt, a, .false.), &
+                    &[(halves_accept_margin(cq(:,:,k), gm, pt, a, .false.), k=1,4)], ok(a), -1.)
+            end do
+            write(funit,'(A)') '# quarter replicates k (a half-1 quarter vs a half-2 quarter): the endpoints'' reliabilities in '//&
+                &'each, then every endpoint''s row of correlations with the endpoints'' other-quarter versions'
+            do k = 1, 4
+                write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' rel1', r1q(:,k)
+                write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' rel2', r2q(:,k)
+                do a = 1, m
+                    write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' row '//names(a)%to_char(), cq(a,:,k)
+                end do
+            end do
+        end subroutine halves_margins
+
+        subroutine emit_margin( what, m, reps, l_yes, flr )
+            character(len=*), intent(in) :: what
+            real,             intent(in) :: m, reps(:), flr
+            logical,          intent(in) :: l_yes
+            character(len=96) :: s
+            real :: se
+            se = halves_se(reps)
+            if( flr >= 0. )then
+                write(s,'(4(1X,F7.3))') m, se, flr, m / max(se, flr, 1.e-6)
+            else
+                write(s,'(3(1X,F7.3))') m, se, m / max(se, 1.e-6)
+            endif
+            write(funit,'(A)') what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
+            write(logfhandle,'(A)') '>>> SITE_RANK halves '//what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
+        end subroutine emit_margin
+
+        subroutine starts_of
+            type(string), allocatable :: fn(:), ff(:)
+            real,         allocatable :: v(:)
+            character(len=4096) :: ln
+            integer :: fu, io, k0, j0, nd2
+            allocate(fn(0), ff(0))
+            if( cline%defined('infile2') )then
+                call fopen(fu, params%infile2, status='old', action='read', iostat=io)
+                call fileiochk('site_rank: cannot read '//params%infile2%to_char(), io)
+                do
+                    read(fu,'(A)',iostat=io) ln
+                    if( io /= 0 ) exit
+                    ln = adjustl(ln)
+                    if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+                    j0 = index(trim(ln), ' ')
+                    if( j0 == 0 ) THROW_HARD('site_rank: a start needs a name and a seed file: '//trim(ln))
+                    fn = [fn, string(ln(1:j0-1))]
+                    ff = [ff, string(trim(adjustl(ln(j0+1:))))]
+                end do
+                call fclose(fu)
+            endif
+            nd2 = 2 * size(dirs)
+            allocate(names(nd2 + size(fn)))
+            allocate(starts(n, nd2 + size(fn)), source=.false.)
+            do idir = 1, size(dirs)
+                ord = [(i, i=1,n)]
+                key = z(rows,idir)
+                call hpsort(key, ord)
+                do itail = 1, 2
+                    k0  = 2 * (idir - 1) + itail
+                    tag = TAILS(itail)
+                    if( dirs(idir) > 0 ) tag = 'z'//int2str(dirs(idir))//tag
+                    names(k0) = tag
+                    if( itail == 1 )then
+                        starts(ord(1:ntail),k0) = .true.
+                    else
+                        starts(ord(n-ntail+1:n),k0) = .true.
+                    endif
+                end do
+            end do
+            do k0 = 1, size(fn)
+                allocate(v(nrows))
+                call fopen(fu, ff(k0), status='old', action='read', iostat=io)
+                call fileiochk('site_rank: cannot read '//ff(k0)%to_char(), io)
+                do j0 = 1, nrows
+                    read(fu,*) v(j0)
+                end do
+                call fclose(fu)
+                starts(:,nd2+k0) = v(rows) > 0.
+                names(nd2+k0)    = fn(k0)
+                deallocate(v)
+            end do
+        end subroutine starts_of
 
         subroutine read_latent
             real,    allocatable :: zq(:)
@@ -2428,6 +2677,42 @@ contains
         call simple_end('**** SIMPLE_SITE_DISCOVER NORMAL STOP ****')
     end subroutine exec_site_discover
 
+    subroutine exec_landscape_sample( self, cline )
+        use simple_landscape_sample, only: landscape_sample
+        use simple_eo_partition,     only: ensure_field_halves
+        class(commander_landscape_sample), intent(inout) :: self
+        class(cmdline),                    intent(inout) :: cline
+        type(parameters)       :: params
+        type(builder)          :: build
+        type(sp_project)       :: spproj
+        type(landscape_sample) :: lsamp
+        real    :: smpd
+        integer :: box
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
+        call cline%set('hp',      40.)
+        call cline%set('oritype', 'ptcl3D')
+        call cline%set('objfun',  'cc')
+        if( .not. cline%defined('box_crop') )then
+            call spproj%read_segment('stk', cline%get_carg('projfile'))
+            box  = spproj%get_box()
+            smpd = spproj%get_smpd()
+            call spproj%kill
+            call cline%set('box_crop', min(box, max(26, 2*ceiling(real(box)*smpd/cline%get_rarg('lp')))))
+        endif
+        call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
+        call ensure_field_halves(build%spproj, params%oritype, params%projfile)
+        call lsamp%new(params, build)
+        if( cline%defined('infile2') )then
+            call lsamp%run(params%infile, params%infile2, params%dir)
+        else
+            call lsamp%run(params%infile, string(''), params%dir)
+        endif
+        call lsamp%kill
+        call build%kill_general_tbox
+        call simple_end('**** SIMPLE_LANDSCAPE_SAMPLE NORMAL STOP ****')
+    end subroutine exec_landscape_sample
+
     subroutine exec_hetero_tree( self, cline )
         use simple_hetero_tree, only: hetero_tree
         class(commander_hetero_tree), intent(inout) :: self
@@ -2443,7 +2728,7 @@ contains
         if( .not. cline%defined('nthr')     ) call cline%set('nthr',     8)
         if( .not. cline%defined('pgrp')     ) call cline%set('pgrp',     'c1')
         if( .not. cline%defined('site_dirs')) call cline%set('site_dirs', '1,3')
-        if( .not. cline%defined('pole_merge')) call cline%set('pole_merge', 0.95)
+        if( .not. cline%defined('site_disc')) call cline%set('site_disc', 'yes')
         call cline%set('oritype', 'ptcl3D')
         call params%new(cline)
         call tree%new(params, cline%defined('infile'))

@@ -17,15 +17,19 @@ use simple_state_tree,    only: state_tree
 use simple_stat,          only: avg_ranks
 implicit none
 
-public :: state_mergeup, merge_poles, EM_LIM
+public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
+public :: HALVES_KSIG, halves_floor, halves_cand
 private
 #include "simple_local_flags.inc"
 
 integer, parameter :: NSHUF = 20, NVIEW = 40, NEM_ITERS = 3, EM_MIN = 1000, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
-integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 10
+integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
+real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
 real,    parameter :: SITE_PFLOOR = 1.e-3
 real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
+real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005
+integer, parameter :: JUNK_ITS = 500
 
 type :: ivec
     integer, allocatable :: v(:)
@@ -47,6 +51,9 @@ type :: state_mergeup
     integer, allocatable :: fsh(:,:,:)
     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
     logical :: l_exists = .false.
+    integer, allocatable :: jhk(:,:), jsh(:)
+    real,    allocatable :: jw(:), f2j(:,:)
+    integer :: nj = 0, kj = 0
   contains
     procedure :: new
     procedure :: focus
@@ -54,6 +61,7 @@ type :: state_mergeup
     procedure :: run
     procedure :: test
     procedure :: site_em
+    procedure :: junk_screen
     procedure :: get_rows
     procedure :: kill
     procedure, private :: consensus
@@ -70,6 +78,8 @@ type :: state_mergeup
     procedure, private :: pair_stat
     procedure, private :: shell_fsc
     procedure, private :: shell_corr
+    procedure          :: half_rel
+    procedure          :: half_corr
 end type state_mergeup
 
 contains
@@ -169,6 +179,24 @@ contains
         do j = 1, self%nem
             self%cw(self%emsh(j)) = self%cw(self%emsh(j)) + self%emw(j)
         end do
+        ! junk screen band, shells 2..kj (JUNK_LIM): plane samples and per-shell |F|^2 taken before the CTF is applied
+        self%kj = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / JUNK_LIM))
+        do ie = 1, 2
+            self%nj = 0
+            do k = lbound(self%fpls(1)%cmplx_plane,2), 0
+                do h = lbound(self%fpls(1)%cmplx_plane,1), ubound(self%fpls(1)%cmplx_plane,1)
+                    r2 = h*h + k*k
+                    if( r2 < 3 .or. r2 > self%kj*(self%kj+1) ) cycle
+                    self%nj = self%nj + 1
+                    if( ie == 1 ) cycle
+                    self%jhk(:,self%nj) = [h, k]
+                    self%jsh(self%nj)   = nint(sqrt(real(r2)))
+                    self%jw(self%nj)    = merge(1., 2., k == 0)
+                end do
+            end do
+            if( ie == 1 ) allocate(self%jhk(2,self%nj), self%jsh(self%nj), self%jw(self%nj))
+        end do
+        allocate(self%f2j(self%kj,self%n), source=0.)
         !$omp parallel do default(shared) private(i,j,h,k,sh) schedule(static) proc_bind(close)
         do i = 1, self%n
             if( sdn(i) > 0. ) self%fpls(i)%cmplx_plane = sdn(i) * self%fpls(i)%cmplx_plane
@@ -177,6 +205,10 @@ contains
                 k  = self%emhk(2,j)
                 sh = self%emsh(j)
                 self%f2s(sh,i) = self%f2s(sh,i) + self%emw(j) * abs(self%fpls(i)%cmplx_plane(h,k))**2
+            end do
+            do j = 1, self%nj
+                self%f2j(self%jsh(j),i) = self%f2j(self%jsh(j),i) + self%jw(j) * &
+                    &abs(self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j)))**2
             end do
             self%fpls(i)%cmplx_plane = real(self%fpls(i)%transfer_plane) * self%fpls(i)%cmplx_plane
             deallocate(self%fpls(i)%transfer_plane)
@@ -1170,19 +1202,21 @@ contains
 
     end subroutine cross_em
 
-    subroutine site_em( self, seed, mfile, post, nstar, curve )
+    subroutine site_em( self, seed, sel, mfile, post, nstar, curve, devs, score )
         use simple_srch_sort_loc, only: hpsort
         class(state_mergeup), intent(inout) :: self
-        logical,              intent(in)    :: seed(:)
+        logical,              intent(in)    :: seed(:), sel(:)
         class(string),        intent(in)    :: mfile
+        real,                 intent(in)    :: score(:)
         real,    allocatable, intent(out)   :: post(:), curve(:,:)
         integer,              intent(out)   :: nstar
+        complex, allocatable, intent(out)   :: devs(:,:,:,:)
         type(image)          :: vol
-        complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:)
+        complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:), da(:,:,:), db(:,:,:)
         real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:), fw2(:), key(:)
         real(dp),allocatable :: epsb(:), epsf(:)
         integer, allocatable :: ia(:), ib(:), oa(:), ob(:), fhk(:,:)
-        real    :: f(0:self%nyq), cbest
+        real    :: f(0:self%nyq), cbest, chga, chgb
         integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2
         call vol%read_and_crop(mfile, self%p%smpd, self%box, self%p%smpd_crop)
         sm = min(max(vol%get_rmat(), 0.), 1.) * self%msk3
@@ -1207,20 +1241,31 @@ contains
             if( ig == 1 ) allocate(fhk(2,nfull), fw2(nfull))
             if( ig == 1 ) nfull = 0
         end do
-        ia = pack([(i, i=1,self%n)], self%eo == 0)
-        ib = pack([(i, i=1,self%n)], self%eo == 1)
+        ia = pack([(i, i=1,self%n)], self%eo == 0 .and. sel)
+        ib = pack([(i, i=1,self%n)], self%eo == 1 .and. sel)
         allocate(wa(size(ia),2), wb(size(ib),2))
-        wa(:,2) = merge(1., 0., seed(ia))
+        if( size(score) > 0 )then
+            wa(:,2) = score(ia)
+            wb(:,2) = score(ib)
+        else
+            wa(:,2) = merge(1., 0., seed(ia))
+            wb(:,2) = merge(1., 0., seed(ib))
+        endif
         wa(:,1) = 1. - wa(:,2)
-        wb(:,2) = merge(1., 0., seed(ib))
         wb(:,1) = 1. - wb(:,2)
         epsb = 0.5_dp * (density(ia, self%emhk, self%emw) + density(ib, self%emhk, self%emw))
         epsf = 0.5_dp * (density(ia, fhk, fw2) + density(ib, fhk, fw2))
         allocate(mp(self%nh,self%box,self%box,3,2), rf(self%nh,self%box,self%box,2,2))
-        write(logfhandle,'(A)') 'site EM: 2 classes from a '//int2str(count(seed))//'-particle start, '//int2str(SITE_ITS)//&
-            &' iterations, shells 2..'//int2str(self%kb)//', nearest-neighbour maps, the deviation inside the site mask ('//&
-            &fmtr(100._dp*real(count(sm > 0.5),dp)/real(max(1,count(self%msk3 > 0.5)),dp),1)//' % of the sphere)'
-        do it = 1, SITE_ITS
+        if( size(score) > 0 )then
+            write(logfhandle,'(A)') 'site ranking by a given score (no EM), the deviation inside the site mask'
+        else
+            write(logfhandle,'(A)') 'site EM: 2 classes from a '//int2str(count(seed))//'-particle start, until under '//&
+                &fmtr(100._dp*real(SITE_CONV,dp),1)//' % of the assignments change ('//int2str(SITE_ITS_MIN)//' to '//&
+                &int2str(SITE_ITS)//' iterations), shells 2..'//int2str(self%kb)//', nearest-neighbour maps, the deviation '//&
+                &'inside the site mask ('//fmtr(100._dp*real(count(sm > 0.5),dp)/real(max(1,count(self%msk3 > 0.5)),dp),1)//&
+                &' % of the sphere)'
+        endif
+        do it = 1, merge(0, SITE_ITS, size(score) > 0)
             call nn_map(ia, wa(:,1), self%emhk, self%emw, epsb, mp(:,:,:,1,1))
             call nn_map(ia, wa(:,2), self%emhk, self%emw, epsb, mp(:,:,:,2,1))
             call nn_map(ia, [(1., i=1,size(ia))], self%emhk, self%emw, epsb, mp(:,:,:,3,1))
@@ -1233,9 +1278,13 @@ contains
                 rf(:,:,:,g,1) = mp(:,:,:,3,1) + masked(shell_weighted(mp(:,:,:,g,1) - mp(:,:,:,3,1), f))
                 rf(:,:,:,g,2) = mp(:,:,:,3,2) + masked(shell_weighted(mp(:,:,:,g,2) - mp(:,:,:,3,2), f))
             end do
-            call nn_estep(ia, wa, rf(:,:,:,:,2), it)
-            call nn_estep(ib, wb, rf(:,:,:,:,1), it)
+            call nn_estep(ia, wa, rf(:,:,:,:,2), it, chga)
+            call nn_estep(ib, wb, rf(:,:,:,:,1), it, chgb)
+            ! the assignments stall for a few iterations before a growing class takes off
+            if( it >= SITE_ITS_MIN .and. max(chga, chgb) < SITE_CONV ) exit
         end do
+        if( size(score) == 0 ) write(logfhandle,'(A)') '  site EM '//&
+            &trim(merge('converged after   ', 'stopped at the cap', it <= SITE_ITS))//' '//int2str(min(it, SITE_ITS))//' iterations'
         allocate(post(self%n), source=0.)
         post(ia) = wa(:,2)
         post(ib) = wb(:,2)
@@ -1247,9 +1296,10 @@ contains
         key = -post(ib)
         call hpsort(key, ob)
         allocate(tm(self%nh,self%box,self%box,4))
+        allocate(devs(self%nh,self%box,self%box,2), source=cmplx(0.,0.))
         call nn_map(ia, [(1., i=1,size(ia))], fhk, fw2, epsf, tm(:,:,:,1))
         call nn_map(ib, [(1., i=1,size(ib))], fhk, fw2, epsf, tm(:,:,:,2))
-        ngrid = count(SITE_GRID <= int(0.7 * real(self%n)))
+        ngrid = max(1, count(SITE_GRID <= int(0.7 * real(count(sel)))))
         allocate(curve(2,ngrid), source=0.)
         cbest = -huge(cbest)
         nstar = SITE_GRID(1)
@@ -1257,14 +1307,17 @@ contains
             nh2 = SITE_GRID(ig) / 2
             call nn_map(ia(oa(1:min(nh2,size(ia)))), [(1., i=1,min(nh2,size(ia)))], fhk, fw2, epsf, tm(:,:,:,3))
             call nn_map(ib(ob(1:min(nh2,size(ib)))), [(1., i=1,min(nh2,size(ib)))], fhk, fw2, epsf, tm(:,:,:,4))
+            da = masked(tm(:,:,:,3) - tm(:,:,:,1))
+            db = masked(tm(:,:,:,4) - tm(:,:,:,2))
             curve(1,ig) = real(SITE_GRID(ig))
-            curve(2,ig) = self%shell_corr(masked(tm(:,:,:,3) - tm(:,:,:,1)), masked(tm(:,:,:,4) - tm(:,:,:,2)), &
-                &self%kb + RB_MARGIN, self%khi)
+            curve(2,ig) = self%shell_corr(da, db, self%kb + RB_MARGIN, self%khi)
             write(logfhandle,'(A)') '  N '//int2str(SITE_GRID(ig))//': hold-out cross-half correlation of the site deviation '//&
                 &fmtr(real(curve(2,ig),dp),3)
             if( curve(2,ig) > cbest )then
                 cbest = curve(2,ig)
                 nstar = SITE_GRID(ig)
+                devs(:,:,:,1) = da
+                devs(:,:,:,2) = db
             endif
         end do
         write(logfhandle,'(A)') '  N* '//int2str(nstar)//' (hold-out shells '//int2str(self%kb + RB_MARGIN)//'..'//&
@@ -1367,10 +1420,11 @@ contains
             end do
         end subroutine nn_map
 
-        subroutine nn_estep( pidx, w, refs, iter )
+        subroutine nn_estep( pidx, w, refs, iter, chg )
             integer, intent(in)    :: pidx(:), iter
             real,    intent(inout) :: w(:,:)
             complex, intent(in)    :: refs(:,:,:,:)
+            real,    intent(out)   :: chg
             real, allocatable :: aa(:,:,:), bb(:,:,:), wn(:,:)
             integer, allocatable :: mpc(:)
             real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem), beta(self%nshem), sig2(self%nshem)
@@ -1422,8 +1476,8 @@ contains
                 wn(ii,:) = wn(ii,:) / sum(wn(ii,:))
             end do
             !$omp end parallel do
-            write(logfhandle,'(A)') '  iteration '//int2str(iter)//': argmax changed '//&
-                &fmtr(real(count((wn(:,2) > 0.5) .neqv. (w(:,2) > 0.5)),dp)/real(size(pidx),dp),3)//&
+            chg = real(count((wn(:,2) > 0.5) .neqv. (w(:,2) > 0.5))) / real(max(1, size(pidx)))
+            write(logfhandle,'(A)') '  iteration '//int2str(iter)//': argmax changed '//fmtr(real(chg,dp),3)//&
                 &', site class weight '//fmtr(real(sum(wn(:,2)),dp)/real(size(pidx),dp),3)//&
                 &', model scale at shells 2 / '//int2str(self%kb)//' '//fmtr(beta(1),2)//' / '//fmtr(beta(self%nshem),2)
             w = wn
@@ -1459,14 +1513,368 @@ contains
 
     end subroutine site_em
 
+    ! per-node junk screen at the seeding labels: amplitudes against every state's other-half reference, 3-component mixture cut
+    subroutine junk_screen( self, seeds )
+        use simple_srch_sort_loc, only: hpsort
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(inout) :: seeds(:)
+        type(ivec)            :: hx(2)
+        complex,  allocatable :: mp(:,:,:,:,:), rf(:,:,:,:)
+        real,     allocatable :: rot(:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:)
+        real(dp), allocatable :: epsv(:)
+        integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:)
+        logical,  allocatable :: ljunk(:), lj(:)
+        character(len=:), allocatable :: line
+        real(dp) :: mu(3), s2(3), pw(3), gap(3), xm
+        real     :: f(0:self%nyq), mv
+        integer  :: nk, i, g, e, c, cg, h, k, l, funit, rep, ios, nf
+        nk = maxval([0, seeds])
+        if( nk == 0 )then
+            write(logfhandle,'(A)') '>>> JUNK_SCREEN no seed state, nothing screened'
+            return
+        endif
+        lab = seeds
+        call fopen(rep, string('site_junk_report.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('junk_screen: cannot write site_junk_report.txt', ios)
+        allocate(rot(3,3,self%n))
+        do i = 1, self%n
+            call self%os(1)%set_euler(self%eul(:,i))
+            rot(:,:,i) = self%os(1)%get_mat()
+        end do
+        allocate(cnt(nk,2))
+        do e = 1, 2
+            hx(e)%v  = pack([(i, i=1,self%n)], self%eo == e - 1)
+            cnt(:,e) = [(count(lab(hx(e)%v) == g), g=1,nk)]
+        end do
+        call say(int2str(nk)//' seed states, '//int2str(self%n)//' particles, band shells 2..'//int2str(self%kj)//' ('//&
+            &fmtr(real(real(self%box)*self%p%smpd_crop/real(self%kj),dp),1)//' A, '//int2str(self%nj)//' plane samples), '//&
+            &'every particle against the other half''s state references')
+        allocate(epsv(0:self%nyq))
+        epsv = 0.5_dp * (dens(hx(1)%v) + dens(hx(2)%v))
+        allocate(mp(self%nh,self%box,self%box,0:nk,2))
+        do e = 1, 2
+            call wiener(hx(e)%v, mp(:,:,:,0,e))
+            do g = 1, nk
+                call wiener(pack(hx(e)%v, lab(hx(e)%v) == g), mp(:,:,:,g,e))
+            end do
+        end do
+        allocate(fs(0:self%nyq,nk))
+        do g = 1, nk
+            call self%shell_fsc(mp(:,:,:,g,1) - mp(:,:,:,0,1), mp(:,:,:,g,2) - mp(:,:,:,0,2), f)
+            fs(:,g) = min(max(f, 0.), 1.)
+        end do
+        allocate(rf(self%nh,self%box,self%box,nk))
+        allocate(amp(self%n), var(self%n), post(self%n), source=0.)
+        allocate(best(self%n), source=0)
+        do e = 1, 2
+            do g = 1, nk
+                do l = 1, self%box
+                    do k = 1, self%box
+                        do h = 1, self%nh
+                            rf(h,k,l,g) = mp(h,k,l,0,3-e) + fs(self%fsh(h,k,l),g) * (mp(h,k,l,g,3-e) - mp(h,k,l,0,3-e))
+                        end do
+                    end do
+                end do
+            end do
+            call score(hx(e)%v, cnt(:,3-e) > 0, e)
+        end do
+        deallocate(mp, rf, rot)
+        x = pack(amp, best > 0)
+        v = pack(var, best > 0)
+        allocate(ljunk(self%n), source=.false.)
+        if( size(x) > 0 )then
+            xm = sum(real(x,dp)) / real(size(x),dp)
+            mu = real([quantr(x, 0.02), quantr(x, 0.5), quantr(x, 0.5)], dp)
+            s2 = [0.1_dp, 0.25_dp, 1._dp] * sum((real(x,dp) - xm)**2) / real(size(x),dp)
+            pw = [0.05_dp, 0.75_dp, 0.2_dp]
+            call xd_fit
+            mv = medianr(v)
+            cg = maxloc(pw, dim=1)
+            do c = 1, 3
+                gap(c) = (mu(cg) - mu(c)) / sqrt(0.5_dp * (s2(cg) + s2(c)) + real(mv,dp))
+            end do
+            lj = [(c /= cg .and. pw(c) >= JUNK_MINW .and. gap(c) >= JUNK_GAP, c=1,3)]
+            if( any(lj) )then
+                do i = 1, self%n
+                    if( best(i) > 0 ) post(i) = jpost(amp(i), var(i))
+                end do
+            endif
+            ljunk = best > 0 .and. post >= 0.5
+            key = real(mu)
+            ord = [1, 2, 3]
+            call hpsort(key, ord)
+            line = ''
+            do c = 1, 3
+                line = line//'  '//fmtr(mu(ord(c)),2)//' / '//fmtr(sqrt(s2(ord(c))),2)//' / '//fmtr(pw(ord(c)),3)
+                if( ord(c) == cg )then
+                    line = line//' (genuine)'
+                else
+                    line = line//' ('//fmtr(gap(ord(c)),1)//' sd below)'
+                endif
+            end do
+            call say('mixture of the amplitudes (mean / intrinsic sd / weight):'//line//'; median noise sd '//&
+                &fmtr(real(sqrt(mv),dp),2))
+            line = ' none'
+            if( any(lj) )then
+                line = ''
+                do c = 1, 3
+                    if( lj(ord(c)) ) line = line//' '//fmtr(mu(ord(c)),2)
+                end do
+            endif
+            call say('junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//int2str(nint(JUNK_GAP))//&
+                &' sd below the genuine one):'//line)
+        endif
+        nf = count(ljunk)
+        call say(int2str(nf)//' of '//int2str(self%n)//' particles flagged junk ('//fmtr(real(nf,dp)/real(self%n,dp),4)//&
+            &'; half 1 '//fmtr(real(count(ljunk(hx(1)%v)),dp)/real(max(1,size(hx(1)%v)),dp),4)//', half 2 '//&
+            &fmtr(real(count(ljunk(hx(2)%v)),dp)/real(max(1,size(hx(2)%v)),dp),4)//'): label 0 at this node and below')
+        if( count(best == 0) > 0 ) call say(int2str(count(best == 0))//' particles not scored (no state in the other half)')
+        do g = 1, nk
+            x  = pack(amp, lab == g .and. best > 0)
+            nf = count(lab == g .and. ljunk)
+            call say('state '//int2str(g)//': '//int2str(nf)//' of '//int2str(count(lab == g))//' flagged ('//&
+                &fmtr(real(nf,dp)/real(max(1,count(lab == g)),dp),4)//'), amplitude 5 % / median '//&
+                &fmtr(real(quantr(x, 0.05),dp),2)//' / '//fmtr(real(quantr(x, 0.5),dp),2))
+        end do
+        call fclose(rep)
+        call fopen(funit, string('site_junk.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('junk_screen: cannot write site_junk.txt', ios)
+        write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior'
+        do i = 1, self%n
+            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4)') self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), &
+                &best(i), post(i)
+        end do
+        call fclose(funit)
+        where( ljunk ) seeds = 0
+
+    contains
+
+        subroutine say( str )
+            character(len=*), intent(in) :: str
+            write(logfhandle,'(A)') '>>> JUNK_SCREEN '//str
+            write(rep,'(A)') str
+        end subroutine say
+
+        subroutine cell( i, h, k, c1, c2, cnj )
+            integer, intent(in)  :: i, h, k
+            integer, intent(out) :: c1(3), c2(3)
+            logical, intent(out) :: cnj
+            integer :: p(3)
+            p   = nint(real(h) * rot(1,:,i) + real(k) * rot(2,:,i))
+            cnj = p(1) < 0
+            if( cnj ) p = -p
+            c1  = 0
+            c2  = 0
+            if( any(abs(p) >= self%nyq) ) return
+            c1 = [p(1) + 1, modulo(p(2), self%box) + 1, modulo(p(3), self%box) + 1]
+            if( p(1) == 0 ) c2 = [1, modulo(-p(2), self%box) + 1, modulo(-p(3), self%box) + 1]
+        end subroutine cell
+
+        function dens( pidx ) result( ev )
+            integer, intent(in)   :: pidx(:)
+            real(dp), allocatable :: ev(:)
+            real(dp), allocatable :: den(:,:,:)
+            real,     allocatable :: vals(:)
+            real(dp) :: c2v
+            integer  :: ii, j, c1(3), c2(3), s, nv
+            logical  :: cnj
+            allocate(den(self%nh,self%box,self%box), source=0._dp)
+            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,c2v) schedule(static) reduction(+:den) proc_bind(close)
+            do ii = 1, size(pidx)
+                do j = 1, self%nj
+                    call cell(pidx(ii), self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
+                    if( c2(1) > 0 )then
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
+            end do
+            !$omp end parallel do
+            allocate(ev(0:self%nyq), source=1._dp)
+            do s = 0, self%nyq
+                vals = real(pack(den, self%fsh == s .and. den > 0._dp))
+                nv   = size(vals)
+                if( nv == 0 ) cycle
+                call hpsort(vals)
+                ev(s) = real(vals((nv + 1) / 2), dp) / real(max(1, size(pidx)), dp)
+            end do
+        end function dens
+
+        subroutine wiener( pidx, out )
+            integer, intent(in)  :: pidx(:)
+            complex, intent(out) :: out(:,:,:)
+            complex(dp), allocatable :: num(:,:,:)
+            real(dp),    allocatable :: den(:,:,:)
+            complex(dp) :: cv
+            real(dp)    :: c2v
+            integer     :: ii, j, c1(3), c2(3), hh, kk, ll
+            logical     :: cnj
+            allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
+            allocate(den(self%nh,self%box,self%box), source=0._dp)
+            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,cv,c2v) schedule(static) reduction(+:num,den) proc_bind(close)
+            do ii = 1, size(pidx)
+                do j = 1, self%nj
+                    call cell(pidx(ii), self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    cv  = real(self%jw(j),dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(self%jhk(1,j),self%jhk(2,j)), kind=dp)
+                    c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
+                    if( cnj ) cv = conjg(cv)
+                    if( c2(1) > 0 )then
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * cv
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(cv)
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + cv
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
+            end do
+            !$omp end parallel do
+            do ll = 1, self%box
+                do kk = 1, self%box
+                    do hh = 1, self%nh
+                        out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * &
+                            &real(max(1, size(pidx)),dp)), kind=kind(out))
+                    end do
+                end do
+            end do
+        end subroutine wiener
+
+        subroutine score( pidx, loff, e )
+            integer, intent(in) :: pidx(:), e
+            logical, intent(in) :: loff(:)
+            real(dp) :: sa(self%kj), sb(self%kj), sf(self%kj), sc(self%kj), beta(self%kj), wsh(self%kj)
+            real(dp) :: a(self%kj,nk), b(self%kj,nk), num, den, s, smax
+            real     :: cw(self%kj), c2v
+            complex  :: pv, dv
+            integer  :: ii, i, j, g, c1(3), c2(3), sh, nd
+            logical  :: cnj
+            cw = 0.
+            do j = 1, self%nj
+                cw(self%jsh(j)) = cw(self%jsh(j)) + self%jw(j)
+            end do
+            sa = 0._dp
+            sb = 0._dp
+            sf = 0._dp
+            sc = 0._dp
+            !$omp parallel do default(shared) private(ii,i,j,g,c1,c2,cnj,sh,pv,dv,c2v) schedule(static) &
+            !$omp& reduction(+:sa,sb,sf,sc) proc_bind(close)
+            do ii = 1, size(pidx)
+                i = pidx(ii)
+                g = lab(i)
+                if( g < 1 ) cycle
+                if( .not. loff(g) ) cycle
+                do j = 1, self%nj
+                    call cell(i, self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    sh  = self%jsh(j)
+                    dv  = self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j))
+                    c2v = self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j))
+                    pv  = rf(c1(1),c1(2),c1(3),g)
+                    if( cnj ) pv = conjg(pv)
+                    sa(sh) = sa(sh) + self%jw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                    sb(sh) = sb(sh) + self%jw(j) * c2v * abs(pv)**2
+                end do
+                sf = sf + real(self%f2j(:,i),dp)
+                sc = sc + real(cw,dp)
+            end do
+            !$omp end parallel do
+            beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
+            wsh  = 1._dp / max((sf - 2._dp*beta*sa + beta*beta*sb) / max(sc, 1._dp), 1.e-12_dp)
+            !$omp parallel do default(shared) private(ii,i,j,g,c1,c2,cnj,sh,pv,dv,c2v,a,b,num,den,s,smax) schedule(static) &
+            !$omp& proc_bind(close)
+            do ii = 1, size(pidx)
+                i = pidx(ii)
+                a = 0._dp
+                b = 0._dp
+                do j = 1, self%nj
+                    call cell(i, self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    sh  = self%jsh(j)
+                    dv  = self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j))
+                    c2v = self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j))
+                    do g = 1, nk
+                        pv = rf(c1(1),c1(2),c1(3),g)
+                        if( cnj ) pv = conjg(pv)
+                        a(sh,g) = a(sh,g) + self%jw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                        b(sh,g) = b(sh,g) + self%jw(j) * c2v * abs(pv)**2
+                    end do
+                end do
+                smax = -huge(smax)
+                do g = 1, nk
+                    if( .not. loff(g) ) cycle
+                    num = sum(wsh * beta * a(:,g))
+                    den = sum(wsh * beta * beta * b(:,g))
+                    s   = num - 0.5_dp * den
+                    if( s <= smax ) cycle
+                    smax    = s
+                    best(i) = g
+                    amp(i)  = real(num / max(den, 1.e-12_dp))
+                    var(i)  = real(1._dp / max(den, 1.e-12_dp))
+                end do
+            end do
+            !$omp end parallel do
+            nd = count([(best(pidx(ii)) /= lab(pidx(ii)), ii=1,size(pidx))])
+            call say('half '//int2str(e)//': '//int2str(size(pidx))//' particles, best state differs from the label for '//&
+                &fmtr(real(nd,dp)/real(max(1,size(pidx)),dp),3)//', amplitude median '//&
+                &fmtr(real(medianr(pack(amp(pidx), best(pidx) > 0)),dp),2)//', model scale at shells 2 / '//&
+                &int2str(self%kj)//' '//fmtr(beta(2),2)//' / '//fmtr(beta(self%kj),2))
+        end subroutine score
+
+        subroutine xd_fit
+            real(dp) :: t(3), lg(3), r(3), bm(3), sr(3), srb(3), srb2(3), srv(3), wc(3), xi, vi
+            integer  :: it, ii
+            do it = 1, JUNK_ITS
+                sr   = 0._dp
+                srb  = 0._dp
+                srb2 = 0._dp
+                srv  = 0._dp
+                !$omp parallel do default(shared) private(ii,xi,vi,t,lg,r,bm) schedule(static) &
+                !$omp& reduction(+:sr,srb,srb2,srv) proc_bind(close)
+                do ii = 1, size(x)
+                    xi   = real(x(ii),dp)
+                    vi   = real(v(ii),dp)
+                    t    = s2 + vi
+                    lg   = log(max(pw, 1.e-300_dp)) - 0.5_dp * (xi - mu)**2 / t - 0.5_dp * log(t)
+                    r    = exp(lg - maxval(lg))
+                    r    = r / sum(r)
+                    bm   = mu + s2 / t * (xi - mu)
+                    sr   = sr   + r
+                    srb  = srb  + r * bm
+                    srb2 = srb2 + r * bm * bm
+                    srv  = srv  + r * s2 * vi / t
+                end do
+                !$omp end parallel do
+                wc = max(sr, 1.e-12_dp)
+                pw = sr / real(size(x),dp)
+                mu = srb / wc
+                s2 = max((srb2 - 2._dp * mu * srb + mu * mu * sr + srv) / wc, 1.e-8_dp)
+            end do
+        end subroutine xd_fit
+
+        real function jpost( xi, vi )
+            real, intent(in) :: xi, vi
+            real(dp) :: t(3), lg(3), r(3)
+            t     = s2 + real(vi,dp)
+            lg    = log(max(pw, 1.e-300_dp)) - 0.5_dp * (real(xi,dp) - mu)**2 / t - 0.5_dp * log(t)
+            r     = exp(lg - maxval(lg))
+            jpost = real(sum(r, mask=lj) / sum(r))
+        end function jpost
+
+    end subroutine junk_screen
+
     subroutine merge_poles( posts, thr, minseed, sp, grp, seeds )
         real,                 intent(in)  :: posts(:,:), thr
         integer,              intent(in)  :: minseed
         real,    allocatable, intent(out) :: sp(:,:)
         integer, allocatable, intent(out) :: grp(:), seeds(:)
         real(dp), allocatable :: rk(:,:), gpost(:,:)
-        integer,  allocatable :: lab(:), cnt(:)
-        logical,  allocatable :: alive(:)
+        integer,  allocatable :: lab(:), plab(:)
         integer :: n, ne, a, b, ga, gb, npole
         n  = size(posts,1)
         ne = size(posts,2)
@@ -1501,25 +1909,207 @@ contains
         do a = 1, ne
             gpost(:,grp(a)) = gpost(:,grp(a)) + real(posts(:,a),dp) / real(count(grp == grp(a)),dp)
         end do
-        allocate(alive(npole), source=.true.)
-        do
-            seeds = maxloc(gpost, dim=2, mask=spread(alive, 1, n))
-            cnt   = [(count(seeds == b), b=1,npole)]
-            if( count(alive) <= 1 ) exit
-            a = minloc(cnt, dim=1, mask=alive)
-            if( cnt(a) >= minseed ) exit
-            alive(a) = .false.
-        end do
-        lab   = 0
-        npole = 0
-        do b = 1, size(alive)
-            if( .not. alive(b) ) cycle
-            npole  = npole + 1
-            lab(b) = npole
-        end do
-        seeds = lab(seeds)
-        grp   = lab(grp)
+        call seed_poles(gpost, minseed, .true., seeds, plab)
+        grp = plab(grp)
     end subroutine merge_poles
+
+    subroutine seed_poles( gpost, minseed, l_rest, seeds, plab )
+        real(dp),             intent(in)  :: gpost(:,:)
+        integer,              intent(in)  :: minseed
+        logical,              intent(in)  :: l_rest
+        integer, allocatable, intent(out) :: seeds(:), plab(:)
+        integer, allocatable :: cnt(:)
+        logical, allocatable :: alive(:)
+        logical :: lrest
+        integer :: n, np, i, a
+        n  = size(gpost,1)
+        np = size(gpost,2)
+        allocate(seeds(n))
+        allocate(alive(np), source=.true.)
+        lrest = l_rest
+        do
+            do i = 1, n
+                seeds(i) = np + 1
+                if( .not. any(alive) ) cycle
+                a = maxloc(gpost(i,:), dim=1, mask=alive)
+                if( .not. lrest .or. gpost(i,a) >= 0.5_dp ) seeds(i) = a
+            end do
+            cnt = [(count(seeds == a), a=1,np+1)]
+            if( count(alive) + merge(1, 0, lrest) <= 1 ) exit
+            a = minloc(cnt, dim=1, mask=[alive, lrest])
+            if( cnt(a) >= minseed ) exit
+            if( a > np )then
+                lrest = .false.
+            else
+                alive(a) = .false.
+            endif
+        end do
+        allocate(plab(np+1), source=0)
+        do a = 1, np
+            if( alive(a) ) plab(a) = maxval(plab) + 1
+        end do
+        if( any(seeds == np + 1) ) plab(np+1) = maxval(plab) + 1
+        seeds = plab(seeds)
+        plab  = plab(1:np)
+    end subroutine seed_poles
+
+    real function halves_merge_margin( cm, ra, rb, a, b )
+        real,    intent(in) :: cm(:,:), ra(:), rb(:)
+        integer, intent(in) :: a, b
+        halves_merge_margin = min(nm(cm(a,b), ra(a), rb(b)), nm(cm(b,a), ra(b), rb(a))) - &
+            &min(nm(cm(a,a), ra(a), rb(a)), nm(cm(b,b), ra(b), rb(b)))
+    contains
+        real function nm( c, r1, r2 )
+            real, intent(in) :: c, r1, r2
+            nm = c / sqrt(max(r1, 1.e-3) * max(r2, 1.e-3))
+        end function nm
+    end function halves_merge_margin
+
+    real function halves_accept_margin( cm, gp, cand, a, l_row )
+        real,    intent(in) :: cm(:,:)
+        integer, intent(in) :: gp(:), a
+        logical, intent(in) :: cand(:), l_row
+        real    :: best
+        integer :: f
+        best = -huge(best)
+        do f = 1, size(gp)
+            if( gp(f) == gp(a) .or. .not. cand(f) ) cycle
+            if( l_row )then
+                best = max(best, cm(a,f))
+            else
+                best = max(best, cm(f,a))
+            endif
+        end do
+        halves_accept_margin = cm(a,a) - best
+        if( best == -huge(best) ) halves_accept_margin = cm(a,a)
+    end function halves_accept_margin
+
+    real function halves_se( reps )
+        real, intent(in) :: reps(:)
+        halves_se = sqrt(sum((reps - sum(reps) / real(size(reps)))**2) / real(max(1, size(reps) - 1))) / sqrt(2.)
+    end function halves_se
+
+    real function halves_floor( cq, r1q, r2q, a, b )
+        real,    intent(in) :: cq(:,:,:), r1q(:,:), r2q(:,:)
+        integer, intent(in) :: a, b
+        integer :: k
+        halves_floor = max(halves_se([(cq(a,a,k) / sqrt(max(r1q(a,k), 1.e-3) * max(r2q(a,k), 1.e-3)), k=1,size(cq,3))]), &
+            &halves_se([(cq(b,b,k) / sqrt(max(r1q(b,k), 1.e-3) * max(r2q(b,k), 1.e-3)), k=1,size(cq,3))]))
+    end function halves_floor
+
+    function halves_cand( craw, rel1, rel2, cq ) result( cand )
+        real,    intent(in)  :: craw(:,:), rel1(:), rel2(:), cq(:,:,:)
+        logical, allocatable :: cand(:)
+        integer :: a
+        cand = [(craw(a,a) > 0. .and. rel1(a) > 0. .and. rel2(a) > 0. .and. craw(a,a) >= HALVES_KSIG * halves_se(cq(a,a,:)), &
+            &a=1,size(craw,1))]
+    end function halves_cand
+
+    ! groups merge, closest pair first, when every cross pair of candidates is within HALVES_KSIG SEs (floored at self-match SEs); a
+    ! group counts when each member beats its best outside partner by HALVES_KSIG SEs; solo ones never merge, tested last vs poles
+    subroutine merge_poles_halves( posts, craw, rel1, rel2, cq, r1q, r2q, minseed, l_rest, solo, grp, seeds, ok, twin, gm )
+        use simple_srch_sort_loc, only: hpsort
+        real,                 intent(in)  :: posts(:,:), craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:)
+        integer,              intent(in)  :: minseed
+        logical,              intent(in)  :: l_rest, solo(:)
+        integer, allocatable, intent(out) :: grp(:), seeds(:), twin(:), gm(:)
+        logical, allocatable, intent(out) :: ok(:)
+        real(dp), allocatable :: gpost(:,:)
+        real,     allocatable :: rat(:,:), key(:)
+        integer,  allocatable :: lab(:), plab(:), pa(:), pb(:), ord(:)
+        logical,  allocatable :: cand(:), cons(:), other(:), part(:)
+        integer :: ne, n, a, b, ga, gb, npole, ipass, br, bc, k
+        ne = size(craw,1)
+        n  = size(posts,1)
+        cand = halves_cand(craw, rel1, rel2, cq)
+        part = cand .and. .not. solo
+        allocate(rat(ne,ne), source=-huge(1.))
+        allocate(pa(0), pb(0), key(0))
+        do a = 1, ne
+            do b = a + 1, ne
+                if( .not. (cand(a) .and. cand(b)) .or. solo(a) .or. solo(b) ) cycle
+                rat(a,b) = halves_merge_margin(craw, rel1, rel2, a, b) / max(halves_se([(halves_merge_margin(cq(:,:,k), &
+                    &r1q(:,k), r2q(:,k), a, b), k=1,size(cq,3))]), halves_floor(cq, r1q, r2q, a, b), 1.e-6)
+                rat(b,a) = rat(a,b)
+                pa  = [pa, a]
+                pb  = [pb, b]
+                key = [key, -rat(a,b)]
+            end do
+        end do
+        ord = [(k, k=1,size(key))]
+        if( size(key) > 1 ) call hpsort(key, ord)
+        grp = [(a, a=1,ne)]
+        do k = 1, size(ord)
+            a = pa(ord(k))
+            b = pb(ord(k))
+            if( rat(a,b) < -HALVES_KSIG .or. grp(a) == grp(b) ) cycle
+            if( any(spread(grp == grp(a), 2, ne) .and. spread(grp == grp(b), 1, ne) .and. rat < -HALVES_KSIG) ) cycle
+            ga = grp(a)
+            gb = grp(b)
+            where( grp == gb ) grp = ga
+        end do
+        allocate(cons(ne), ok(ne))
+        allocate(twin(ne), source=0)
+        do ipass = 1, 2
+            do a = 1, ne
+                cons(a) = cand(a) .and. strong(a, .true.) .and. strong(a, .false.)
+            end do
+            if( ipass == 2 ) exit
+            do a = 1, ne
+                if( cons(a) .or. .not. cand(a) .or. solo(a) ) cycle
+                other = [(b /= a .and. cand(b) .and. .not. solo(b), b=1,ne)]
+                if( .not. any(other) ) cycle
+                br = maxloc(craw(a,:), dim=1, mask=other)
+                bc = maxloc(craw(:,a), dim=1, mask=other)
+                if( br /= bc ) cycle
+                if( any(spread(grp == grp(a), 2, ne) .and. spread(grp == grp(br), 1, ne) .and. rat < -HALVES_KSIG) ) cycle
+                twin(a) = br
+                ga = grp(a)
+                gb = grp(br)
+                where( grp == ga ) grp = gb
+            end do
+        end do
+        gm = grp
+        do a = 1, ne
+            ok(a) = all(pack(cons, grp == grp(a)))
+        end do
+        part = ok .and. .not. solo
+        do a = 1, ne
+            if( solo(a) ) ok(a) = cand(a) .and. strong(a, .true.) .and. strong(a, .false.)
+        end do
+        allocate(lab(ne), source=0)
+        npole = 0
+        do a = 1, ne
+            if( .not. ok(a) .or. lab(a) > 0 ) cycle
+            npole = npole + 1
+            where( grp == grp(a) ) lab = npole
+        end do
+        grp = lab
+        allocate(seeds(n), source=0)
+        if( npole == 0 ) return
+        allocate(gpost(n,npole), source=0._dp)
+        do a = 1, ne
+            if( grp(a) == 0 ) cycle
+            gpost(:,grp(a)) = gpost(:,grp(a)) + real(posts(:,a),dp) / real(count(grp == grp(a)),dp)
+        end do
+        call seed_poles(gpost, minseed, l_rest, seeds, plab)
+        do a = 1, ne
+            if( grp(a) > 0 ) grp(a) = plab(grp(a))
+        end do
+
+    contains
+
+        logical function strong( e, l_row )
+            integer, intent(in) :: e
+            logical, intent(in) :: l_row
+            real :: am
+            integer :: kk
+            am     = halves_accept_margin(craw, grp, part, e, l_row)
+            strong = am > 0. .and. am >= HALVES_KSIG * &
+                &halves_se([(halves_accept_margin(cq(:,:,kk), grp, part, e, l_row), kk=1,size(cq,3))])
+        end function strong
+
+    end subroutine merge_poles_halves
 
     subroutine estep( self, idx, w, refs, l_alive, wnew )
         class(state_mergeup), intent(inout) :: self
@@ -1813,6 +2403,20 @@ contains
         f = real(sxy / max(sqrt(sxx*syy), 1.e-30_dp))
     end subroutine shell_fsc
 
+    real function half_rel( self, a )
+        class(state_mergeup), intent(in) :: self
+        complex,              intent(in) :: a(:,:,:,:)
+        real :: r
+        r        = self%shell_corr(a(:,:,:,1), a(:,:,:,2), self%kb + RB_MARGIN, self%khi)
+        half_rel = 2. * r / max(1. + r, 1.e-6)
+    end function half_rel
+
+    real function half_corr( self, a, b )
+        class(state_mergeup), intent(in) :: self
+        complex,              intent(in) :: a(:,:,:,:), b(:,:,:,:)
+        half_corr = self%shell_corr(a(:,:,:,1) + a(:,:,:,2), b(:,:,:,1) + b(:,:,:,2), self%kb + RB_MARGIN, self%khi)
+    end function half_corr
+
     real function shell_corr( self, x, y, shlo, shhi )
         class(state_mergeup), intent(in) :: self
         complex,              intent(in) :: x(:,:,:), y(:,:,:)
@@ -1853,6 +2457,7 @@ contains
         endif
         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
+        if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
         if( allocated(self%msk3) ) deallocate(self%msk3, self%fsh, self%fw)
         if( allocated(self%fqh) ) deallocate(self%fqh, self%fqk)
         if( allocated(self%lmsk) ) deallocate(self%lmsk, self%lslot, self%msk0)

@@ -14,6 +14,7 @@ use simple_srch_sort_loc,   only: hpsort
 use simple_parameters,      only: parameters
 use simple_cmdline,         only: cmdline
 use simple_sp_project,      only: sp_project
+use simple_oris,            only: oris
 use simple_qsys_env,        only: qsys_env
 use simple_image,           only: image
 use simple_state_tree,      only: state_tree
@@ -29,6 +30,7 @@ integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_
 integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
 real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3
 integer,  parameter :: ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
+integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
 real,     parameter :: ATHR = 0.01, LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
@@ -47,11 +49,12 @@ type :: hetero_tree
     private
     class(parameters), pointer :: p => null()
     type(tnode), allocatable :: nodes(:)
-    type(qsys_env) :: qenv
+    type(string), allocatable :: subd(:)
+    type(qsys_env) :: qenv, qsite
     character(len=:), allocatable :: root, sitemask
     real    :: smpd = 0.
-    integer :: box = 0, nrows = 0
-    logical :: l_subtree = .false.
+    integer :: box = 0, nrows = 0, npcur = 0
+    logical :: l_subtree = .false., l_lsdone = .false.
   contains
     procedure :: new
     procedure :: run
@@ -60,10 +63,13 @@ type :: hetero_tree
     procedure, private :: advance
     procedure, private :: submit
     procedure, private :: submit_in
+    procedure, private :: set_parts
     procedure, private :: final
     procedure, private :: plain
+    procedure, private :: landscape
     procedure, private :: mergeup
     procedure, private :: step_status
+    procedure, private :: pending
     procedure, private :: decide
     procedure, private :: finish
     procedure, private :: read_table
@@ -123,6 +129,7 @@ contains
             write(logfhandle,'(A)') '>>> HETERO_TREE root node: '//int2str(size(rows))//' particles of '//int2str(self%nrows)
         endif
         call self%qenv%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr)
+        call self%qsite%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=max(params%nthr, SITE_NTHR))
     end subroutine new
 
     subroutine run( self )
@@ -186,8 +193,9 @@ contains
         if( .not. file_exists(string(d//'/'//NODE_PROJ)) ) call node_project(self, i)
         rows = read_ints(d//'/rows.txt')
         k    = min(KMAX, max(2, size(rows) / max(1, self%p%kfloor)))
+        call self%set_parts(size(rows))
         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' (depth '//int2str(self%nodes(i)%depth)//'): '//&
-            &int2str(size(rows))//' particles, '//int2str(k)//' flex states'
+            &int2str(size(rows))//' particles, '//int2str(k)//' flex states, '//int2str(self%npcur)//' parts per step'
         call simple_mkdir(string(d//'/mean'))
         call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/mean/m.simple'))
         call cl%set('prg',      'reconstruct3D')
@@ -215,6 +223,7 @@ contains
         if( len(sitemask) == 0 ) sitemask = mask
         rows = read_ints(d//'/rows.txt')
         k    = min(KMAX, max(2, size(rows) / max(1, self%p%kfloor)))
+        call self%set_parts(size(rows))
         select case(s)
             case(S_MEAN)
                 call simple_mkdir(string(d//'/flex'))
@@ -309,18 +318,15 @@ contains
                 seeds = read_ints(d//'/site/site_seeds.txt')
                 ks    = maxval([0, seeds])
                 call log_lines(d//'/site/site_poles.txt', 'pole (index, seeds, endpoints)')
+                call log_lines(d//'/site/site_halves.txt', 'halves')
                 call log_lines(d//'/site/site_spearman.txt', 'endpoint Spearman (merged at >= '//&
                     &trim(adjustl(rfmt2(self%p%pole_merge)))//')')
+                call log_lines(d//'/site/site_junk_report.txt', 'junk screen')
                 if( ks < 2 )then
-                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': fewer than two poles refine3D can '//&
-                        &'refine (technical), the fflex states seed stage A'
-                    st    = project_states(d//'/fflex/f.simple')
-                    pres  = present_labels(st)
-                    seeds = 0
-                    do j = 1, size(pres)
-                        where( st == pres(j) ) seeds = j
-                    end do
-                    ks = size(pres)
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': fewer than two seed states (accepted '//&
+                        &'poles and the rest), the node is refined as one state and becomes a leaf'
+                    if( ks < 1 ) seeds = merge(1, 0, project_states(d//'/'//NODE_PROJ) > 0)
+                    ks    = 1
                 endif
                 call simple_mkdir(string(d//'/seeds'))
                 call write_ints(d//'/seeds/seeds.txt', seeds)
@@ -366,6 +372,14 @@ contains
                 call self%submit(i, S_STAGEB, cl)
             case(S_STAGEB)
                 call simple_mkdir(string(d//'/split'))
+                st = project_states(d//'/stageB/b.simple')
+                if( maxval([0, st]) < 2 )then
+                    call write_ints(d//'/split/split_children.txt', merge(1, 0, st > 0))
+                    call write_ints(d//'/split/split_junk.txt', [integer ::])
+                    call self%decide(i)
+                    self%nodes(i)%step = S_DONE
+                    return
+                endif
                 call simple_copy_file(string(d//'/stageB/b.simple'), string(d//'/split/s.simple'))
                 call cl%set('prg',         'state_split')
                 call cl%set('projfile',    's.simple')
@@ -389,10 +403,11 @@ contains
             call cl%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
             call cl%set('site_dirs',   trim(self%p%site_dirs))
             call cl%set('pole_merge',  self%p%pole_merge)
+            call cl%set('junk_screen', trim(self%p%junk_screen))
             call cl%set('pcg_mskfile', smask)
             call cl%set('pgrp',        trim(self%p%pgrp))
             call cl%set('mskdiam',     self%p%mskdiam)
-            call cl%set('nthr',        self%p%nthr)
+            call cl%set('nthr',        max(self%p%nthr, SITE_NTHR))
             call self%submit(i, S_SITE, cl)
         end subroutine site_step
 
@@ -443,19 +458,110 @@ contains
         call cl%set('mkdir', 'no')
         call simple_chdir(string(sd))
         CWD_GLOB = sd
-        call self%qenv%exec_simple_prg_in_queue_async(cl, string('./hetero_step.sh'), string('hetero_step.log'), &
-            &exit_code_fname=string(STEP_EXIT))
+        if( cl%get_iarg('nthr') > self%p%nthr )then
+            call self%qsite%exec_simple_prg_in_queue_async(cl, string('./hetero_step.sh'), string('hetero_step.log'), &
+                &exit_code_fname=string(STEP_EXIT))
+        else
+            call self%qenv%exec_simple_prg_in_queue_async(cl, string('./hetero_step.sh'), string('hetero_step.log'), &
+                &exit_code_fname=string(STEP_EXIT))
+        endif
         call simple_chdir(string(self%root))
         CWD_GLOB = self%root
+        if( .not. allocated(self%subd) ) allocate(self%subd(0))
+        self%subd = [self%subd, string(sd)]
     end subroutine submit_in
+
+    ! the distributed steps of a node get one part per PTCLS_PER_PART particles, at least NPARTS_MIN, at most nparts
+    subroutine set_parts( self, n )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: n
+        self%npcur = min(self%p%nparts, max(NPARTS_MIN, ceiling(real(n) / real(PTCLS_PER_PART))))
+    end subroutine set_parts
+
+    ! a job submitted by this run writes its record only once the queue starts it
+    logical function pending( self, sd )
+        class(hetero_tree), intent(in) :: self
+        character(len=*),   intent(in) :: sd
+        integer :: j
+        pending = .false.
+        if( .not. allocated(self%subd) ) return
+        do j = 1, size(self%subd)
+            if( self%subd(j)%to_char() == sd ) pending = .true.
+        end do
+    end function pending
 
     logical function final( self )
         class(hetero_tree), intent(inout) :: self
         final = .false.
         if( .not. self%plain() ) return
+        if( .not. self%l_lsdone )then
+            if( .not. self%landscape() ) return
+            self%l_lsdone = .true.
+        endif
         if( .not. file_exists(string(self%root//'/final_maps/choice.txt')) ) call final_maps(self)
         final = self%mergeup()
     end function final
+
+    ! the landscape between the accepted poles of every finished node (landscape_sample in node_<id>/landscape)
+    logical function landscape( self )
+        class(hetero_tree), intent(inout) :: self
+        type(cmdline) :: cl
+        character(len=:), allocatable :: nd, ld
+        integer :: i, nrun, np, code
+        logical :: err
+        landscape = .true.
+        nrun      = 0
+        do i = 1, size(self%nodes)
+            if( self%nodes(i)%step /= S_DONE ) cycle
+            nd = self%ndir(i)
+            ld = nd//'/landscape'
+            if( .not. file_exists(string(nd//'/split/split_children.txt')) ) cycle
+            if( file_exists(string(ld//'/'//STEP_EXIT)) ) cycle
+            np = count_poles(nd//'/site/site_poles.txt')
+            if( np < 2 )then
+                call simple_mkdir(string(ld))
+                call write_ints(ld//'/landscape_pairs.txt', [integer ::])
+                call write_ints(ld//'/'//STEP_EXIT, [0])
+                cycle
+            endif
+            landscape = .false.
+            if( file_exists(string(ld//'/'//STEP_EXIT//JOB_INFO_EXT)) .or. self%pending(ld) )then
+                nrun = nrun + 1
+                cycle
+            endif
+            if( nrun >= max(1, self%p%nodepar) ) cycle
+            call simple_mkdir(string(ld))
+            call cl%set('prg',      'landscape_sample')
+            call cl%set('projfile', nd//'/stageB/b.simple')
+            call cl%set('dir',      nd//'/stageB')
+            call cl%set('infile',   nd//'/site/site_poles.txt')
+            call cl%set('infile2',  nd//'/split/split_children.txt')
+            call cl%set('mskdiam',  self%p%mskdiam)
+            call cl%set('nthr',     self%p%nthr)
+            call self%submit_in(ld, cl)
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape submitted, '//int2str(np)//&
+                &' accepted poles'
+            nrun = nrun + 1
+        end do
+        if( .not. landscape ) return
+        do i = 1, size(self%nodes)
+            if( self%nodes(i)%step /= S_DONE ) cycle
+            ld = self%ndir(i)//'/landscape'
+            if( .not. file_exists(string(ld//'/'//STEP_EXIT)) ) cycle
+            np = count_poles(self%ndir(i)//'/site/site_poles.txt')
+            call read_exit_code(string(ld//'/'//STEP_EXIT), code, err)
+            if( np < 2 )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape skipped, '//int2str(np)//&
+                    &' accepted pole(s)'
+            else if( code /= 0 .or. err )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape FAILED (exit code '//&
+                    &int2str(code)//')'
+            else
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape of '//int2str(np)//&
+                    &' accepted poles, '//int2str(nlines(string(ld//'/landscape_pairs.txt')))//' pairs'
+            endif
+        end do
+    end function landscape
 
     logical function plain( self )
         class(hetero_tree), intent(inout) :: self
@@ -475,7 +581,7 @@ contains
             pd = nds(inode)%to_char()//'/plain'
             if( file_exists(string(pd//'/'//STEP_EXIT)) ) cycle
             plain = .false.
-            if( file_exists(string(pd//'/'//STEP_EXIT//JOB_INFO_EXT)) )then
+            if( file_exists(string(pd//'/'//STEP_EXIT//JOB_INFO_EXT)) .or. self%pending(pd) )then
                 nrun = nrun + 1
                 cycle
             endif
@@ -493,6 +599,7 @@ contains
             call cl%set('prg',      'reconstruct3D')
             call cl%set('projfile', 'p.simple')
             call cl%set('nstates',  nleaf)
+            call self%set_parts(count(lab > 0))
             call common_keys(self, cl)
             call self%submit_in(pd, cl)
             write(logfhandle,'(A)') '>>> HETERO_TREE plain leaf maps of '//pd//': '//int2str(nleaf)//' leaves submitted'
@@ -530,7 +637,7 @@ contains
             return
         endif
         mergeup = .false.
-        if( file_exists(string(f//JOB_INFO_EXT)) ) return
+        if( file_exists(string(f//JOB_INFO_EXT)) .or. self%pending(md) ) return
         call self%finish(nn)
         if( nn < 2 )then
             mergeup = .true.
@@ -558,7 +665,7 @@ contains
         if( file_exists(string(f)) )then
             call read_exit_code(string(f), step_status, err)
             if( err ) step_status = -1
-        else if( file_exists(string(f//JOB_INFO_EXT)) )then
+        else if( file_exists(string(f//JOB_INFO_EXT)) .or. self%pending(self%ndir(i)//'/'//trim(STEP_DIRS(istep))) )then
             step_status = -1
         else
             step_status = -2
@@ -716,7 +823,9 @@ contains
     subroutine kill( self )
         class(hetero_tree), intent(inout) :: self
         if( allocated(self%nodes) ) deallocate(self%nodes)
+        if( allocated(self%subd)  ) deallocate(self%subd)
         call self%qenv%kill
+        call self%qsite%kill
         self%p => null()
     end subroutine kill
 
@@ -853,23 +962,14 @@ contains
     subroutine node_project( self, i )
         class(hetero_tree), intent(inout) :: self
         integer,            intent(in)    :: i
-        type(sp_project)     :: spproj
-        integer, allocatable :: rows(:)
-        integer :: j, np
+        integer, allocatable :: rows(:), st(:)
         rows = read_ints(self%ndir(i)//'/rows.txt')
-        call spproj%read(string(self%nodes(i)%pproj))
-        np = spproj%os_ptcl3D%get_noris()
-        if( np /= self%nrows ) THROW_HARD('the parent project does not hold every particle; node_project')
-        do j = 1, np
-            call spproj%os_ptcl3D%set_state(j, 0)
-            call spproj%os_ptcl2D%set_state(j, 0)
-        end do
-        do j = 1, size(rows)
-            call spproj%os_ptcl3D%set_state(rows(j), 1)
-            call spproj%os_ptcl2D%set_state(rows(j), 1)
-        end do
-        call spproj%write(string(self%ndir(i)//'/'//NODE_PROJ))
-        call spproj%kill
+        allocate(st(self%nrows), source=0)
+        st(rows) = 1
+        if( size(project_states(self%nodes(i)%pproj)) /= self%nrows )then
+            THROW_HARD('the parent project does not hold every particle; node_project')
+        endif
+        call write_states(self%nodes(i)%pproj, self%ndir(i)//'/'//NODE_PROJ, st)
     end subroutine node_project
 
     subroutine cheap_children( self, i, child )
@@ -1461,7 +1561,7 @@ contains
         class(cmdline),     intent(inout) :: cl
         call cl%set('pgrp',    trim(self%p%pgrp))
         call cl%set('mskdiam', self%p%mskdiam)
-        call cl%set('nparts',  self%p%nparts)
+        call cl%set('nparts',  merge(self%npcur, self%p%nparts, self%npcur > 0))
         call cl%set('nthr',    self%p%nthr)
     end subroutine common_keys
 
@@ -1566,19 +1666,32 @@ contains
         call spproj%kill
     end function project_states
 
+    ! a copy of the project with only the particle state segments rewritten in place
     subroutine write_states( src, dst, st )
         character(len=*), intent(in) :: src, dst
         integer,          intent(in) :: st(:)
-        type(sp_project) :: spproj
-        integer :: j
-        call spproj%read(string(src))
-        if( spproj%os_ptcl3D%get_noris() /= size(st) ) THROW_HARD('state count does not match the project; write_states')
-        do j = 1, size(st)
-            call spproj%os_ptcl3D%set_state(j, st(j))
-            call spproj%os_ptcl2D%set_state(j, st(j))
-        end do
-        call spproj%write(string(dst))
-        call spproj%kill
+        call simple_copy_file(string(src), string(dst))
+        call set_seg('ptcl3D')
+        call set_seg('ptcl2D')
+
+    contains
+
+        subroutine set_seg( oritype )
+            character(len=*), intent(in) :: oritype
+            type(sp_project), target :: spproj
+            class(oris),     pointer :: field
+            integer :: j
+            call spproj%read_segment(oritype, string(dst))
+            call spproj%ptr2oritype(oritype, field)
+            if( field%get_noris() /= size(st) ) THROW_HARD('state count does not match the project; write_states')
+            do j = 1, size(st)
+                call field%set_state(j, st(j))
+            end do
+            nullify(field)
+            call spproj%write_segment_inside(oritype, string(dst))
+            call spproj%kill
+        end subroutine set_seg
+
     end subroutine write_states
 
     function present_labels( lab ) result( pres )
@@ -1633,6 +1746,24 @@ contains
         end do
         call fclose(funit)
     end subroutine write_ints
+
+    integer function count_poles( fname )
+        character(len=*), intent(in) :: fname
+        character(len=4096) :: ln
+        integer :: fu, io
+        count_poles = 0
+        if( .not. file_exists(string(fname)) ) return
+        call fopen(fu, string(fname), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len(word(ln, 3)) == 0 ) cycle
+            if( word(ln, 3) == 'rest' .and. len(word(ln, 4)) == 0 ) cycle
+            count_poles = count_poles + 1
+        end do
+        call fclose(fu)
+    end function count_poles
 
     function word( line, iw ) result( w )
         character(len=*), intent(in) :: line

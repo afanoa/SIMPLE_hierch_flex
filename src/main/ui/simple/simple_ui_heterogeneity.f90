@@ -17,6 +17,7 @@ type(ui_program), target :: site_rank
 type(ui_program), target :: hetero_tree
 type(ui_program), target :: landscape_compare
 type(ui_program), target :: site_discover
+type(ui_program), target :: landscape_sample
 
 contains
 
@@ -34,6 +35,7 @@ contains
         call new_hetero_tree(prgtab)
         call new_landscape_compare(prgtab)
         call new_site_discover(prgtab)
+        call new_landscape_sample(prgtab)
     end subroutine construct_heterogeneity_programs
 
     subroutine new_flex_pca( prgtab )
@@ -528,8 +530,11 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &odd particles, every particle scored against the other half''s references, the class deviation confined to the &
         &site mask; each pole is sized by the cross-half correlation of its top-N deviation in the band beyond the EM &
         &band. Writes per particle the pole posteriors (site_post_*.txt), the top-N* selections (site_top_*.txt) &
-        &and the sizing curves; the endpoints whose rankings agree (Spearman >= 0.95) merge into one pole, and every &
-        &particle is seeded to the pole of highest mean posterior (site_seeds.txt, site_poles.txt)',&
+        &and the sizing curves. Every endpoint is also ranked in two disjoint particle halves: a pole counts when its &
+        &half-versions beat their best other match by 3 standard errors of the cross-half quarter pairs (an endpoint whose &
+        &best other match is one endpoint in both directions joins it) and endpoints merge unless 3 standard errors apart; &
+        &a particle is seeded to the accepted pole of highest mean posterior when that posterior reaches 0.5, the others &
+        &form a rest state kept only when it passes the same test (site_seeds.txt, site_poles.txt, site_halves.txt)',&
         &'simple_exec',&
         &.true.,&
         &visibility=UI_VIS_ADVANCED, display_name='Site Ranking')
@@ -539,9 +544,20 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call site_rank%add_input(UI_PARM, 'site_dirs', 'str', 'Latent directions', &
         &'Comma-separated latent components of a flex_pca_coordinates.txt infile whose two tails are ranked', &
         &'e.g. 1,3', .false., '', visibility=UI_VIS_ADVANCED)
+        call site_rank%add_input(UI_FILE, 'infile2', 'file', 'Extra starts', &
+        &'Text file with one more start per line: a name and a file with one value per particle of the project (positive = &
+        &in the start); every start''s pole enters the grouping (site_starts.txt)', 'e.g. starts.txt', .false., '', &
+        &visibility=UI_VIS_ADVANCED)
         call site_rank%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
-        &'Endpoints whose rankings correlate at least this much (Spearman) merge into one pole{0.95}', 'Spearman{0.95}', .false., &
-        &0.95, visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        &'0: every endpoint is also ranked in two disjoint particle halves; a pole counts when its half-versions beat any &
+        &other match by 3 standard errors and endpoints merge unless 3 standard errors apart (site_halves.txt). A &
+        &Spearman value instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., &
+        &0., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call site_rank%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
+        &'Every particle is scored at its pose against every seed state''s reference from the other half (its amplitude in &
+        &units of a genuine particle, shells to 12 A); particles of a mixture component of the amplitudes at least 2 sd below &
+        &the genuine one are seeded 0 (site_junk.txt, site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', &
+        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call site_rank%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
         &'Real-space mask with values in [0,1] confining the class deviation', 'e.g. site.mrc', &
         &.true., '', visibility=UI_VIS_STANDARD)
@@ -562,9 +578,11 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'is a distributed workflow that organizes the heterogeneity of a consensus-refined project as a tree of nodes. &
         &Every node runs its mean, flex_pca, view-balanced cheap children (at the root the flex states) giving a &
         &falloff-prior focus mask, a focused flex_pca, the two-tailed site ranking of the chosen directions of its latent &
-        &(site_rank), whose merged poles seed a two-stage focused refine3D with one state per pole, and the cross-half &
+        &(site_rank), whose merged poles seed a two-stage focused refine3D with one state per pole plus one for the &
+        &particles no pole claims, and the cross-half &
         &split test of the refined states (state_split). Supported groups of at least minpop particles become child nodes below maxdepth, &
-        &the others are leaves. The node steps run as queue jobs, nodepar nodes at a time; rerun with mkdir=no in the &
+        &the others are leaves. The node steps run as queue jobs, nodepar nodes at a time, with one part per 20000 &
+        &particles of the node (at least 4, at most nparts) and the site ranking on 32 threads; rerun with mkdir=no in the &
         &run directory to resume. Writes hetero_tree_labels.txt, hetero_tree_leaves.txt and the tree of the leaves',&
         &'simple_exec',&
         &.true.,&
@@ -581,11 +599,16 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'e.g. 1,3', .false., '1,3', visibility=UI_VIS_ADVANCED)
         call hetero_tree%add_input(UI_PARM, 'site_disc', 'binary', 'Discover every node''s site', &
         &'Every node first refines its focused flex states (stage A0), discovers the sites that vary between them and ranks &
-        &the poles of the site carrying the largest share of the variance, instead of using pcg_mskfile(yes|no){no}', '', &
-        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        &the poles of the site carrying the largest share of the variance, instead of using pcg_mskfile(yes|no){yes}', '', &
+        &.false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
-        &'Endpoints of a node''s site ranking whose rankings correlate at least this much (Spearman) merge into one pole{0.95}', &
-        &'Spearman{0.95}', .false., 0.95, visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
+        &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &
+        &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen at every node', &
+        &'At every node''s seeding, particles that no seed state explains get label 0 at that node and below &
+        &(site/site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
         &'Real-space mask with values in [0,1] confining the pole classes of every node''s site ranking{the node''s &
         &focus mask}', 'e.g. site.mrc', .false., '', visibility=UI_VIS_ADVANCED)
@@ -659,5 +682,36 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call site_discover%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
         call add_ui_program('site_discover', site_discover, prgtab, UI_CATEGORY)
     end subroutine new_site_discover
+
+    subroutine new_landscape_sample( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call landscape_sample%new(&
+        &'landscape_sample',&
+        &'Sample the landscape between the pole pairs of a node',&
+        &'is a program that samples the path between every accepted pair of poles of a node at its stage-B poses: each &
+        &particle is scored against the even/odd state maps (the other half''s map, 12 A band, two sets of Fourier pixels &
+        &split by the parity of h+k); the pair coordinate is the score difference of the two poles. The number of samples is &
+        &the largest candidate whose neighbour steps are resolved on the pixels the coordinate did not use, in both folds; &
+        &the rest state never ends a pair but its particles enter every pair. Writes per pair the samples &
+        &(landscape_A_B_samples.txt), the coordinates and the held-out and final sample maps; landscape_pairs.txt lists the pairs',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_ADVANCED, display_name='Landscape Sampling')
+        call landscape_sample%add_input(UI_FILE, 'infile', 'file', 'Pole list', &
+        &'site_poles.txt of the node: one line per state in state order, the line holding rest marks the rest state', &
+        &'e.g. site_poles.txt', .true., '', visibility=UI_VIS_STANDARD)
+        call landscape_sample%add_input(UI_FILE, 'infile2', 'file', 'Split labels', &
+        &'split_children.txt of the node: poles in one child count as one, rows with child 0 are left out', &
+        &'e.g. split_children.txt', .false., '', visibility=UI_VIS_ADVANCED)
+        call landscape_sample%add_input(UI_FILE, 'dir', 'dir', 'Directory of the state half-maps', &
+        &'Directory holding the recvol_stateNN_even/odd_unfil.mrc maps of the states', 'e.g. stageB', .true., '', &
+        &visibility=UI_VIS_STANDARD)
+        call landscape_sample%add_input(UI_FILT, 'lp', 'num', 'Resolution of the working box', &
+        &'The particles are Fourier-cropped to this Nyquist resolution{10}', 'in Angstroms{10}', &
+        &.false., 10., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call landscape_sample%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call landscape_sample%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('landscape_sample', landscape_sample, prgtab, UI_CATEGORY)
+    end subroutine new_landscape_sample
 
 end module simple_ui_heterogeneity

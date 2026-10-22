@@ -9,7 +9,7 @@ use simple_commanders_rec,       only: commander_rec3D
 use simple_commanders_refine3D,  only: commander_refine3D, commander_refine3D_auto, commander_refine3D_states, &
     &commander_refine3D_states_cavgs, commander_classify3D_refs, commander_bootstrap_rec3D, commander_state_tree, &
     &commander_state_mergeup, commander_state_split, commander_site_rank, commander_hetero_tree, commander_landscape_compare, &
-    &commander_site_discover
+    &commander_site_discover, commander_landscape_sample
 implicit none
 
 public :: exec_refine3D_commander
@@ -30,6 +30,7 @@ type(commander_site_rank)             :: xsite_rank
 type(commander_hetero_tree)           :: xhetero_tree
 type(commander_landscape_compare)     :: xlandscape_compare
 type(commander_site_discover)         :: xsite_discover
+type(commander_landscape_sample)      :: xlandscape_sample
 type(commander_refine3D)              :: xrefine3D
 
 contains
@@ -95,6 +96,8 @@ contains
                 call xlandscape_compare%execute(cline)
             case( 'site_discover' )
                 call xsite_discover%execute(cline)
+            case( 'landscape_sample' )
+                call xlandscape_sample%execute(cline)
             case default
                 l_did_execute = .false.
         end select
