@@ -10,6 +10,10 @@ type(ui_program), target :: refine3D_states
 type(ui_program), target :: refine3D_states_cavgs
 type(ui_program), target :: classify3D_refs
 type(ui_program), target :: ptcl3D_state_consensus
+type(ui_program), target :: state_tree
+type(ui_program), target :: state_mergeup
+type(ui_program), target :: state_split
+type(ui_program), target :: hetero_tree
 
 contains
 
@@ -20,6 +24,10 @@ contains
         call new_refine3D_states_cavgs(prgtab)
         call new_classify3D_refs(prgtab)
         call new_ptcl3D_state_consensus(prgtab)
+        call new_state_tree(prgtab)
+        call new_state_mergeup(prgtab)
+        call new_state_split(prgtab)
+        call new_hetero_tree(prgtab)
     end subroutine construct_heterogeneity_programs
 
     subroutine new_flex_pca( prgtab )
@@ -402,5 +410,143 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         ! add to ui_hash
         call add_ui_program('ptcl3D_state_consensus', ptcl3D_state_consensus, prgtab, UI_CATEGORY)
     end subroutine new_ptcl3D_state_consensus
+
+    subroutine new_state_tree( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call state_tree%new(&
+        &'state_tree',&
+        &'Bottom-up tree of states from their even/odd maps',&
+        &'is a program that organises the states of a multi-state project bottom-up. For every pair of states the &
+        &cross-half difference energy of their even/odd maps inside a common envelope, over a band, is an unbiased &
+        &estimate of how different the states are; relative to their signal it orders agglomerative merging. Writes &
+        &merge_tree.txt, tree.nwk, the leaf tables and the nested cuts cutN/groups.txt and cutN/states.txt',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_STANDARD, display_name='State Tree')
+        call state_tree%add_input(UI_FILE, 'dir', 'dir', 'Directory of the state half-maps', &
+        &'Directory holding recvol_stateXX_even/odd maps (unfiltered ones when present); by default the directory &
+        &of the state maps registered in the project', 'e.g. 1_refine3D_states', .false., '', visibility=UI_VIS_STANDARD)
+        call state_tree%add_input(UI_FILT, 'hp', 'num', 'High-pass limit of the band', &
+        &'Lowest resolution of the band over which the states are compared{40}', 'in Angstroms{40}', .false., 40., &
+        &group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_tree%add_input(UI_FILT, 'lp', 'num', 'Low-pass limit of the band', &
+        &'Highest resolution of the band over which the states are compared{10}', 'in Angstroms{10}', .false., 10., &
+        &group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_tree%add_input(UI_PARM, 'linkage', 'multi', 'Linkage', &
+        &'Cluster distance: the largest (complete) or the particle-weighted mean (average) of the leaf distances, or the &
+        &distance of the merged maps (centroid)(complete|average|centroid){complete}', '', .false., 'complete', &
+        &choices=ui_choices([character(len=8) :: 'complete', 'average', 'centroid']), visibility=UI_VIS_ADVANCED, &
+        &preserve_default=.true.)
+        call state_tree%add_input(UI_PARM, 'minpop', 'num', 'Particle budget', &
+        &'With a budget, states with fewer particles first merge into their nearest states until every state holds &
+        &the budget, then the tree is built over those states (0 = off){0}', 'particles{0}', .false., 0., &
+        &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_tree%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('state_tree', state_tree, prgtab, UI_CATEGORY)
+    end subroutine new_state_tree
+
+    subroutine new_state_mergeup( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call state_mergeup%new(&
+        &'state_mergeup',&
+        &'Merge states up their tree by cross-half split tests',&
+        &'is a program that decides which states of a multi-state project the particles support. The state tree is &
+        &cut into nested groups (N/2, N/4, ... 1); in every group the states are tested together on the even and odd &
+        &particles (state_split): states without high-resolution signal are set aside as junk, every pair is tested at &
+        &the equal N of its smaller member with group maps docked to the other half, against a label-shuffle null &
+        &stratified by view and defocus, then a cross-half EM and a re-test in the band beyond the EM band. States that &
+        &do not survive merge by majority. Writes the merged states to the project and to merged_units.txt',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_STANDARD, display_name='State Merge-up')
+        call state_mergeup%add_input(UI_FILE, 'infile', 'file', 'State tree', &
+        &'merge_tree.txt written by state_tree for the states of this project', 'e.g. 2_state_tree/merge_tree.txt', &
+        &.true., '', visibility=UI_VIS_STANDARD)
+        call state_mergeup%add_input(UI_FILE, 'infile2', 'file', 'Per-state focus masks', &
+        &'Text file of state and focus-mask volume pairs; every group is tested inside the union of its states'' masks', &
+        &'e.g. leaf_masks.txt', .false., '', visibility=UI_VIS_ADVANCED)
+        call state_mergeup%add_input(UI_FILT, 'hp', 'num', 'High-pass limit of the test band', &
+        &'Lowest resolution of the band of the split statistic{40}', 'in Angstroms{40}', .false., 40., &
+        &group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_mergeup%add_input(UI_FILT, 'lp', 'num', 'Resolution of the test', &
+        &'The particles are Fourier-cropped to this Nyquist resolution; ignored with box_crop{10}', 'in Angstroms{10}', &
+        &.false., 10., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_mergeup%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
+        &'Fourier-cropped box of the test; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
+        &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call state_mergeup%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+        call state_mergeup%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call state_mergeup%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('state_mergeup', state_mergeup, prgtab, UI_CATEGORY)
+    end subroutine new_state_mergeup
+
+    subroutine new_state_split( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call state_split%new(&
+        &'state_split',&
+        &'Test whether the states of a project are supported by its particles',&
+        &'is a program that tests the states of a project as one node on the even and odd particles: states without &
+        &high-resolution signal are set aside as junk, every pair of states is tested at the equal N of its smaller &
+        &member with group maps docked to the other half, against a label-shuffle null stratified by view and defocus; &
+        &the merged groups are refined by a cross-half EM and re-tested in the band beyond the EM band. With a focus mask &
+        &every map is compared inside it. Writes the supported groups per particle to split_children.txt and the junk &
+        &states to split_junk.txt',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_ADVANCED, display_name='State Split Test')
+        call state_split%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Focus mask', &
+        &'Real-space mask with values in [0,1]: every map is compared only inside it', 'e.g. node_mask.mrc', &
+        &.false., '', visibility=UI_VIS_ADVANCED)
+        call state_split%add_input(UI_FILT, 'hp', 'num', 'High-pass limit of the test band', &
+        &'Lowest resolution of the band of the split statistic{40}', 'in Angstroms{40}', .false., 40., &
+        &group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_split%add_input(UI_FILT, 'lp', 'num', 'Resolution of the test', &
+        &'The particles are Fourier-cropped to this Nyquist resolution; ignored with box_crop{10}', 'in Angstroms{10}', &
+        &.false., 10., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_split%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
+        &'Fourier-cropped box of the test; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
+        &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call state_split%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+        call state_split%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call state_split%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('state_split', state_split, prgtab, UI_CATEGORY)
+    end subroutine new_state_split
+
+    subroutine new_hetero_tree( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call hetero_tree%new(&
+        &'hetero_tree',&
+        &'Recursive tree of the heterogeneity of a refined project',&
+        &'is a distributed workflow that organizes the heterogeneity of a consensus-refined project as a tree of nodes. &
+        &Every node runs its mean, flex_pca, view-balanced cheap children (at the root the flex states) giving a &
+        &falloff-prior focus mask, a focused flex_pca, a two-stage focused refine3D and the cross-half split test of the &
+        &refined states (state_split). Supported groups of at least minpop particles become child nodes below maxdepth, &
+        &the others are leaves. The node steps run as queue jobs, nodepar nodes at a time; rerun with mkdir=no in the &
+        &run directory to resume. Writes hetero_tree_labels.txt, hetero_tree_leaves.txt and the tree of the leaves',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_ADVANCED, display_name='Heterogeneity Tree')
+        call hetero_tree%add_input(UI_FILE, 'infile', 'file', 'Root particles', &
+        &'One value per particle of the project: the rows with a positive value form the root node, a node of an earlier tree at its &
+        &poses, masked like an inner node{all particles with a state}', &
+        &'e.g. root_rows.txt', .false., '', visibility=UI_VIS_ADVANCED)
+        call hetero_tree%add_input(UI_PARM, 'kfloor', 'num', 'Particles per state', &
+        &'States per node: the node particles divided by kfloor, between 2 and 8{5000}', 'particles{5000}', .false., 5000., &
+        &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'minpop', 'num', 'Smallest child node', &
+        &'A supported group with at least this many particles becomes a child node{15000}', 'particles{15000}', .false., &
+        &15000., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'maxdepth', 'num', 'Maximum depth', &
+        &'Nodes at this depth are not split further{4}', 'depth{4}', .false., 4., visibility=UI_VIS_ADVANCED, &
+        &preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'nodepar', 'num', 'Concurrent nodes', &
+        &'Nodes whose steps run at the same time{2}', 'nodes{2}', .false., 2., visibility=UI_VIS_ADVANCED, &
+        &preserve_default=.true.)
+        call hetero_tree%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+        call hetero_tree%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call hetero_tree%add_input(UI_COMP, nparts, group='compute', visibility=UI_VIS_STANDARD)
+        call hetero_tree%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('hetero_tree', hetero_tree, prgtab, UI_CATEGORY)
+    end subroutine new_hetero_tree
 
 end module simple_ui_heterogeneity

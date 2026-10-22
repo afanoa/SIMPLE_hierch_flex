@@ -44,6 +44,26 @@ type, extends(commander_base) :: commander_bootstrap_rec3D
     procedure :: execute      => exec_bootstrap_rec3D
 end type commander_bootstrap_rec3D
 
+type, extends(commander_base) :: commander_state_tree
+  contains
+    procedure :: execute      => exec_state_tree
+end type commander_state_tree
+
+type, extends(commander_base) :: commander_state_mergeup
+  contains
+    procedure :: execute      => exec_state_mergeup
+end type commander_state_mergeup
+
+type, extends(commander_base) :: commander_state_split
+  contains
+    procedure :: execute      => exec_state_split
+end type commander_state_split
+
+type, extends(commander_base) :: commander_hetero_tree
+  contains
+    procedure :: execute      => exec_hetero_tree
+end type commander_hetero_tree
+
 contains
 
     subroutine exec_refine3D_auto( self, cline )
@@ -1997,5 +2017,183 @@ contains
         end subroutine warn_for_forced_bootstrap_overrides
 
     end subroutine exec_bootstrap_rec3D
+
+    subroutine exec_state_tree( self, cline )
+        use simple_state_tree,      only: state_tree
+        use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
+        class(commander_state_tree), intent(inout) :: self
+        class(cmdline),              intent(inout) :: cline
+        type(parameters)          :: params
+        type(sp_project)          :: spproj
+        type(state_tree)          :: tree
+        type(string), allocatable :: evens(:), odds(:)
+        integer,      allocatable :: labels(:), names(:)
+        real(dp),     allocatable :: counts(:)
+        type(string) :: mapdir, vol
+        real         :: smpd_vol
+        integer      :: box_vol, s, nlab, n
+        logical      :: l_unfil
+        if( .not. cline%defined('mkdir')   ) call cline%set('mkdir',   'yes')
+        if( .not. cline%defined('hp')      ) call cline%set('hp',      40.)
+        if( .not. cline%defined('lp')      ) call cline%set('lp',      10.)
+        if( .not. cline%defined('linkage') ) call cline%set('linkage', 'complete')
+        if( .not. cline%defined('minpop')  ) call cline%set('minpop',  0)
+        call cline%set('oritype', 'ptcl3D')
+        call params%new(cline)
+        call spproj%read_segment('ptcl3D', params%projfile)
+        labels = spproj%os_ptcl3D%get_all_asint('state')
+        if( cline%defined('dir') )then
+            mapdir = params%dir//'/'
+        else
+            call spproj%read_segment('out', params%projfile)
+            call spproj%get_vol('vol', 1, vol, smpd_vol, box_vol)
+            mapdir = get_fpath(vol)
+        endif
+        nlab = maxval(labels)
+        if( nlab < 2 ) THROW_HARD('state_tree needs a project with at least two states')
+        l_unfil = .true.
+        do s = 1, nlab
+            if( count(labels == s) == 0 ) cycle
+            if( .not. file_exists(mapdir//refine3D_state_halfvol_fname(s, 'even', .false.)) ) cycle
+            l_unfil = l_unfil .and. file_exists(mapdir//refine3D_state_halfvol_fname(s, 'even', .true.)) .and. &
+                &file_exists(mapdir//refine3D_state_halfvol_fname(s, 'odd', .true.))
+        end do
+        allocate(evens(nlab), odds(nlab), names(nlab), counts(nlab))
+        n = 0
+        do s = 1, nlab
+            if( count(labels == s) == 0 ) cycle
+            if( .not. file_exists(mapdir//refine3D_state_halfvol_fname(s, 'even', l_unfil)) ) cycle
+            if( .not. file_exists(mapdir//refine3D_state_halfvol_fname(s, 'odd',  l_unfil)) ) cycle
+            n = n + 1
+            evens(n)  = mapdir//refine3D_state_halfvol_fname(s, 'even', l_unfil)
+            odds(n)   = mapdir//refine3D_state_halfvol_fname(s, 'odd',  l_unfil)
+            names(n)  = s
+            counts(n) = real(count(labels == s), dp)
+        end do
+        write(logfhandle,'(A)') '>>> STATE_TREE half-maps '//merge('unfiltered','filtered  ',l_unfil)//' from '//mapdir%to_char()
+        call tree%new(evens(1:n), odds(1:n), names(1:n), counts(1:n), find_img_smpd(evens(1)), params%hp, params%lp)
+        call tree%build(params%linkage, real(params%minpop))
+        call tree%write(labels)
+        call tree%kill
+        call spproj%kill
+        call simple_end('**** SIMPLE_STATE_TREE NORMAL STOP ****')
+    end subroutine exec_state_tree
+
+    subroutine exec_state_mergeup( self, cline )
+        use simple_state_tree,    only: state_tree
+        use simple_state_mergeup, only: state_mergeup
+        use simple_eo_partition,  only: ensure_field_halves
+        class(commander_state_mergeup), intent(inout) :: self
+        class(cmdline),                 intent(inout) :: cline
+        type(parameters)     :: params
+        type(builder)        :: build
+        type(sp_project)     :: spproj
+        type(state_tree)     :: tree
+        type(state_mergeup)  :: mergeup
+        integer, allocatable :: labels(:), units(:)
+        real    :: smpd
+        integer :: box, i
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
+        if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
+        call cline%set('oritype', 'ptcl3D')
+        call cline%set('objfun',  'cc')
+        if( .not. cline%defined('box_crop') )then
+            if( .not. cline%defined('projfile') ) THROW_HARD('state_mergeup needs projfile (or box_crop)')
+            call spproj%read_segment('stk', cline%get_carg('projfile'))
+            box  = spproj%get_box()
+            smpd = spproj%get_smpd()
+            call spproj%kill
+            call cline%set('box_crop', min(box, max(26, 2*ceiling(real(box)*smpd/cline%get_rarg('lp')))))
+        endif
+        call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
+        call ensure_field_halves(build%spproj, params%oritype, params%projfile)
+        call tree%read(params%infile)
+        labels = build%spproj_field%get_all_asint('state')
+        call mergeup%new(params, build)
+        if( cline%defined('infile2') ) call mergeup%leaf_focus(params%infile2)
+        call mergeup%run(tree, labels, units)
+        do i = 1, size(units)
+            call build%spproj_field%set_state(i, units(i))
+        end do
+        call build%spproj%write_segment_inside('ptcl3D', params%projfile)
+        call mergeup%kill
+        call tree%kill
+        call build%kill_general_tbox
+        call simple_end('**** SIMPLE_STATE_MERGEUP NORMAL STOP ****')
+    end subroutine exec_state_mergeup
+
+    subroutine exec_state_split( self, cline )
+        use simple_state_mergeup, only: state_mergeup
+        use simple_eo_partition,  only: ensure_field_halves
+        class(commander_state_split), intent(inout) :: self
+        class(cmdline),               intent(inout) :: cline
+        type(parameters)     :: params
+        type(builder)        :: build
+        type(sp_project)     :: spproj
+        type(state_mergeup)  :: split
+        integer, allocatable :: labels(:), rows(:), child(:), junk(:), out(:)
+        real    :: smpd
+        integer :: box, i, kstar, funit, ios
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
+        if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
+        call cline%set('oritype', 'ptcl3D')
+        call cline%set('objfun',  'cc')
+        if( .not. cline%defined('box_crop') )then
+            if( .not. cline%defined('projfile') ) THROW_HARD('state_split needs projfile (or box_crop)')
+            call spproj%read_segment('stk', cline%get_carg('projfile'))
+            box  = spproj%get_box()
+            smpd = spproj%get_smpd()
+            call spproj%kill
+            call cline%set('box_crop', min(box, max(26, 2*ceiling(real(box)*smpd/cline%get_rarg('lp')))))
+        endif
+        call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
+        call ensure_field_halves(build%spproj, params%oritype, params%projfile)
+        labels = build%spproj_field%get_all_asint('state')
+        call split%new(params, build)
+        if( cline%defined('pcg_mskfile') ) call split%focus(params%pcg_mskfile)
+        rows = split%get_rows()
+        call split%test(labels(rows), maxval(labels), child, kstar, junk)
+        allocate(out(size(labels)), source=0)
+        out(rows) = child
+        call fopen(funit, string('split_children.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('state_split: cannot write split_children.txt', ios)
+        do i = 1, size(out)
+            write(funit,'(I0)') out(i)
+        end do
+        call fclose(funit)
+        call fopen(funit, string('split_junk.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('state_split: cannot write split_junk.txt', ios)
+        do i = 1, size(junk)
+            write(funit,'(I0)') junk(i)
+        end do
+        call fclose(funit)
+        call split%kill
+        call build%kill_general_tbox
+        call simple_end('**** SIMPLE_STATE_SPLIT NORMAL STOP ****')
+    end subroutine exec_state_split
+
+    subroutine exec_hetero_tree( self, cline )
+        use simple_hetero_tree, only: hetero_tree
+        class(commander_hetero_tree), intent(inout) :: self
+        class(cmdline),               intent(inout) :: cline
+        type(parameters), target :: params
+        type(hetero_tree) :: tree
+        if( .not. cline%defined('mkdir')    ) call cline%set('mkdir',    'yes')
+        if( .not. cline%defined('kfloor')   ) call cline%set('kfloor',   5000)
+        if( .not. cline%defined('minpop')   ) call cline%set('minpop',   15000)
+        if( .not. cline%defined('maxdepth') ) call cline%set('maxdepth', 4)
+        if( .not. cline%defined('nodepar')  ) call cline%set('nodepar',  2)
+        if( .not. cline%defined('nparts')   ) call cline%set('nparts',   8)
+        if( .not. cline%defined('nthr')     ) call cline%set('nthr',     8)
+        if( .not. cline%defined('pgrp')     ) call cline%set('pgrp',     'c1')
+        call cline%set('oritype', 'ptcl3D')
+        call params%new(cline)
+        call tree%new(params, cline%defined('infile'))
+        call tree%run
+        call tree%kill
+        call simple_end('**** SIMPLE_HETERO_TREE NORMAL STOP ****')
+    end subroutine exec_hetero_tree
 
 end module simple_commanders_refine3D

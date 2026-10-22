@@ -81,6 +81,7 @@ type :: parameters
     character(len=3)          :: keepvol='no'         !< dev flag for preserving iterative volumes in refine3d
     character(len=3)          :: lam_anneal='no'      !< anneal lambda parameter
     character(len=3)          :: loc_sdev='no'        !< Whether to calculate local standard deviations(yes|no){no}
+    character(len=8)          :: linkage='complete'
     character(len=STDLEN)     :: filt_mode='none'     !< filtering mode(none|uniform|fsc|nonuniform|nonuniform_lpset){none}
     character(len=3)          :: fit_phshift='no'     !< fit additive CTF phase shift(yes|no){no}
     character(len=3)          :: makemovie='no'
@@ -366,8 +367,10 @@ type :: parameters
     integer :: iptcl=1
     integer :: istart=0
     integer :: job_memory_per_task2D=JOB_MEMORY_PER_TASK_DEFAULT
+    integer :: kfloor=5000
     integer :: kfromto(2)
     integer :: ldim(3)=0
+    integer :: maxdepth=4
     integer :: maxits=100          !< maximum # iterations
     integer :: maxits_pcg=2        !< maximum # PCG reconstruction iterations{2}
     integer :: maxits_atm=30       !< cap of the PCG iterations of the atomicity-prior solve{30}
@@ -389,6 +392,7 @@ type :: parameters
     integer :: ncls_coarse=0       !< # coarse clusters
     integer :: ncls_fine=0         !< # fine clusters
     integer :: nclust=20           !< # class-average groups of balance=cavg sampling and cls_expansion{20}
+    integer :: nodepar=2
     integer :: nptcls_coarse=0     !< # coarse particles
     integer :: nptcls_fine=0       !< # fine particles
     integer :: nsubcls_min=3       !< minimum subclasses per parent class for class splitting

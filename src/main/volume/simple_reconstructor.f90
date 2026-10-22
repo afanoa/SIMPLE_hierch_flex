@@ -92,6 +92,8 @@ type, extends(image) :: reconstructor
     procedure          :: restore_base
     procedure          :: restore_final
     procedure          :: floor_rho_shellwise
+    procedure          :: add_shell_rho
+    procedure          :: get_rho_shell_medians
     procedure          :: compress_exp
     procedure          :: expand_exp
     procedure          :: project_fplane
@@ -616,6 +618,64 @@ contains
         !$omp end parallel do
         deallocate(shsum, shcnt)
     end subroutine floor_rho_shellwise
+
+    subroutine add_shell_rho( self, vals )
+        class(reconstructor), intent(inout) :: self
+        real,                 intent(in)    :: vals(0:)
+        integer :: h, k, m, sh, shmax, phys(3)
+        shmax = min(self%sh_lim, ubound(vals,1))
+        !$omp parallel do collapse(3) default(shared) schedule(static) private(h,k,m,sh,phys) proc_bind(close)
+        do h = self%lims(1,1),self%lims(1,2)
+            do k = self%lims(2,1),self%lims(2,2)
+                do m = self%lims(3,1),self%lims(3,2)
+                    sh = nint(sqrt(real(h*h + k*k + m*m)))
+                    if( sh > shmax ) cycle
+                    phys = self%comp_addr_phys(h, k, m)
+                    self%rho(phys(1),phys(2),phys(3)) = self%rho(phys(1),phys(2),phys(3)) + vals(sh)
+                end do
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine add_shell_rho
+
+    subroutine get_rho_shell_medians( self, meds )
+        class(reconstructor), intent(in)  :: self
+        real, allocatable,    intent(out) :: meds(:)
+        real,    allocatable :: vals(:)
+        integer, allocatable :: cnt(:), pos(:)
+        integer :: h, k, m, sh, phys(3), ipass
+        allocate(meds(0:self%nyq), source=1.)
+        allocate(cnt(0:self%nyq), pos(0:self%nyq+1), source=0)
+        do ipass = 1, 2
+            do h = self%lims(1,1),self%lims(1,2)
+                do k = self%lims(2,1),self%lims(2,2)
+                    do m = self%lims(3,1),self%lims(3,2)
+                        sh = nint(sqrt(real(h*h + k*k + m*m)))
+                        if( sh > self%nyq ) cycle
+                        phys = self%comp_addr_phys(h, k, m)
+                        if( self%rho(phys(1),phys(2),phys(3)) <= 0. ) cycle
+                        if( ipass == 1 )then
+                            cnt(sh) = cnt(sh) + 1
+                        else
+                            pos(sh) = pos(sh) + 1
+                            vals(pos(sh)) = self%rho(phys(1),phys(2),phys(3))
+                        endif
+                    end do
+                end do
+            end do
+            if( ipass == 1 )then
+                allocate(vals(max(1,sum(cnt))))
+                pos(0) = 0
+                do sh = 1, self%nyq + 1
+                    pos(sh) = pos(sh-1) + cnt(sh-1)
+                end do
+            endif
+        end do
+        do sh = 0, self%nyq
+            if( cnt(sh) > 0 ) meds(sh) = median_nocopy(vals(pos(sh)-cnt(sh)+1:pos(sh)))
+        end do
+        deallocate(vals, cnt, pos)
+    end subroutine get_rho_shell_medians
 
     subroutine sampl_dens_correct( self )
         class(reconstructor), intent(inout) :: self

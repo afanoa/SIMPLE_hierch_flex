@@ -144,7 +144,7 @@ contains
     subroutine deapodize3D_inplace( vol, inv1d )
         class(image), intent(inout) :: vol
         real,         intent(in)    :: inv1d(:)
-        real, pointer :: rmat(:,:,:) => null()
+        real, pointer :: rmat(:,:,:)
         integer :: ldim(3), i, j, k, n
         ldim = vol%get_ldim()
         n    = ldim(1)

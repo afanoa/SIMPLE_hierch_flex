@@ -7,7 +7,8 @@ use simple_commanders_mask,      only: commander_automask
 use simple_commanders_volops,    only: commander_postprocess
 use simple_commanders_rec,       only: commander_rec3D
 use simple_commanders_refine3D,  only: commander_refine3D, commander_refine3D_auto, commander_refine3D_states, &
-    &commander_refine3D_states_cavgs, commander_classify3D_refs, commander_bootstrap_rec3D
+    &commander_refine3D_states_cavgs, commander_classify3D_refs, commander_bootstrap_rec3D, commander_state_tree, &
+    &commander_state_mergeup, commander_state_split, commander_hetero_tree
 implicit none
 
 public :: exec_refine3D_commander
@@ -21,6 +22,10 @@ type(commander_refine3D_auto)         :: xrefine3D_auto
 type(commander_refine3D_states)       :: xrefine3D_states
 type(commander_refine3D_states_cavgs) :: xrefine3D_states_cavgs
 type(commander_classify3D_refs)       :: xclassify3D_refs
+type(commander_state_tree)            :: xstate_tree
+type(commander_state_mergeup)         :: xstate_mergeup
+type(commander_state_split)           :: xstate_split
+type(commander_hetero_tree)           :: xhetero_tree
 type(commander_refine3D)              :: xrefine3D
 
 contains
@@ -72,6 +77,14 @@ contains
                 else
                     call xclassify3D_refs%execute(cline)
                 endif
+            case( 'state_tree' )
+                call xstate_tree%execute(cline)
+            case( 'state_mergeup' )
+                call xstate_mergeup%execute(cline)
+            case( 'state_split' )
+                call xstate_split%execute(cline)
+            case( 'hetero_tree' )
+                call xhetero_tree%execute(cline)
             case default
                 l_did_execute = .false.
         end select
