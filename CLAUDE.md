@@ -50,7 +50,8 @@ living docs and leave the old ones in dated history docs.
 ## Structure
 
 - `production/`: thin executable entrypoints (`simple_exec`, `single_exec`,
-  `simple_stream`, `simple_test_exec`, `simple_private_exec`). `simple_test_exec`
+  `simple_stream`, `simple_test_exec`, `simple_private_exec`,
+  `simple_persistent_worker`). `simple_test_exec`
   and the `*_tester` modules are built only with `BUILD_TESTS=ON`, the
   `compile_*.sh` default (`--exclude-tests` turns them off).
 - `src/`: core static library.
@@ -64,7 +65,12 @@ living docs and leave the old ones in dated history docs.
   `src/main/stream/stages` (the master's parts are in `src/main/stream/master`, the modules
   the stages share in `src/main/stream/shared`, the 2D pool in
   `src/main/stream/pool2D`).
-- `src/main/strategies`: algorithm and execution-policy layers.
+- `src/main/strategies`: algorithm and execution-policy layers. In `parallelization/` the
+  refine2D/refine3D strategies and the distributed master's steps (volume and class-average
+  assembly, probability alignment, the sigma2 commit) are routines on the master's
+  `(params, build)`; their commanders are thin `execute(cline)` wrappers. Keep new master
+  work there, not in commanders.
+- `src/main/solve`: the solve2D/solve3D stage controllers.
 - `src/main/nu_filt`: nonuniform filtering used by volume assembly.
 - `doc/`: architecture, policy, and refactoring notes — often more current than
   code comments. Check `doc/policies/*.md` and `doc/refactoring_notes/*.md`
@@ -88,6 +94,25 @@ living docs and leave the old ones in dated history docs.
   Report what was built and run, and the results.
 - Never commit or push. The maintainer decides what is committed and pushed:
   leave changes in the working tree and say which are ready.
+
+## Layering and project I/O
+
+`doc/policies/layering_and_project_ownership_policy.md` is the rule set; read it
+before adding or changing a commander, a strategy routine, a worker step or any
+code that reads or writes an `sp_project`. Its section 8 lists where the code does
+not follow it yet; do not add to that list.
+
+- Search for the step before writing it (`rg` the verb and the data it touches);
+  extend an existing routine, never copy its frame.
+- A part of a stage that another workflow or the master runs is a strategy
+  routine on the caller's `(params, build)` with a `run_<x>(cline)` entry; its
+  commander is a thin `execute(cline)` wrapper. A strategy never calls a
+  commander for a part of a stage.
+- One project owner per run: workers read the file and write part files, never
+  the project; the master merges in memory and writes the changed segments once
+  per iteration. Do not read what `build` already holds.
+- Shared project state (even/odd halves, the sample, sigma2) has one maker and
+  verifying consumers (`ensure_field_halves`).
 
 ## Fortran conventions
 

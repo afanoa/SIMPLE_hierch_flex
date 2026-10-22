@@ -69,6 +69,14 @@ interface
         real :: bounds(2)
     end function solve3D_lpstart_bounds
 
+    module function solve3D_lpstart_aggressive() result(lp)
+        real :: lp
+    end function solve3D_lpstart_aggressive
+
+    module function solve3D_aggressive_march_stage() result(istage)
+        integer :: istage
+    end function solve3D_aggressive_march_stage
+
     module function solve3D_cenlp_default() result(cenlp)
         real :: cenlp
     end function solve3D_cenlp_default
@@ -131,6 +139,11 @@ interface
         integer, intent(in) :: nstates
         logical :: l_delayed
     end function solve3D_uses_delayed_input_lp
+
+    module pure function solve3D_stage_skipping( nstates ) result( l_skip )
+        integer, intent(in) :: nstates
+        logical :: l_skip
+    end function solve3D_stage_skipping
 
     module function solve3D_stage_behind_fsc05( params, istage ) result( l_behind )
         class(parameters), intent(in) :: params
@@ -467,7 +480,7 @@ contains
         type(class_frcs) :: clsfrcs
         real             :: lpfinal
         real             :: lpstart_bounds(2), lpstop_bounds(2)
-        integer          :: filtsz, nstages
+        integer          :: filtsz, nstages, imarch
         l_cavgs_mode = l_cavgs
         nstages = active_lp_schedule_nstages()
         if( trim(params%force_lp_range).eq.'yes' )then
@@ -501,6 +514,22 @@ contains
         else
             call lpstages(params%box, nstages, frcs_avg, params%smpd,&
             &lpstart_bounds(1), lpstart_bounds(2), lpfinal, lpinfo, l_cavgs, verbose=.true.)
+        endif
+        if( .not. l_cavgs .and. params%l_freq_march_aggressive )then
+            ! aggressive frequency marching (doc/policies/3D/solve3D_policy.md sec. 4): the global stages
+            ! before the march keep their FRC-planned rungs (the search from random orientations needs
+            ! them; PfCRT latest10, 2026-10-21); from the first prob stage on the class FRCs set neither
+            ! the start nor the rungs, and the final limit is the standard one
+            imarch = solve3D_aggressive_march_stage()
+            if( imarch <= nstages )then
+                write(logfhandle,'(A,I0,A,F6.2,A,F6.2,A)') '>>> SOLVE3D AGGRESSIVE FREQUENCY MARCHING FROM STAGE ', imarch, ': ', &
+                    &solve3D_lpstart_aggressive(), ' -> ', lpfinal, ' A, rungs linear in spatial frequency'
+                call lpstages_aggressive(params%box, nstages, params%smpd, solve3D_lpstart_aggressive(), lpfinal, lpinfo, &
+                    &verbose=.true., first_stage=imarch)
+            else
+                write(logfhandle,'(A,I0,A)') '>>> SOLVE3D AGGRESSIVE FREQUENCY MARCHING: no stage at or past ', imarch, &
+                    &', the planned ladder stands'
+            endif
         endif
         ! cleanup
         call clsfrcs%kill
@@ -601,6 +630,17 @@ contains
         call vol_lp_stage%kill
     end subroutine exec_refine3D
 
+    !> Replaces each ptcl3D pose by a random symmetry mate. The stage's refinement wrote the poses into projfile,
+    !! so they are read back first: spproj still holds the previous stage's.
+    subroutine symmetry_randomize_poses( symobj, spproj, projfile )
+        type(sym),         intent(inout) :: symobj
+        class(sp_project), intent(inout) :: spproj
+        class(string),     intent(in)    :: projfile
+        call spproj%read_segment('ptcl3D', projfile)
+        call symobj%symrandomize(spproj%os_ptcl3D)
+        call spproj%write_segment_inside('ptcl3D', projfile)
+    end subroutine symmetry_randomize_poses
+
     subroutine symmetrize( params, istage, spproj, projfile, xrec3D )
         class(parameters),               intent(inout) :: params
         integer,                         intent(in)    :: istage
@@ -613,10 +653,7 @@ contains
         integer :: state
         real :: lp_snapshot
         real :: lpsym, hpsym
-        if( l_symran )then
-            call se1%symrandomize(spproj%os_ptcl3D)
-            call spproj%write_segment_inside('ptcl3D', projfile)
-        endif
+        if( l_symran ) call symmetry_randomize_poses(se1, spproj, projfile)
         if( l_srch4symaxis )then
             lpsym = max(solve3D_lpsymsrch_lb(),lpinfo(solve3D_symsrch_stage(l_srch4symaxis))%lp)
             ! the axis search scores the Fourier shells between hp and lpsym; a stage limit coarser than hp (an early

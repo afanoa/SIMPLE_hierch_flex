@@ -62,7 +62,8 @@ for `solve3D`.
 The stage controller in `simple_solve3D_controller.f90` emits a concrete
 `refine3D` command line for each stage. The full particle workflow has eight
 stages. Independent multi-state startup defaults to five stages, so it stops
-after its first `prob_neigh` stage and before the NU-filtering stages.
+after its `prob` stages 3-5, before the first `prob_neigh` stage (6); stage 5 is
+also its first NU-filtered stage.
 
 Stage policy includes:
 
@@ -75,10 +76,10 @@ Stage policy includes:
   - single-state particle runs use `prob_neigh` with `prob_neigh_mode=shc`
     in stages 1-2, middle `prob`, and late `prob_neigh`
   - multi-state particle runs use direct `shc` in stages 1-2, `prob` in
-    stages 3-4, and `prob_neigh` with `prob_neigh_mode=state` from stage 5:
-    the switch is the first stage whose `nspace` reaches the multi-state cap
-    of 2,500 directions (`NSPACE_MULTI_MAX`), read from the stage table, and
-    the class-average route switches at the same stage
+    stages 3-5, and `prob_neigh` with `prob_neigh_mode=state` from stage 6
+    (`PROB_NEIGH_REFINE_STAGE`, the single-state switch), so the default
+    five-stage multi-state run uses no `prob_neigh`; the class-average route
+    switches at the same stage (section 6)
 - the multi-state direction cap: with `nstates > 1` no stage exceeds 2,500
   directions, so stages 7 and 8 (5,000 in single state) run at 2,500
 - the multi-state stage-2 exit: stage 2 of a multi-state particle run (`shc`)
@@ -99,7 +100,7 @@ Stage policy includes:
 - staged automasking only from `AUTOMSK_STAGE`
 - an explicitly requested PCG solvent prior from `PCG_SOLVENT_START_STAGE`
   (stage 8, the final stage), so the NU label field the prior'd pair receives
-  has settled over stages 6-7 without the prior
+  has settled over stages 5-7 without the prior
 
 The downscaled particle cache is a 2D-only feature: `solve3D` rejects
 `cache=yes`, and each stage uses its own crop from the low-pass/downscaling
@@ -162,7 +163,8 @@ selection is unchanged: `ptcl3D%state` is reset from the `ptcl2D` state flags
 greedy draw and every stage sample the global lowest `updatecnt` tiers
 (`sample4update_cnt`), as every `balance=none` stage does. The ladder cannot
 be planned from class FRCs: `lpstart`/`lpstop` are taken from the command line
-and otherwise from `mskdiam` (`mskdiam2lplimits`), as on the input-volume
+and otherwise `lpstart` from `mskdiam` (`mskdiam2lplimits`) and `lpstop` is the
+ladder bound `LPSTOP_BOUNDS(1)`, 4.5 A, as on the input-volume
 route; an add-on takes its ladder from the frozen run's manifest regardless.
 Input volumes on such a project no longer need the random classes the
 `class` default fabricates.
@@ -179,11 +181,11 @@ the project owns a compatible committed state and otherwise seeds canonical
 particle spectra from image power with `calc_pspec`. The starting reconstruction
 then runs as planned, and the stage's first euclid iteration replaces the seed
 with residual spectra in the next canonical transaction.
-The final reconstruction at original sampling is one program call,
-`bootstrap_rec3D`, which owns the complete sequence: the same image-power
-seed, a euclid ML bootstrap map on it, one residual sigma pass
-(`refine=sigma`) against that map, canonical commit of the residual generation,
-and the shipped euclid ML reconstruction on it. Because the
+When the final reconstruction at original sampling must rebuild its sigmas
+(section 9) it is one program call, `bootstrap_rec3D`, which owns the complete
+sequence: the same image-power seed, a euclid ML bootstrap map on it, one
+residual sigma pass (`refine=sigma`) against that map, canonical commit of the
+residual generation, and the shipped euclid ML reconstruction on it. Because the
 program takes any project with 3D orientations, it is also the standalone
 test for this stage (`simple_exec prg=bootstrap_rec3D projfile=... pgrp=...
 mskdiam=... nparts=... nthr=... rec_backend=...`), so failures in the final
@@ -207,9 +209,65 @@ every run seeds and owns its sigmas in its own directory.
 are derived from class FRCs by default, with `lpstart`/`lpstop` overrides and a
 `force_lp_range=yes` path that uses the requested range directly.
 
-Stage 1 of `solve3D` never runs with a low-pass limit finer than 20 A.
-`lpstages` and `lpstages_fast` apply this floor before generating the remaining
-low-pass and crop ladder, preserving gradual frequency marching.
+Where the ladder is planned by `lpstages` or `lpstages_fast`, stage 1 of
+`solve3D` never runs with a low-pass limit finer than 20 A: both apply this
+floor before generating the remaining low-pass and crop ladder, preserving
+gradual frequency marching. `force_lp_range=yes` and the routes planned by
+`lpstages_setlims` (input volumes, no 2D solution) take `lpstart` as given.
+
+**Aggressive frequency marching (`freq_march_aggressive=yes`, 2026-10-21;
+experimental, default `no`).** For a small membrane target the class FRCs
+measure micelle self-consistency at the low resolutions where the default
+ladder parks stages 1-3 (PfCRT: 20.0, 19.4, 18.3 A), and stage 3's band does
+not discriminate orientations: on the `latest6` reference its overlap peaks
+at the fourth iteration and declines for the remaining thirteen (the
+iteration-budget note below). The signal that fixes a small particle's
+orientation sits in the 5-10 A band, which the default schedule withholds
+until stage 4. With the key on, the particle route plans its ladder from the
+class FRCs as usual and then `lpstages_aggressive` overwrites the rungs from
+`AGGRESSIVE_MARCH_STAGE` (= `PROB_REFINE_STAGE`, 3) on: linear in spatial
+frequency from `LPSTART_AGGRESSIVE` (12 A, no coarser than the kept stage-2
+rung) to the standard final limit `lpfinal`, so every march stage admits the
+same number of new Fourier shells and the steps are smallest in Angstrom at
+the fine end (12.0, 10.0, 8.6, 7.5, 6.7, 6.0 A for a 6 A final limit); each
+march stage is cropped on its own at the particle-route target (smpd lp/3, at
+least 2 A), never below the preceding stage's crop. The finer bands need
+finer angular sampling, so `nspace` follows `NSPACE_AGGRESSIVE` = [500, 1000,
+2500, 2500, 2500, 2500, 5000, 5000] (a spiral of n directions resolves about
+223/sqrt(n) degrees; a band lp on a particle of diameter D needs about lp/D
+radians, 5.7 degrees at 12 A on 120 A). Everything else stands: `MAXITS`, the
+stage modes, the NU start stage (5; NU before that reinforces a bad
+alignment, see section 8), the non-NU matching ceiling at the rung, the
+FSC=0.5 promotion, stage omission and mid-stage exit, which now act on the
+closer rungs.
+
+*Why the march starts at stage 3 and not at stage 1.* The first version
+(PfCRT `latest10`, 2026-10-21) marched from stage 1: 12.0, 10.5, 9.3 A with
+`nspace` 1000/2500. The search from random orientations never consolidated:
+stage 1's overlap plateaued at 0.22 (0.34 at 19.4 A in `latest6` and
+`latest9`), stage 2's at 0.17 (0.23), the FSC=0.5 crossing sat at the band
+(12.9 A) in stage 1 and then *coarsened* to 13.5-15.5 A in stage 2 (noise
+fitted inside a band the reference has no content in), the cFAR of 0.6-0.7
+was that of isotropic noise, and stage 3 consolidated to 0.32 instead of
+0.50: garbage after two stages where the default gives a smooth, correct
+volume. The reference built from random poses carries nothing at 12 A, so the
+stochastic hill climb has no landscape to climb; the low-resolution start is
+what makes the global search converge. In the default the large
+consolidation (overlap 0.23 to 0.50) happens in stage 3 at nearly stage 2's
+band, so it is the switch to the full `prob` search with `ml_reg`, not the
+band, that does it; the march therefore begins with that switch. 12 A at
+stage 3 is also about res05/1.5 after stage 2 on PfCRT (res05 18.3 A), the
+bounded lead the NU stages are known to climb under.
+
+The key applies to the particle route with a 2D solution only: the
+input-volume and no-2D routes and the add-on have explicit limits and refuse
+it, the class-average route keeps its own ladder and refuses it, and
+`force_lp_range=yes` is refused beside it. Test: the ten-restart PfCRT
+regression against the default schedule, scored on stage 3's overlap
+trajectory (does it still churn?), the stage-5 FSC, the iterations to the
+stage-6 Nyquist, overlap through stage 6 and above all the gold-standard
+bootstrap of the final poses, plus the same restarts on a target that fails
+under the default schedule.
 
 The single-state external-volume route (`vol1`, `nstates=1`) starts at
 `VOL_SUPPLIED_STAGE`, the stage after the no-axis-search block
@@ -253,7 +311,10 @@ searched**, `SYMSRCH_STAGE`. `NOSYMSRCH_STAGE` can be omitted: with
 therefore implies `l_srch4symaxis`. Omitted
 stages leave `emitted_lp` at its `-1` sentinel, which the stage report and
 the add-on manifest already treat as "not run". The one-rung advance above
-therefore applies only to the three stages that cannot be omitted.
+therefore applies to the stages that cannot be omitted: the entry stage when it
+lies past stage 2 and, when an axis is searched, `SYMSRCH_STAGE`; the last stage
+has no next rung and is never advanced. Single-state
+runs only since 2026-10-21: a multi-state run omits no stage (section 6).
 
 **Stage iteration budget (`MAXITS`): measured slack, not yet reallocated.**
 The budget stands at `[20,20,17,15,12,12,12,25]`. A reallocation of stage 3's
@@ -305,9 +366,11 @@ cut predicted the outcome. The six restarts that left stage 5 at 7.573 A
 finished at 4.03-4.14, the two that left at 7.762 A at 3.981 and 4.032, and
 the two that left coarsest at 8.171 A gave the two worst maps, 4.140 and the
 run's only failure at 5.353. A stage still gaining resolution is productive
-whatever the next rung's limit says. Emitted for the same
-stages the shift is allowed for, and it only ever adds convergence, so
-`minits` and the Cartesian rule still hold.
+whatever the next rung's limit says. Emitted for the stages past stage 2 other
+than the entry stage, the last stage and, when an axis is searched,
+`SYMSRCH_STAGE`, and it only ever adds convergence, so
+`minits` and the Cartesian rule still hold. Single-state runs only since
+2026-10-21: the controller emits no `lpexit` for a multi-state run (section 6).
 
 A first version tested against `params%lp`, the band in use, and was
 reverted the same day: PfCRT `latest8` converged in 2 of 6 restarts. **Do not
@@ -460,15 +523,20 @@ the parent particle workflow resumes. The multi-state run is intended for
 severe heterogeneity where early inspection is more valuable than committing
 to a longer refinement immediately. Its particle stages 1 and 2 use direct
 `refine=shc` rather than the probabilistic-neighborhood startup of the
-single-state run; stages 3 and 4 use `refine=prob`, and stage 5 (rulings of
-2026-10-15) uses `refine=prob_neigh` with `prob_neigh_mode=state`. The switch
-is the first stage whose directions reach the multi-state cap of 2,500
-(`NSPACE_MULTI_MAX` in the stage controller), derived from the stage table
-of directions rather than from a stage number; the dense `prob` table over
-2,500 directions of every state was the most expensive stage of a
-multi-state run. The class-average route (`solve3D_cavgs` with `nstates > 1`)
-shares this mode policy and switches at the same stage; its early stages
-keep their own class-average search schedule. The cap also limits every
+single-state run; stages 3 to 5 use `refine=prob`, and `refine=prob_neigh`
+with `prob_neigh_mode=state` starts at stage 6, the stage single-state runs
+switch at (`PROB_NEIGH_REFINE_STAGE`), so the default five-stage run never
+reaches it. From 2026-10-16 to 2026-10-21 stage 5 ran `prob_neigh`, because
+the dense `prob` table over 2,500 directions of every state was the most
+expensive stage of a multi-state run. That was a mistake (ruling of
+2026-10-21): stage 5 is where a multi-state run makes its final labels, and
+there the neighbourhood search lost states. On a simulated two-state set the
+builds with `prob_neigh` at stage 5 drained a state during it or split the
+states too slowly, while the build of 2026-10-15 with `prob` at stage 5
+completed the separation there (accuracy 0.86 to 0.97). The class-average
+route (`solve3D_cavgs` with `nstates > 1`) shares this mode policy and
+switches at the same stage; its early stages keep their own class-average
+search schedule. The cap of 2,500 directions (`NSPACE_MULTI_MAX`) also limits every
 multi-state stage to 2,500 directions: stages 7 and 8, which run 5,000
 directions in single state, run 2,500 when a user extends a multi-state run
 to them.
@@ -489,9 +557,23 @@ until the overlap converged spent most of its time scanning nearly the whole
 space. A `solve3D_addon` pass keeps its own early stopping and does not set
 the key.
 
+No stage of a multi-state run is skipped or cut short by a resolution rule
+(ruling of 2026-10-21): the stage omission and the mid-stage resolution exit of
+section 4 apply to single-state runs only (`solve3D_stage_skipping` in the stage
+controller), so every multi-state stage runs until its own convergence rule or
+its `MAXITS`. Both rules read the best state's FSC=0.5 resolution. At the start
+of a multi-state run every state holds a mixture of nearly the same structure,
+so the best state resolves early, and the rules removed exactly the `prob`
+stages in which the states split. On a simulated two-state set (30,000
+particles, two RNA polymerase conformations) the build of 2026-10-20 omitted
+stage 3, ended stage 4 after 3 of its 15 iterations and lost the second state
+in stage 5 (accuracy 0.57), while the build of 2026-10-15, which ran stages 3
+and 4 in full, separated the states during stage 4 (accuracy 0.97). The
+stage-boundary FSC=0.5 advance of a stage's limit still applies.
+
 Unless the user overrides them, the commander sets `nstages=5` and
-`lpstop=6.0 A`. Stage 5 does not enter static NU filtering, multi-state
-trailing reconstruction, or staged automasking. After
+`lpstop=6.0 A`. Stage 5 is NU-filtered (since 2026-10-18, section 8) but runs
+no multi-state trailing reconstruction or staged automasking. After
 stage 5, the workflow still runs the final original-sampling reconstruction
 so the run produces inspectable `rec_final_stateNN` volumes. To improve
 particle coverage before that early exit, the multi-state run starts
@@ -561,10 +643,11 @@ early FSC/PCG consumers use the previous iteration's evidence artifact.
 `ENVFSC_STAGE`, forces it off for the cavgs route, and forwards the requested
 or implied value at and after that boundary. With `envfsc=yes`, volume
 assembly generates a density envelope from the current merged half maps for
-phase-randomized FSC correction and cFAR on gridding, and the PCG backend uses
-the same envelope as the support of both solves, using `envmsklp` as its
-smoothing low-pass. The controller forwards `envmsklp` to staged and final
-reconstruction commands; its default is `ENVMSKLP_DEFAULT` (20 A). The
+phase-randomized FSC correction and cFAR on gridding (PCG applies no phase
+randomization), using `envmsklp` as its smoothing low-pass. With an active
+`automsk` the PCG backend uses the same envelope as the support of both solves;
+with `automsk=no` it stays on the `mskdiam` sphere whatever `envfsc` says. The
+controller forwards `envmsklp` to staged and final reconstruction commands; its default is `ENVMSKLP_DEFAULT` (20 A). The
 density-mask dilation is no longer injected as a layer count: every program
 applies the shared physical minimum `ENVMSKWIDTH_A_MIN` (7.5 A) at the
 sampling the envelope is built at, so the envelope keeps the same physical
@@ -631,9 +714,11 @@ Before a multi-state final reconstruction, a greedy missing-update pass
 The final reconstruction inherits only the scientific reconstruction policy it
 needs. It preserves the parent `envfsc` request so the original-sampling half
 maps use the same radial FSC/cFAR masking policy, but it does not inherit staged
-search, matching-reference automasking, or reference-filter controls such as
-`refine`, `lp`, `automsk`, or `gauref`. There is no backend exception: the
-final reconstruction runs with `filt_mode=none` on both backends.
+search or reference-filter controls such as `refine`, `lp` or `gauref`. It
+inherits `automsk` from the last stage, so the shipped map is estimated on the
+same density or NU support as the refinement iterations. There is no backend
+exception: the final reconstruction runs with `filt_mode=none` on both
+backends, except that `automsk=nu` keeps the caller's NU `filt_mode`.
 
 If the final stage used `objfun=euclid` and `ml_reg=yes`, final reconstruction
 uses the committed sigma2 store of the workflow's particles: one noise spectrum
@@ -644,8 +729,8 @@ On the PCG backend, a final ML-regularized stage uses the ordinary `P_tau`
 replay in `bootstrap_rec3D`; the `Q_NU` prior, its calibration pass and its
 controllers were removed on 2026-09-06.
 When `pcg_solvent=yes`, the staged controller withholds the soft solvent prior
-from stages 3-7 and enables it only in stage 8. A workflow that stops before
-stage 8 does not use the prior.
+from every stage before stage 8 and enables it only in stage 8. A workflow
+that stops before stage 8 does not use the prior.
 
 The final reconstruction does not apply fractional-update sampling or trailing
 average blending. Final-map postprocessing is classical, even when staged
@@ -692,10 +777,12 @@ short:
   particles per inherited state (a warning below 5 % of the frozen population).
 - The execution-environment keys pass through, the stream's persistent-worker
   keys (`worker_server`, `worker_priority`) included.
-- The run enters at stage 3 of the base run's planned ladder with
-  `center=no` and `overlap` 0.95 by default; the stage limits follow the rule
-  above (FSC=0.5 promotion from the union FSC, the NU handoff in the NU
-  stages), and each stage boundary logs them next to the base run's.
+- The run searches the cohort in the last stage of the base run's planned
+  ladder (read from its manifest), after one registration pass, with
+  `center=no` and `overlap` 0.95 by default (it applies when that stage is
+  stage 3); the stage limits follow the rule above (FSC=0.5 promotion from the
+  union FSC, the NU handoff in the NU stages), and the stage logs them next to
+  the base run's.
 - The run ends with a validation report against the base solution
   (`solve3D_addon_report.txt` in the run directory, and the log): per state
   the FSC verdict (improved or regressed beyond one FSC=0.143 shell, else
@@ -703,11 +790,12 @@ short:
   resolution (docked below 0.9), the cohort-only map against the base map
   with `addon_diag=yes`, and both runs' stage limits. A regression is warned
   about; the result is published all the same.
-- The frozen rows are restored before the final reconstruction and the
-  cohort-only sigma2 registration is dropped, so the final reconstruction
-  bootstraps the union's sigma2 state over every particle exactly as
-  `bootstrap_rec3D` does, and ships the union map on it.
-- `mkdir=yes` by default; `mkdir=no` is for NICE and the stream. When the run
+- The final reconstruction is incremental (`calc_final_rec_addon`): it reads
+  the cohort's particles and the carried frozen sums, never the frozen
+  particles, seeds no sigma from image power, commits the cohort's new sigmas
+  in a residual pass and ships the union map with the frozen rows restored
+  (solve3D_addon_policy.md section 8).
+- `mkdir=yes` by default; `mkdir=no` is for NICE. When the run
   has completed, the finished project (every particle posed, the union's
   sigma2 state) replaces the current project file; the frozen project is never
   written. The add-on's own manifest is eligible: the output is the frozen

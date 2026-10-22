@@ -66,6 +66,7 @@ type :: parameters
     character(len=3)          :: fillin='no'          !< fillin particle sampling
     character(len=3)          :: update_missing='no'  !< update only active particles with updatecnt==0(yes|no){no}
     character(len=3)          :: force_lp_range='no'  !< force solve3D low-pass stages to use lpstart/lpstop directly(yes|no){no}
+    character(len=3)          :: freq_march_aggressive='no' !< solve3D aggressive frequency marching: from the first prob stage the limits are linear in spatial frequency from 12 A to the final limit, with finer angular sampling; the global stages keep their planned rungs(yes|no){no}
     character(len=3)          :: gauref='no'          !< Whether to apply a gaussian filter to the polar reference(yes|no){no}
     character(len=3)          :: gen_model='no'       !< fit generative model and write generated/denoised particles(yes|no){no}
     character(len=3)          :: guinier='no'         !< calculate Guinier plot(yes|no){no}
@@ -142,6 +143,7 @@ type :: parameters
     character(len=3)          :: cc_emit_sigma='no' !< internal: emit Euclidean residual sigmas after CC assignment(yes|no){no}
     character(len=3)          :: cohort_sampling='no' !< internal: draw at a stage's first iteration, rescore that cohort after(yes|no){no}
     character(len=3)          :: scan_exit='no'       !< internal: multi-state convergence also on the mean % scanned above fracsrch alone(yes|no){no}
+    character(len=3)          :: prob_post_diag='no'  !< internal: the dense probability table workers write per-particle pose-posterior statistics (prob_posterior_*.txt)(yes|no){no}
     character(len=5)          :: balance='none'      !< fractional-update sampling units(none|class|cavg){none}
     character(len=16)         :: cont_route='joint' !< internal: LM route of a continuous Cartesian pose solve(joint|shift_then_joint){joint}
     character(len=3)          :: sigma_commit_deferred='no' !< internal: caller commits the final canonical sigma update(yes|no){no}
@@ -648,6 +650,7 @@ type :: parameters
     logical :: l_pcg_focus       = .false.
     logical :: l_pcg_solvent_check = .false.
     logical :: l_pcg_solvent_lambda_auto = .true. !< pcg_solvent_lambda not given: estimated per state and iteration
+    logical :: l_freq_march_aggressive = .false. !< freq_march_aggressive=yes: solve3D's frequency-linear ladder and finer early search space
     logical :: l_atm_prior       = .false.
     logical :: l_bfac_data_fit   = .true.  !< bfac_data not given: fitted on the base map
     logical :: l_fillin          = .false.
@@ -677,6 +680,7 @@ type :: parameters
     logical :: l_cont_shift_first = .false. !< cont_route=shift_then_joint: the shift-only LM stage first
     logical :: l_cohort_sampling = .false.
     logical :: l_scan_exit       = .false. !< scan_exit=yes: solve3D's multi-state shc stage 2 ends on the scan alone
+    logical :: l_prob_post_diag  = .false. !< prob_post_diag=yes: the dense table workers write pose-posterior statistics
     logical :: l_trail_rec       = .false.
     logical :: l_ufrac_trec_defined = .false. !< explicit ufrac_trec override was provided
     logical :: l_m_estimator_flex   = .false. !< m_estimator=flex: reconstruction weighs particles by the state weight set

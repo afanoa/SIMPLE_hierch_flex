@@ -11,13 +11,18 @@ integer,          parameter :: NSTAGES                 = 8
 integer,          parameter :: NSTAGES_INI3D_MAX       = 7
 integer,          parameter :: MAXITS(8)               = [20,20,17,15,12,12,12,25]
 integer,          parameter :: NSPACE(8)               = [500,1000,1000,1000,2500,2500,5000,5000]
+! freq_march_aggressive=yes: the march from AGGRESSIVE_MARCH_STAGE needs finer angular sampling than the
+! planned rungs. A spiral of n directions resolves about 223/sqrt(n) degrees (oris%find_angres); the step
+! a band lp needs on a particle of diameter D is about lp/D radians: 12 A on 120 A is 5.7 degrees
+! (n ~ 1500), 9 A is 4.3 degrees (n ~ 2700). The global stages before the march keep their nspace.
+integer,          parameter :: NSPACE_AGGRESSIVE(8)    = [500,1000,2500,2500,2500,2500,5000,5000]
 integer,          parameter :: NSPACE_CAVGS_EARLY      = 500  ! nspace for the first CAVGS_EARLY_NSTAGES stages of solve3D_cavgs
 integer,          parameter :: MAXITS_CAVGS_EARLY      = 15   ! maxits for the first CAVGS_EARLY_NSTAGES stages of solve3D_cavgs
 integer,          parameter :: CAVGS_EARLY_NSTAGES     = 3    ! # of early solve3D_cavgs stages using NSPACE_CAVGS_EARLY
 integer,          parameter :: NSPACE_REGISTER         = 1000 ! nspace of the solve3D_addon registration pass
 integer,          parameter :: NSPACE_SUB              = 126
 integer,          parameter :: NSPACE_SUB_BASE         = 2500
-integer,          parameter :: NSPACE_MULTI_MAX        = 2500 ! multi-state cap on nspace; the stage reaching it starts prob_neigh
+integer,          parameter :: NSPACE_MULTI_MAX        = 2500 ! multi-state cap on nspace
 
 ! Stage transition policy
 integer,          parameter :: GAUREF_LAST_STAGE       = 2           ! stop gaussian filtering after early stages
@@ -27,12 +32,13 @@ integer,          parameter :: SYMSRCH_STAGE           = 4           ! search sy
 integer,          parameter :: NOSYMSRCH_STAGE         = 3           ! its counterpart in a run that searches no axis
 integer,          parameter :: VOL_SUPPLIED_STAGE      = NOSYMSRCH_STAGE + 1 ! first stage for supplied volumes
 integer,          parameter :: PROB_REFINE_STAGE       = 3           ! prob refinement stages 3-5
+integer,          parameter :: AGGRESSIVE_MARCH_STAGE  = PROB_REFINE_STAGE ! freq_march_aggressive=yes: the march starts with the prob stages; the shc stages from random orientations keep their planned rungs (PfCRT latest10: 12 A at stage 1 never consolidated)
 integer,          parameter :: TRAILREC_STAGE_SINGLE   = 5           ! first stage where trail_rec behavior changes
 integer,          parameter :: STOCH_SAMPL_STAGE       = 5           ! switch from greedy to stochastic sampling
 integer,          parameter :: STOCH_SAMPL_STAGE_INDEP = 4           ! independent multi-state needs earlier stochastic coverage
 integer,          parameter :: NU_FILTER_STAGE         = 5           ! switch on staged NU filtering (6 until 2026-10-18)
 integer,          parameter :: PCG_SOLVENT_START_STAGE = NSTAGES     ! requested PCG solvent prior only in the final stage
-integer,          parameter :: PROB_NEIGH_REFINE_STAGE = 6           ! single-state prob_neigh refinement stages 6-8
+integer,          parameter :: PROB_NEIGH_REFINE_STAGE = 6           ! prob_neigh refinement stages 6-8, single and multi-state
 integer,          parameter :: NSTAGES_INDEPENDENT     = 5           ! default last stage of independent multi-state solve3D
 real,             parameter :: FRACSRCH_SCAN_EXIT      = 95.         ! multi-state shc stage 2 also ends above this mean % scanned
 integer,          parameter :: AUTOMSK_STAGE           = NSTAGES     ! switch on automasking
@@ -46,6 +52,7 @@ character(len=*), parameter :: PROB_NEIGH_MODE_MULTI   = 'state'
 real,             parameter :: LPSTOP_BOUNDS(2)        = [4.5,6.0]
 integer,          parameter :: FSC05_PROMOTE_MIN_STAGE = 2    ! FSC=0.5 stage-boundary promotion applies past this stage
 real,             parameter :: LPSTART_BOUNDS(2)       = [10.,20.]
+real,             parameter :: LPSTART_AGGRESSIVE      = 12.  ! freq_march_aggressive=yes: the march's first rung (about res05/1.5 after the global stages on PfCRT)
 real,             parameter :: CENLP_DEFAULT           = 30.
 real,             parameter :: LPSYMSRCH_LB            = 12.
 real,             parameter :: LPSTART_INI3D           = 20.  ! default lpstart for solve3D_cavgs/cavgs_ini
@@ -82,6 +89,16 @@ contains
         real :: bounds(2)
         bounds = LPSTART_BOUNDS
     end function solve3D_lpstart_bounds
+
+    module function solve3D_lpstart_aggressive() result(lp)
+        real :: lp
+        lp = LPSTART_AGGRESSIVE
+    end function solve3D_lpstart_aggressive
+
+    module function solve3D_aggressive_march_stage() result(istage)
+        integer :: istage
+        istage = AGGRESSIVE_MARCH_STAGE
+    end function solve3D_aggressive_march_stage
 
     module function solve3D_cenlp_default() result(cenlp)
         real :: cenlp
@@ -164,6 +181,15 @@ contains
         logical :: l_delayed
         l_delayed = l_vol_supplied .and. nstates == 1
     end function solve3D_uses_delayed_input_lp
+
+    !> Stage omission and the mid-stage resolution exit apply to single-state runs only. The states
+    !! of a multi-state run split during the prob stages, which these rules would skip or cut short
+    !! (doc/policies/3D/solve3D_policy.md sec. 6)
+    module pure function solve3D_stage_skipping( nstates ) result( l_skip )
+        integer, intent(in) :: nstates
+        logical :: l_skip
+        l_skip = nstates <= 1
+    end function solve3D_stage_skipping
 
     module function solve3D_ml_reg_start_stage() result(istage)
         integer :: istage
@@ -333,12 +359,12 @@ contains
             endif
         else if( params%nstates > 1 )then
             ! independent multi-state, from particles and from class averages alike: shc before the
-            ! prob stages; prob_neigh takes over at the first stage whose directions reach the
-            ! multi-state cap (stage 5)
+            ! prob stages; prob_neigh from the same stage as single state, so the default five-stage
+            ! run assigns its states in prob stages 3-5 (prob_neigh at stage 5 lost states, 2026-10-21)
             if( istage < PROB_REFINE_STAGE )then
                 cfg%refine           = 'shc'
                 cfg%prob_neigh_mode  = ''
-            else if( istage < multistate_prob_neigh_stage() )then
+            else if( istage < PROB_NEIGH_REFINE_STAGE )then
                 cfg%refine = 'prob'
             else
                 cfg%refine           = 'prob_neigh'
@@ -457,6 +483,7 @@ contains
         integer :: stoch_stage
         stoch_stage = solve3D_stoch_sampl_stage(params)
         cfg%inspace = NSPACE(istage)
+        if( params%l_freq_march_aggressive .and. .not. l_cavgs ) cfg%inspace = NSPACE_AGGRESSIVE(istage)
         if( l_cavgs .and. istage <= CAVGS_EARLY_NSTAGES ) cfg%inspace = NSPACE_CAVGS_EARLY
         if( params%nstates > 1 ) cfg%inspace = min(cfg%inspace, NSPACE_MULTI_MAX)
         cfg%greedy_sampling = 'yes'
@@ -664,7 +691,9 @@ contains
         ! Never against the band in use: a band-limited map's crossing sits at its band,
         ! so that test fires on nothing (reverted 2026-10-18). Same eligibility as the
         ! shift: never the entry stage, the first two stages, the last stage or the axis-search stage.
-        if( .not. l_cavgs .and. istage > first_stage .and. istage > FSC05_PROMOTE_MIN_STAGE .and. &
+        ! Single-state only: a multi-state stage runs until its own convergence (solve3D_stage_skipping).
+        if( solve3D_stage_skipping(params%nstates) .and. &
+            &.not. l_cavgs .and. istage > first_stage .and. istage > FSC05_PROMOTE_MIN_STAGE .and. &
             &istage < active_refine3D_nstages() .and. allocated(lpinfo) .and. &
             &.not.( l_srch4symaxis .and. istage == SYMSRCH_STAGE ) )then
             call cline_refine3D%set('lpexit',             lpinfo(istage+1)%lp)
@@ -693,15 +722,6 @@ contains
         istage = solve3D_symsrch_stage(l_srch4symaxis)
         if( l_cavg_ini .and. .not. l_cavgs ) istage = max(istage, solve3D_nstages_ini3D())
     end function full_budget_last_stage
-
-    !> First stage of the ladder whose directions reach the multi-state cap NSPACE_MULTI_MAX: where
-    !! independent multi-state refinement switches from prob to prob_neigh (stage 5 of the default ladder)
-    integer function multistate_prob_neigh_stage() result( istage )
-        do istage = 1, size(NSPACE)
-            if( NSPACE(istage) >= NSPACE_MULTI_MAX ) return
-        end do
-        THROW_HARD('no stage of the nspace ladder reaches the multi-state cap')
-    end function multistate_prob_neigh_stage
 
     logical function force_full_sampling_mode( params ) result( l_force_full )
         class(parameters), intent(in) :: params
@@ -752,7 +772,7 @@ contains
 
     !> Is the stage's planned matching limit already behind the measured FSC=0.5
     !! resolution? Such a stage would iterate at a crop that cannot represent
-    !! what the halves already agree on. Particle route, past
+    !! what the halves already agree on. Particle route of a single-state run, past
     !! FSC05_PROMOTE_MIN_STAGE; .false. without a res05 field.
     module function solve3D_stage_behind_fsc05( params, istage ) result( l_behind )
         class(parameters), intent(in) :: params
@@ -760,6 +780,7 @@ contains
         logical :: l_behind
         real :: res05
         l_behind = .false.
+        if( .not. solve3D_stage_skipping(params%nstates) ) return
         if( istage <= FSC05_PROMOTE_MIN_STAGE ) return
         if( .not. allocated(lpinfo) )           return
         if( istage > size(lpinfo) )             return
