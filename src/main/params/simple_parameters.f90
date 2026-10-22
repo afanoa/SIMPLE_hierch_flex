@@ -54,6 +54,7 @@ type :: parameters
     character(len=3)          :: envfsc='no'          !< envelope solvent correction for FSC calculation(yes|no){no}
     character(len=3)          :: pcg_solvent='no'     !< PCG soft solvent prior on the base solve: per-half real-space ridge in solvent identified from a prior-free solve, then the same cold solve again(yes|no){no}
     character(len=3)          :: pcg_focus='no'
+    character(len=3)          :: site_disc='no'
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
     character(len=3)          :: pcg_solvent_check='no' !< PCG solvent prior: re-solve the strength grid for real and print it beside the closed-form estimate (validation only)(yes|no){no}
     character(len=3)          :: eo_stage='yes'       !< Whether the last stage of solve2D uses a resolution limit determined with e/o pairs(yes|no){yes}
@@ -321,6 +322,7 @@ type :: parameters
     character(len=STDLEN)     :: real_filter=''
     character(len=STDLEN)     :: refine='shc'         !< refinement mode; 3D (shc|neigh|greedy|prob|prob_neigh|cont); 2D (snhc|snhc_smpl|snhc_smpl_many|prob|prob_snhc){shc}
     character(len=STDLEN)     :: select_flag='cluster' !< which flag to use for cluster selection (cluster|class){cluster}
+    character(len=STDLEN)     :: site_dirs=''
     character(len=STDLEN)     :: sort=''              !< key to sort oris on
     character(len=STDLEN)     :: speckind='sqrt'      !< power spectrum kind(real|power|sqrt|log|phase){sqrt}
     character(len=STDLEN)     :: split_mode='even'
@@ -596,6 +598,7 @@ type :: parameters
     real    :: phshift_max=180.    !< maximum fitted phase shift(in degrees){180}
     real    :: phshift_min=0.      !< minimum fitted phase shift(in degrees){0}
     real    :: phshift_step=10.    !< phase-shift grid step(in degrees){10}
+    real    :: pole_merge=0.95
     real    :: prob_athres=10.     !< angle threshold for prob distribution samplings
     real    :: rec_athres=10.      !< angle threshold for reconstruction
     real    :: regpass_fsc=0.143   !< refine3D_auto: FSC value of the startup pair defining the registration-pass band{0.143}

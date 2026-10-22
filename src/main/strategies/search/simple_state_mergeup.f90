@@ -14,14 +14,17 @@ use simple_reconstructor, only: reconstructor, exp_samples
 use simple_parameters,    only: parameters
 use simple_builder,       only: builder
 use simple_state_tree,    only: state_tree
+use simple_stat,          only: avg_ranks
 implicit none
 
-public :: state_mergeup
+public :: state_mergeup, merge_poles, EM_LIM
 private
 #include "simple_local_flags.inc"
 
 integer, parameter :: NSHUF = 20, NVIEW = 40, NEM_ITERS = 3, EM_MIN = 1000, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
-integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4
+integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 10
+integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
+real,    parameter :: SITE_PFLOOR = 1.e-3
 real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
 
 type :: ivec
@@ -50,6 +53,7 @@ type :: state_mergeup
     procedure :: leaf_focus
     procedure :: run
     procedure :: test
+    procedure :: site_em
     procedure :: get_rows
     procedure :: kill
     procedure, private :: consensus
@@ -70,7 +74,7 @@ end type state_mergeup
 
 contains
 
-    subroutine new( self, params, build )
+    subroutine new( self, params, build, em_lim )
         use simple_matcher_3Drec,   only: init_rec, prep_imgs4rec, cleanup_rec_buffers
         use simple_matcher_ptcl_io, only: prepimgbatch, ptcl_read_session
         use simple_imgarr_utils,    only: alloc_imgarr, dealloc_imgarr
@@ -78,6 +82,7 @@ contains
         class(state_mergeup),      intent(inout) :: self
         class(parameters), target, intent(inout) :: params
         class(builder),    target, intent(inout) :: build
+        real,                      intent(in)    :: em_lim
         type(fplane_type), allocatable :: fdummy(:)
         type(image),       allocatable :: crop_imgs(:)
         real,              allocatable :: ones(:,:,:), sdn(:)
@@ -102,7 +107,7 @@ contains
         self%nyq = self%box / 2
         self%klo = max(nint(real(self%box) * params%smpd_crop / params%hp), 3)
         self%khi = self%nyq - 1
-        self%kb  = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / EM_LIM))
+        self%kb  = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / em_lim))
         allocate(self%eo(self%n), self%vbin(self%n), self%eul(3,self%n), self%dfm(self%n))
         do i = 1, NVIEW
             t  = real(i-1) + 0.5
@@ -1013,8 +1018,8 @@ contains
             integer, intent(in) :: idx(:), grp(:), p, q
             integer, allocatable :: sp(:), sq(:)
             integer :: nn
-            sp = pack(idx, grp == p)
-            sq = pack(idx, grp == q)
+            allocate(sp, source=pack(idx, grp == p))
+            allocate(sq, source=pack(idx, grp == q))
             nn = max(1, min(size(sp), size(sq)))
             call rnd_subset(sp, nn)
             call rnd_subset(sq, nn)
@@ -1164,6 +1169,357 @@ contains
         end subroutine set_ref
 
     end subroutine cross_em
+
+    subroutine site_em( self, seed, mfile, post, nstar, curve )
+        use simple_srch_sort_loc, only: hpsort
+        class(state_mergeup), intent(inout) :: self
+        logical,              intent(in)    :: seed(:)
+        class(string),        intent(in)    :: mfile
+        real,    allocatable, intent(out)   :: post(:), curve(:,:)
+        integer,              intent(out)   :: nstar
+        type(image)          :: vol
+        complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:)
+        real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:), fw2(:), key(:)
+        real(dp),allocatable :: epsb(:), epsf(:)
+        integer, allocatable :: ia(:), ib(:), oa(:), ob(:), fhk(:,:)
+        real    :: f(0:self%nyq), cbest
+        integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2
+        call vol%read_and_crop(mfile, self%p%smpd, self%box, self%p%smpd_crop)
+        sm = min(max(vol%get_rmat(), 0.), 1.) * self%msk3
+        call vol%kill
+        allocate(rot(3,3,self%n))
+        do i = 1, self%n
+            call self%os(1)%set_euler(self%eul(:,i))
+            rot(:,:,i) = self%os(1)%get_mat()
+        end do
+        nfull = 0
+        do ig = 1, 2
+            do k = lbound(self%fpls(1)%cmplx_plane,2), 0
+                do h = lbound(self%fpls(1)%cmplx_plane,1), ubound(self%fpls(1)%cmplx_plane,1)
+                    r2 = h*h + k*k
+                    if( r2 < 3 .or. r2 > self%khi*(self%khi+1) ) cycle
+                    nfull = nfull + 1
+                    if( ig == 1 ) cycle
+                    fhk(:,nfull) = [h, k]
+                    fw2(nfull)   = merge(1., 2., k == 0)
+                end do
+            end do
+            if( ig == 1 ) allocate(fhk(2,nfull), fw2(nfull))
+            if( ig == 1 ) nfull = 0
+        end do
+        ia = pack([(i, i=1,self%n)], self%eo == 0)
+        ib = pack([(i, i=1,self%n)], self%eo == 1)
+        allocate(wa(size(ia),2), wb(size(ib),2))
+        wa(:,2) = merge(1., 0., seed(ia))
+        wa(:,1) = 1. - wa(:,2)
+        wb(:,2) = merge(1., 0., seed(ib))
+        wb(:,1) = 1. - wb(:,2)
+        epsb = 0.5_dp * (density(ia, self%emhk, self%emw) + density(ib, self%emhk, self%emw))
+        epsf = 0.5_dp * (density(ia, fhk, fw2) + density(ib, fhk, fw2))
+        allocate(mp(self%nh,self%box,self%box,3,2), rf(self%nh,self%box,self%box,2,2))
+        write(logfhandle,'(A)') 'site EM: 2 classes from a '//int2str(count(seed))//'-particle start, '//int2str(SITE_ITS)//&
+            &' iterations, shells 2..'//int2str(self%kb)//', nearest-neighbour maps, the deviation inside the site mask ('//&
+            &fmtr(100._dp*real(count(sm > 0.5),dp)/real(max(1,count(self%msk3 > 0.5)),dp),1)//' % of the sphere)'
+        do it = 1, SITE_ITS
+            call nn_map(ia, wa(:,1), self%emhk, self%emw, epsb, mp(:,:,:,1,1))
+            call nn_map(ia, wa(:,2), self%emhk, self%emw, epsb, mp(:,:,:,2,1))
+            call nn_map(ia, [(1., i=1,size(ia))], self%emhk, self%emw, epsb, mp(:,:,:,3,1))
+            call nn_map(ib, wb(:,1), self%emhk, self%emw, epsb, mp(:,:,:,1,2))
+            call nn_map(ib, wb(:,2), self%emhk, self%emw, epsb, mp(:,:,:,2,2))
+            call nn_map(ib, [(1., i=1,size(ib))], self%emhk, self%emw, epsb, mp(:,:,:,3,2))
+            do g = 1, 2
+                call self%shell_fsc(mp(:,:,:,g,1) - mp(:,:,:,3,1), mp(:,:,:,g,2) - mp(:,:,:,3,2), f)
+                f = min(max(f, 0.), 1.)
+                rf(:,:,:,g,1) = mp(:,:,:,3,1) + masked(shell_weighted(mp(:,:,:,g,1) - mp(:,:,:,3,1), f))
+                rf(:,:,:,g,2) = mp(:,:,:,3,2) + masked(shell_weighted(mp(:,:,:,g,2) - mp(:,:,:,3,2), f))
+            end do
+            call nn_estep(ia, wa, rf(:,:,:,:,2), it)
+            call nn_estep(ib, wb, rf(:,:,:,:,1), it)
+        end do
+        allocate(post(self%n), source=0.)
+        post(ia) = wa(:,2)
+        post(ib) = wb(:,2)
+        deallocate(mp, rf)
+        oa  = [(i, i=1,size(ia))]
+        key = -post(ia)
+        call hpsort(key, oa)
+        ob  = [(i, i=1,size(ib))]
+        key = -post(ib)
+        call hpsort(key, ob)
+        allocate(tm(self%nh,self%box,self%box,4))
+        call nn_map(ia, [(1., i=1,size(ia))], fhk, fw2, epsf, tm(:,:,:,1))
+        call nn_map(ib, [(1., i=1,size(ib))], fhk, fw2, epsf, tm(:,:,:,2))
+        ngrid = count(SITE_GRID <= int(0.7 * real(self%n)))
+        allocate(curve(2,ngrid), source=0.)
+        cbest = -huge(cbest)
+        nstar = SITE_GRID(1)
+        do ig = 1, ngrid
+            nh2 = SITE_GRID(ig) / 2
+            call nn_map(ia(oa(1:min(nh2,size(ia)))), [(1., i=1,min(nh2,size(ia)))], fhk, fw2, epsf, tm(:,:,:,3))
+            call nn_map(ib(ob(1:min(nh2,size(ib)))), [(1., i=1,min(nh2,size(ib)))], fhk, fw2, epsf, tm(:,:,:,4))
+            curve(1,ig) = real(SITE_GRID(ig))
+            curve(2,ig) = self%shell_corr(masked(tm(:,:,:,3) - tm(:,:,:,1)), masked(tm(:,:,:,4) - tm(:,:,:,2)), &
+                &self%kb + RB_MARGIN, self%khi)
+            write(logfhandle,'(A)') '  N '//int2str(SITE_GRID(ig))//': hold-out cross-half correlation of the site deviation '//&
+                &fmtr(real(curve(2,ig),dp),3)
+            if( curve(2,ig) > cbest )then
+                cbest = curve(2,ig)
+                nstar = SITE_GRID(ig)
+            endif
+        end do
+        write(logfhandle,'(A)') '  N* '//int2str(nstar)//' (hold-out shells '//int2str(self%kb + RB_MARGIN)//'..'//&
+            &int2str(self%khi)//', correlation '//fmtr(real(cbest,dp),3)//')'
+        deallocate(tm, rot)
+
+    contains
+
+        subroutine cell_of( i, h, k, c1, c2, cnj )
+            integer, intent(in)  :: i, h, k
+            integer, intent(out) :: c1(3), c2(3)
+            logical, intent(out) :: cnj
+            integer :: p(3)
+            p   = nint(real(h) * rot(1,:,i) + real(k) * rot(2,:,i))
+            cnj = p(1) < 0
+            if( cnj ) p = -p
+            c1  = 0
+            c2  = 0
+            if( any(abs(p) >= self%nyq) ) return
+            c1 = [p(1) + 1, modulo(p(2), self%box) + 1, modulo(p(3), self%box) + 1]
+            if( p(1) == 0 ) c2 = [1, modulo(-p(2), self%box) + 1, modulo(-p(3), self%box) + 1]
+        end subroutine cell_of
+
+        function density( pidx, hk, sw ) result( epsv )
+            integer, intent(in)   :: pidx(:), hk(:,:)
+            real,    intent(in)   :: sw(:)
+            real(dp), allocatable :: epsv(:)
+            real(dp), allocatable :: den(:,:,:)
+            real,     allocatable :: vals(:)
+            integer :: ii, j, c1(3), c2(3), s, cnt
+            logical :: cnj
+            allocate(den(self%nh,self%box,self%box), source=0._dp)
+            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj) schedule(static) reduction(+:den) proc_bind(close)
+            do ii = 1, size(pidx)
+                do j = 1, size(sw)
+                    call cell_of(pidx(ii), hk(1,j), hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    if( c2(1) > 0 )then
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * sw(j) * &
+                            &self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * sw(j) * &
+                            &self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
+                    else
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + sw(j) * self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
+                    endif
+                end do
+            end do
+            !$omp end parallel do
+            allocate(epsv(0:self%nyq), source=1._dp)
+            do s = 0, self%nyq
+                vals = real(pack(den, self%fsh == s .and. den > 0._dp))
+                cnt  = size(vals)
+                if( cnt == 0 ) cycle
+                call hpsort(vals)
+                epsv(s) = real(vals((cnt + 1) / 2), dp) / real(size(pidx), dp)
+            end do
+        end function density
+
+        subroutine nn_map( pidx, pw, hk, sw, epsv, out )
+            integer,  intent(in)  :: pidx(:), hk(:,:)
+            real,     intent(in)  :: pw(:), sw(:)
+            real(dp), intent(in)  :: epsv(0:)
+            complex,  intent(out) :: out(:,:,:)
+            complex(dp), allocatable :: num(:,:,:)
+            real(dp),    allocatable :: den(:,:,:)
+            complex(dp) :: v
+            real(dp)    :: c2v, wsum
+            integer     :: ii, j, c1(3), c2(3), hh, kk, ll
+            logical     :: cnj
+            allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
+            allocate(den(self%nh,self%box,self%box), source=0._dp)
+            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,v,c2v) schedule(static) reduction(+:num,den) proc_bind(close)
+            do ii = 1, size(pidx)
+                if( pw(ii) <= 0. ) cycle
+                do j = 1, size(sw)
+                    call cell_of(pidx(ii), hk(1,j), hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    v   = real(pw(ii) * sw(j), dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(hk(1,j),hk(2,j)), kind=dp)
+                    c2v = real(pw(ii) * sw(j), dp) * real(self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j)), dp)
+                    if( cnj ) v = conjg(v)
+                    if( c2(1) > 0 )then
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
+            end do
+            !$omp end parallel do
+            wsum = max(sum(real(pw,dp)), 1._dp)
+            do ll = 1, self%box
+                do kk = 1, self%box
+                    do hh = 1, self%nh
+                        out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * wsum), kind=kind(out))
+                    end do
+                end do
+            end do
+        end subroutine nn_map
+
+        subroutine nn_estep( pidx, w, refs, iter )
+            integer, intent(in)    :: pidx(:), iter
+            real,    intent(inout) :: w(:,:)
+            complex, intent(in)    :: refs(:,:,:,:)
+            real, allocatable :: aa(:,:,:), bb(:,:,:), wn(:,:)
+            integer, allocatable :: mpc(:)
+            real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem), beta(self%nshem), sig2(self%nshem)
+            real(dp) :: pr(2), s(2), smax
+            complex  :: pv, dv
+            integer  :: ii, gg, j, c1(3), c2(3), sh
+            logical  :: cnj
+            allocate(aa(self%nshem,2,size(pidx)), bb(self%nshem,2,size(pidx)), source=0.)
+            mpc = maxloc(w, dim=2)
+            do gg = 1, 2
+                pr(gg) = log(max(real(sum(w(:,gg)),dp) / real(size(pidx),dp), real(SITE_PFLOOR,dp)))
+            end do
+            sa = 0._dp
+            sb = 0._dp
+            sf = 0._dp
+            sc = 0._dp
+            !$omp parallel do default(shared) private(ii,gg,j,c1,c2,cnj,sh,pv,dv) schedule(static) &
+            !$omp& reduction(+:sa,sb,sf,sc) proc_bind(close)
+            do ii = 1, size(pidx)
+                do j = 1, self%nem
+                    call cell_of(pidx(ii), self%emhk(1,j), self%emhk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    sh = self%emsh(j)
+                    dv = self%fpls(pidx(ii))%cmplx_plane(self%emhk(1,j),self%emhk(2,j))
+                    do gg = 1, 2
+                        pv = refs(c1(1),c1(2),c1(3),gg)
+                        if( cnj ) pv = conjg(pv)
+                        aa(sh,gg,ii) = aa(sh,gg,ii) + self%emw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                        bb(sh,gg,ii) = bb(sh,gg,ii) + self%emw(j) * &
+                            &self%fpls(pidx(ii))%ctfsq_plane(self%emhk(1,j),self%emhk(2,j)) * abs(pv)**2
+                    end do
+                end do
+                sa = sa + real(aa(:,mpc(ii),ii),dp)
+                sb = sb + real(bb(:,mpc(ii),ii),dp)
+                sf = sf + real(self%f2s(:,pidx(ii)),dp)
+                sc = sc + real(self%cw,dp)
+            end do
+            !$omp end parallel do
+            beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
+            sig2 = max((sf - 2._dp*beta*sa + beta*beta*sb) / max(sc, 1._dp), 1.e-12_dp)
+            allocate(wn(size(pidx),2))
+            !$omp parallel do default(shared) private(ii,gg,s,smax) schedule(static) proc_bind(close)
+            do ii = 1, size(pidx)
+                do gg = 1, 2
+                    s(gg) = 0.5_dp * sum((2._dp*beta*real(aa(:,gg,ii),dp) - beta*beta*real(bb(:,gg,ii),dp)) / sig2) + pr(gg)
+                end do
+                smax = maxval(s)
+                wn(ii,:) = real(exp(s - smax))
+                wn(ii,:) = wn(ii,:) / sum(wn(ii,:))
+            end do
+            !$omp end parallel do
+            write(logfhandle,'(A)') '  iteration '//int2str(iter)//': argmax changed '//&
+                &fmtr(real(count((wn(:,2) > 0.5) .neqv. (w(:,2) > 0.5)),dp)/real(size(pidx),dp),3)//&
+                &', site class weight '//fmtr(real(sum(wn(:,2)),dp)/real(size(pidx),dp),3)//&
+                &', model scale at shells 2 / '//int2str(self%kb)//' '//fmtr(beta(1),2)//' / '//fmtr(beta(self%nshem),2)
+            w = wn
+        end subroutine nn_estep
+
+        function shell_weighted( cm, fs ) result( cmo )
+            complex, intent(in)  :: cm(:,:,:)
+            real,    intent(in)  :: fs(0:)
+            complex, allocatable :: cmo(:,:,:)
+            integer :: hh, kk, ll
+            allocate(cmo(self%nh,self%box,self%box))
+            do ll = 1, self%box
+                do kk = 1, self%box
+                    do hh = 1, self%nh
+                        cmo(hh,kk,ll) = fs(self%fsh(hh,kk,ll)) * cm(hh,kk,ll)
+                    end do
+                end do
+            end do
+        end function shell_weighted
+
+        function masked( cm ) result( cmo )
+            complex, intent(in)  :: cm(:,:,:)
+            complex, allocatable :: cmo(:,:,:)
+            real, pointer :: rmat(:,:,:)
+            call self%wimgs(1)%set_ft(.true.)
+            call self%wimgs(1)%set_cmat(cm)
+            call self%wimgs(1)%ifft
+            call self%wimgs(1)%get_rmat_ptr(rmat)
+            rmat = rmat * sm
+            call self%wimgs(1)%fft
+            cmo = self%wimgs(1)%get_cmat()
+        end function masked
+
+    end subroutine site_em
+
+    subroutine merge_poles( posts, thr, minseed, sp, grp, seeds )
+        real,                 intent(in)  :: posts(:,:), thr
+        integer,              intent(in)  :: minseed
+        real,    allocatable, intent(out) :: sp(:,:)
+        integer, allocatable, intent(out) :: grp(:), seeds(:)
+        real(dp), allocatable :: rk(:,:), gpost(:,:)
+        integer,  allocatable :: lab(:), cnt(:)
+        logical,  allocatable :: alive(:)
+        integer :: n, ne, a, b, ga, gb, npole
+        n  = size(posts,1)
+        ne = size(posts,2)
+        allocate(rk(n,ne), sp(ne,ne))
+        do a = 1, ne
+            rk(:,a) = avg_ranks(posts(:,a))
+            rk(:,a) = rk(:,a) - sum(rk(:,a)) / real(n,dp)
+        end do
+        do a = 1, ne
+            do b = 1, ne
+                sp(a,b) = real(sum(rk(:,a) * rk(:,b)) / max(sqrt(sum(rk(:,a)**2) * sum(rk(:,b)**2)), 1.e-300_dp))
+            end do
+        end do
+        grp = [(a, a=1,ne)]
+        do a = 1, ne
+            do b = a + 1, ne
+                if( sp(a,b) < thr ) cycle
+                ga = grp(a)
+                gb = grp(b)
+                where( grp == gb ) grp = ga
+            end do
+        end do
+        allocate(lab(ne), source=0)
+        npole = 0
+        do a = 1, ne
+            if( lab(a) > 0 ) cycle
+            npole = npole + 1
+            where( grp == grp(a) ) lab = npole
+        end do
+        grp = lab
+        allocate(gpost(n,npole), source=0._dp)
+        do a = 1, ne
+            gpost(:,grp(a)) = gpost(:,grp(a)) + real(posts(:,a),dp) / real(count(grp == grp(a)),dp)
+        end do
+        allocate(alive(npole), source=.true.)
+        do
+            seeds = maxloc(gpost, dim=2, mask=spread(alive, 1, n))
+            cnt   = [(count(seeds == b), b=1,npole)]
+            if( count(alive) <= 1 ) exit
+            a = minloc(cnt, dim=1, mask=alive)
+            if( cnt(a) >= minseed ) exit
+            alive(a) = .false.
+        end do
+        lab   = 0
+        npole = 0
+        do b = 1, size(alive)
+            if( .not. alive(b) ) cycle
+            npole  = npole + 1
+            lab(b) = npole
+        end do
+        seeds = lab(seeds)
+        grp   = lab(grp)
+    end subroutine merge_poles
 
     subroutine estep( self, idx, w, refs, l_alive, wnew )
         class(state_mergeup), intent(inout) :: self

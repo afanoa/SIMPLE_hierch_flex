@@ -9,7 +9,7 @@ use simple_fileio,          only: fopen, fclose, fileiochk, nlines, read_exit_co
 use simple_syslib,          only: file_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath
 use simple_imghead,         only: find_ldim_nptcls, find_img_smpd
 use simple_rnd,             only: seed_rnd_fixed, ran3
-use simple_linalg,          only: eigh
+use simple_linalg,          only: eigh, jacobi
 use simple_srch_sort_loc,   only: hpsort
 use simple_parameters,      only: parameters
 use simple_cmdline,         only: cmdline
@@ -17,20 +17,24 @@ use simple_sp_project,      only: sp_project
 use simple_qsys_env,        only: qsys_env
 use simple_image,           only: image
 use simple_state_tree,      only: state_tree
+use simple_tree_wiener,     only: tree_wiener_maps
 use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
 implicit none
 
-public :: hetero_tree
+public :: hetero_tree, discover_sites
 private
 #include "simple_local_flags.inc"
 
-integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_ITS = 40, POLL_SECS = 30, RND_SEED = 0
+integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_ITS = 40, POLL_SECS = 5, RND_SEED = 0
+integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
+real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3
 integer,  parameter :: ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
-integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STAGEA = 5, S_RECB = 6, &
-                     & S_STAGEB = 7, S_SPLIT = 8, S_DONE = 9, S_FAILED = -1
-character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stageA', &
-                                                     & 'recB', 'stageB', 'split']
+real,     parameter :: ATHR = 0.01, LPD = 10.
+integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
+                     & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
+character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stA0', &
+                                                     & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
 character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE = 'hetero_tree_leaves.txt'
 character(len=*), parameter :: STEP_EXIT = 'hetero_step.exit', NODE_PROJ = 'n.simple'
 
@@ -44,7 +48,7 @@ type :: hetero_tree
     class(parameters), pointer :: p => null()
     type(tnode), allocatable :: nodes(:)
     type(qsys_env) :: qenv
-    character(len=:), allocatable :: root
+    character(len=:), allocatable :: root, sitemask
     real    :: smpd = 0.
     integer :: box = 0, nrows = 0
     logical :: l_subtree = .false.
@@ -56,6 +60,8 @@ type :: hetero_tree
     procedure, private :: advance
     procedure, private :: submit
     procedure, private :: submit_in
+    procedure, private :: final
+    procedure, private :: plain
     procedure, private :: mergeup
     procedure, private :: step_status
     procedure, private :: decide
@@ -79,7 +85,12 @@ contains
         self%p         => params
         self%l_subtree = l_rows
         call simple_getcwd(cwd)
-        self%root = cwd%to_char()
+        self%root     = cwd%to_char()
+        self%sitemask = ''
+        if( params%pcg_mskfile%strlen() > 0 )then
+            absproj       = simple_abspath(params%pcg_mskfile)
+            self%sitemask = absproj%to_char()
+        endif
         call spproj%read_segment('stk', params%projfile)
         self%box  = spproj%get_box()
         self%smpd = spproj%get_smpd()
@@ -154,7 +165,7 @@ contains
                 call self%write_table
             end do
             if( nact == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED) )then
-                if( self%mergeup() ) exit
+                if( self%final() ) exit
             endif
             call sleep(POLL_SECS)
         end do
@@ -176,7 +187,7 @@ contains
         rows = read_ints(d//'/rows.txt')
         k    = min(KMAX, max(2, size(rows) / max(1, self%p%kfloor)))
         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' (depth '//int2str(self%nodes(i)%depth)//'): '//&
-            &int2str(size(rows))//' particles, '//int2str(k)//' states'
+            &int2str(size(rows))//' particles, '//int2str(k)//' flex states'
         call simple_mkdir(string(d//'/mean'))
         call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/mean/m.simple'))
         call cl%set('prg',      'reconstruct3D')
@@ -192,14 +203,16 @@ contains
         integer, optional,  intent(in)    :: done_step
         type(cmdline)             :: cl
         type(string), allocatable :: evens(:), odds(:)
-        integer,      allocatable :: rows(:), st(:), pres(:), ch(:)
+        integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:)
         real(dp),     allocatable :: w(:)
-        character(len=:), allocatable :: d, mask
+        character(len=:), allocatable :: d, mask, sitemask
         integer :: s, k, j, ks
         s = self%nodes(i)%step
         if( present(done_step) ) s = done_step
-        d    = self%ndir(i)
-        mask = d//'/mask.mrc'
+        d        = self%ndir(i)
+        mask     = d//'/mask.mrc'
+        sitemask = self%sitemask
+        if( len(sitemask) == 0 ) sitemask = mask
         rows = read_ints(d//'/rows.txt')
         k    = min(KMAX, max(2, size(rows) / max(1, self%p%kfloor)))
         select case(s)
@@ -244,6 +257,10 @@ contains
                 call falloff_mask(self, evens, odds, w, mask)
                 call fflex_step
             case(S_FFLEX)
+                if( self%p%site_disc .ne. 'yes' )then
+                    call site_step(sitemask)
+                    return
+                endif
                 st   = project_states(d//'/fflex/f.simple')
                 pres = present_labels(st)
                 ks   = size(pres)
@@ -251,13 +268,78 @@ contains
                 do j = 1, ks
                     where( st == pres(j) ) ch = j
                 end do
-                call simple_mkdir(string(d//'/stageA'))
-                call write_states(d//'/'//NODE_PROJ, d//'/stageA/r.simple', ch)
+                call simple_mkdir(string(d//'/stA0'))
+                call write_states(d//'/'//NODE_PROJ, d//'/stA0/r.simple', ch)
                 call cl%set('prg',      'refine3D')
                 call cl%set('projfile', 'r.simple')
                 call cl%set('nstates',  ks)
                 do j = 1, ks
                     call cl%set('vol'//int2str(j), d//'/fflex/recvol_state'//pad2(pres(j))//'.mrc')
+                end do
+                call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
+                call self%submit(i, S_STA0, cl)
+            case(S_STA0)
+                ks = maxval(project_states(d//'/stA0/r.simple'))
+                call simple_mkdir(string(d//'/recB0'))
+                call simple_copy_file(string(d//'/stA0/r.simple'), string(d//'/recB0/b.simple'))
+                call cl%set('prg',      'reconstruct3D')
+                call cl%set('projfile', 'b.simple')
+                call cl%set('nstates',  ks)
+                call common_keys(self, cl)
+                call self%submit(i, S_RECB0, cl)
+            case(S_RECB0)
+                st   = project_states(d//'/recB0/b.simple')
+                pres = present_labels(st)
+                allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
+                do j = 1, size(pres)
+                    evens(j) = d//'/recB0/'//hv(pres(j), 'even')
+                    odds(j)  = d//'/recB0/'//hv(pres(j), 'odd')
+                    w(j)     = real(count(st == pres(j)), dp)
+                end do
+                call simple_mkdir(string(d//'/sites'))
+                call discover_sites(evens, odds, w, pres, self%p%mskdiam, d//'/sites', ks)
+                if( ks > 0 )then
+                    sitemask = d//'/sites/site_01.mrc'
+                else
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no local site found, the node mask ranks the poles'
+                    sitemask = mask
+                endif
+                call site_step(sitemask)
+            case(S_SITE)
+                seeds = read_ints(d//'/site/site_seeds.txt')
+                ks    = maxval([0, seeds])
+                call log_lines(d//'/site/site_poles.txt', 'pole (index, seeds, endpoints)')
+                call log_lines(d//'/site/site_spearman.txt', 'endpoint Spearman (merged at >= '//&
+                    &trim(adjustl(rfmt2(self%p%pole_merge)))//')')
+                if( ks < 2 )then
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': fewer than two poles refine3D can '//&
+                        &'refine (technical), the fflex states seed stage A'
+                    st    = project_states(d//'/fflex/f.simple')
+                    pres  = present_labels(st)
+                    seeds = 0
+                    do j = 1, size(pres)
+                        where( st == pres(j) ) seeds = j
+                    end do
+                    ks = size(pres)
+                endif
+                call simple_mkdir(string(d//'/seeds'))
+                call write_ints(d//'/seeds/seeds.txt', seeds)
+                call write_states(d//'/'//NODE_PROJ, d//'/seeds/s.simple', seeds)
+                call cl%set('prg',      'reconstruct3D')
+                call cl%set('projfile', 's.simple')
+                call cl%set('nstates',  ks)
+                call common_keys(self, cl)
+                call self%submit(i, S_SEEDS, cl)
+            case(S_SEEDS)
+                seeds = read_ints(d//'/seeds/seeds.txt')
+                ks    = maxval(seeds)
+                call simple_mkdir(string(d//'/stageA'))
+                call write_states(d//'/'//NODE_PROJ, d//'/stageA/r.simple', seeds)
+                call cl%set('prg',      'refine3D')
+                call cl%set('projfile', 'r.simple')
+                call cl%set('nstates',  ks)
+                do j = 1, ks
+                    call cl%set('vol'//int2str(j), d//'/seeds/recvol_state'//pad2(j)//'.mrc')
                 end do
                 call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
                 call self%submit(i, S_STAGEA, cl)
@@ -298,6 +380,43 @@ contains
 
     contains
 
+        subroutine site_step( smask )
+            character(len=*), intent(in) :: smask
+            call simple_mkdir(string(d//'/site'))
+            call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/site/s.simple'))
+            call cl%set('prg',         'site_rank')
+            call cl%set('projfile',    's.simple')
+            call cl%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
+            call cl%set('site_dirs',   trim(self%p%site_dirs))
+            call cl%set('pole_merge',  self%p%pole_merge)
+            call cl%set('pcg_mskfile', smask)
+            call cl%set('pgrp',        trim(self%p%pgrp))
+            call cl%set('mskdiam',     self%p%mskdiam)
+            call cl%set('nthr',        self%p%nthr)
+            call self%submit(i, S_SITE, cl)
+        end subroutine site_step
+
+        subroutine log_lines( fname, what )
+            character(len=*), intent(in) :: fname, what
+            character(len=4096) :: ln
+            integer :: fu, io
+            if( .not. file_exists(string(fname)) ) return
+            call fopen(fu, string(fname), status='old', action='read', iostat=io)
+            if( io /= 0 ) return
+            do
+                read(fu,'(A)',iostat=io) ln
+                if( io /= 0 ) exit
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' '//what//': '//trim(ln)
+            end do
+            call fclose(fu)
+        end subroutine log_lines
+
+        function rfmt2( x ) result( s )
+            real, intent(in) :: x
+            character(len=8) :: s
+            write(s,'(F5.2)') x
+        end function rfmt2
+
         subroutine fflex_step
             call simple_mkdir(string(d//'/fflex'))
             call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/fflex/f.simple'))
@@ -329,6 +448,58 @@ contains
         call simple_chdir(string(self%root))
         CWD_GLOB = self%root
     end subroutine submit_in
+
+    logical function final( self )
+        class(hetero_tree), intent(inout) :: self
+        final = .false.
+        if( .not. self%plain() ) return
+        if( .not. file_exists(string(self%root//'/final_maps/choice.txt')) ) call final_maps(self)
+        final = self%mergeup()
+    end function final
+
+    logical function plain( self )
+        class(hetero_tree), intent(inout) :: self
+        type(cmdline)        :: cl
+        type(string), allocatable :: lines(:), nds(:)
+        integer, allocatable :: lab(:)
+        character(len=4096)  :: line
+        character(len=:), allocatable :: pd
+        integer :: nl, il, inode, nrun, nleaf
+        plain = .true.
+        if( .not. file_exists(string(LEAF_TABLE)) ) return
+        call leaf_lines(lines, nds)
+        nl   = size(lines)
+        nrun = 0
+        do inode = 1, size(nds)
+            if( any([(nds(il) == nds(inode), il=1,inode-1)]) ) cycle
+            pd = nds(inode)%to_char()//'/plain'
+            if( file_exists(string(pd//'/'//STEP_EXIT)) ) cycle
+            plain = .false.
+            if( file_exists(string(pd//'/'//STEP_EXIT//JOB_INFO_EXT)) )then
+                nrun = nrun + 1
+                cycle
+            endif
+            if( nrun >= max(1, self%p%nodepar) ) cycle
+            allocate(lab(self%nrows), source=0)
+            nleaf = 0
+            do il = 1, nl
+                if( nds(il) /= nds(inode) ) cycle
+                nleaf = nleaf + 1
+                line  = lines(il)%to_char()
+                lab(read_ints(word(line, 8))) = nleaf
+            end do
+            call simple_mkdir(string(pd))
+            call write_states(nds(inode)%to_char()//'/stageB/b.simple', pd//'/p.simple', lab)
+            call cl%set('prg',      'reconstruct3D')
+            call cl%set('projfile', 'p.simple')
+            call cl%set('nstates',  nleaf)
+            call common_keys(self, cl)
+            call self%submit_in(pd, cl)
+            write(logfhandle,'(A)') '>>> HETERO_TREE plain leaf maps of '//pd//': '//int2str(nleaf)//' leaves submitted'
+            nrun = nrun + 1
+            deallocate(lab)
+        end do
+    end function plain
 
     logical function mergeup( self )
         class(hetero_tree), intent(inout) :: self
@@ -610,6 +781,75 @@ contains
         call fclose(funit)
     end subroutine leaf_masks
 
+    subroutine leaf_lines( lines, nds )
+        type(string), allocatable, intent(out) :: lines(:), nds(:)
+        character(len=4096) :: line
+        character(len=:), allocatable :: lrows
+        integer :: funit, ios, nl, il
+        nl = nlines(string(LEAF_TABLE))
+        allocate(lines(nl), nds(nl))
+        call fopen(funit, string(LEAF_TABLE), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//LEAF_TABLE, ios)
+        do il = 1, nl
+            read(funit,'(A)') line
+            lines(il) = trim(line)
+            lrows     = word(line, 8)
+            nds(il)   = lrows(1:index(lrows, '/leaf_') - 1)
+        end do
+        call fclose(funit)
+    end subroutine leaf_lines
+
+    subroutine final_maps( self )
+        class(hetero_tree), intent(inout) :: self
+        type(state_tree)          :: tree
+        type(string), allocatable :: lines(:), nds(:), evens(:), odds(:)
+        real(dp),     allocatable :: counts(:)
+        integer,      allocatable :: names(:), steps(:,:)
+        logical,      allocatable :: ljunk(:)
+        character(len=4096) :: line
+        character(len=:), allocatable :: md, ev, od
+        integer :: il, j, k, funit, ios
+        md = self%root//'/final_maps'
+        call leaf_lines(lines, nds)
+        allocate(evens(0), odds(0), counts(0), names(0), ljunk(0))
+        do il = 1, size(lines)
+            j  = count([(nds(k) == nds(il), k=1,il)])
+            ev = nds(il)%to_char()//'/plain/'//hv(j, 'even')
+            od = nds(il)%to_char()//'/plain/'//hv(j, 'odd')
+            line = lines(il)%to_char()
+            if( .not. (file_exists(string(ev)) .and. file_exists(string(od))) )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE no plain leaf maps for '//word(line, 1)//': left out of the final maps'
+                cycle
+            endif
+            evens  = [evens, string(ev)]
+            odds   = [odds,  string(od)]
+            counts = [counts, real(str2int(word(line, 3)), dp)]
+            names  = [names, il]
+            ljunk  = [ljunk, word(line, 2) == 'junk']
+        end do
+        call simple_mkdir(string(md))
+        call fopen(funit, string(md//'/units_index.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write units_index.txt', ios)
+        write(funit,'(A)') '# unit leaf particles kind'
+        do j = 1, size(names)
+            line = lines(names(j))%to_char()
+            write(funit,'(A)') pad2(names(j))//' '//word(line, 1)//' '//word(line, 3)//' '//word(line, 2)
+        end do
+        call fclose(funit)
+        if( size(evens) < 2 )then
+            call fopen(funit, string(md//'/choice.txt'), status='replace', action='write', iostat=ios)
+            call fileiochk('hetero_tree: cannot write choice.txt', ios)
+            write(funit,'(A)') 'none'
+            call fclose(funit)
+            return
+        endif
+        call tree%new(evens, odds, names, counts, find_img_smpd(evens(1)), 40., 10.)
+        call tree%build('complete', 0.)
+        call tree%get_steps(steps)
+        call tree%kill
+        call tree_wiener_maps(evens, odds, counts, names, ljunk, steps, self%p%mskdiam, LPD, md)
+    end subroutine final_maps
+
     subroutine node_project( self, i )
         class(hetero_tree), intent(inout) :: self
         integer,            intent(in)    :: i
@@ -642,15 +882,15 @@ contains
         character(len=8192)  :: line
         character(len=:), allocatable :: fname
         real    :: e(3), u(3), ev(1)
-        integer :: n, q, nb, it, j, b, funit, ios, nl, k, nsel, r, np, t
+        integer :: n, q, nb, it, j, b, funit, ios, k, nsel, r, np, t
         fname = self%ndir(i)//'/flex/flex_pca_coordinates.txt'
-        nl    = nlines(string(fname))
         call fopen(funit, string(fname), status='old', action='read', iostat=ios)
         call fileiochk('hetero_tree: cannot read '//fname, ios)
         n = 0
         q = 0
-        do j = 1, nl
-            read(funit,'(A)') line
+        do
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
             if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
             n = n + 1
             if( q == 0 ) q = nwords(line) - 5
@@ -658,7 +898,7 @@ contains
         rewind(funit)
         allocate(pinds(n), z(n,q))
         k = 0
-        do j = 1, nl
+        do while( k < n )
             read(funit,'(A)') line
             if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
             k = k + 1
@@ -745,12 +985,46 @@ contains
         type(string),       intent(in)    :: evens(:), odds(:)
         real(dp),           intent(in)    :: w(:)
         character(len=*),   intent(in)    :: fname
-        type(image)           :: img
-        real,     allocatable :: e(:,:,:,:), o(:,:,:,:), em(:,:,:), om(:,:,:), v(:,:,:), vs(:,:,:), m(:,:,:)
-        logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:)
+        type(image)          :: img
+        real,    allocatable :: vs(:,:,:), m(:,:,:)
+        logical, allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:)
+        integer :: n
+        real    :: smpd
+        call half_variance(evens, odds, w, self%p%mskdiam, n, smpd, sph, sup, vs)
+        core = vs > MFRAC * maxval(vs)
+        if( .not. any(core) )then
+            m = merge(1., 0., sph)
+        else
+            m    = dist_px(core, n, smpd)
+            core = m <= MDIL
+            m    = dist_px(core, n, smpd)
+            m    = exp(-m**2 / (2. * MFALL**2))
+            where( .not. sph ) m = 0.
+        endif
+        call img%new([n,n,n], smpd)
+        call img%set_rmat(m, .false.)
+        call img%write(string(fname))
+        call img%set_rmat(vs, .false.)
+        call img%write(string(fname(1:len(fname)-4)//'_variance.mrc'))
+        call img%kill
+        write(logfhandle,'(A)') '>>> HETERO_TREE focus mask '//fname//' from '//int2str(size(evens))//' maps: '//&
+            &int2str(count(m > 0.5))//' voxels above 0.5 ('//int2str(nint(100. * real(count(m > 0.5 .and. sup)) / &
+            &real(max(1,count(sup)))))//' % of the molecule support)'
+    end subroutine falloff_mask
+
+    subroutine half_variance( evens, odds, w, mskdiam, n, smpd, sph, sup, vs, de, dv )
+        type(string),                   intent(in)  :: evens(:), odds(:)
+        real(dp),                       intent(in)  :: w(:)
+        real,                           intent(in)  :: mskdiam
+        integer,                        intent(out) :: n
+        real,                           intent(out) :: smpd
+        logical, allocatable,           intent(out) :: sph(:,:,:), sup(:,:,:)
+        real,    allocatable,           intent(out) :: vs(:,:,:)
+        real,    allocatable, optional, intent(out) :: de(:,:,:,:), dv(:,:,:,:)
+        real,     allocatable :: e(:,:,:,:), o(:,:,:,:), em(:,:,:), om(:,:,:), v(:,:,:)
         real(dp), allocatable :: wn(:)
-        integer :: ldim(3), n, nm, j, ifoo
-        real    :: smpd, rad, sc
+        integer :: ldim(3), nm, j, ifoo
+        real    :: sc
         call find_ldim_nptcls(evens(1), ldim, ifoo)
         n    = ldim(1)
         nm   = size(evens)
@@ -761,8 +1035,7 @@ contains
             call read_lp(evens(j), e(:,:,:,j))
             call read_lp(odds(j),  o(:,:,:,j))
         end do
-        rad = self%p%mskdiam / 2. / smpd
-        sph = sphere(n, rad)
+        sph = sphere(n, mskdiam / 2. / smpd)
         em  = wsum(e)
         om  = wsum(o)
         sup = (0.5 * (em + om) > MSUP * maxval(0.5 * (em + om), mask=sph)) .and. sph
@@ -778,28 +1051,16 @@ contains
         do j = 1, nm
             v = v + real(wn(j)) * (e(:,:,:,j) - em) * (o(:,:,:,j) - om)
         end do
-        deallocate(e, o)
-        vs = filtered(v, 2)
+        vs = filtered_vol(v, n, smpd, 2)
         where( .not. sph ) vs = 0.
-        core = vs > MFRAC * maxval(vs)
-        if( .not. any(core) )then
-            m = merge(1., 0., sph)
-        else
-            m    = dist_to(core)
-            core = m <= MDIL
-            m    = dist_to(core)
-            m    = exp(-m**2 / (2. * MFALL**2))
-            where( .not. sph ) m = 0.
+        if( present(de) .and. present(dv) )then
+            do j = 1, nm
+                e(:,:,:,j) = e(:,:,:,j) - em
+                o(:,:,:,j) = o(:,:,:,j) - om
+            end do
+            call move_alloc(e, de)
+            call move_alloc(o, dv)
         endif
-        call img%new([n,n,n], smpd)
-        call img%set_rmat(m, .false.)
-        call img%write(string(fname))
-        call img%set_rmat(vs, .false.)
-        call img%write(string(fname(1:len(fname)-4)//'_variance.mrc'))
-        call img%kill
-        write(logfhandle,'(A)') '>>> HETERO_TREE focus mask '//fname//' from '//int2str(nm)//' maps: '//&
-            &int2str(count(m > 0.5))//' voxels above 0.5 ('//int2str(nint(100. * real(count(m > 0.5 .and. sup)) / &
-            &real(max(1,count(sup)))))//' % of the molecule support)'
 
     contains
 
@@ -824,30 +1085,320 @@ contains
             call vol%kill
         end subroutine read_lp
 
-        function filtered( x, mode ) result( y )
-            real,    intent(in) :: x(:,:,:)
-            integer, intent(in) :: mode
-            real, allocatable :: y(:,:,:)
-            type(image) :: vol
-            call vol%new([n,n,n], smpd)
-            call vol%set_rmat(x, .false.)
-            call fourier_filter(vol, n, smpd, mode)
-            y = vol%get_rmat()
-            call vol%kill
-        end function filtered
+    end subroutine half_variance
 
-        function dist_to( mk ) result( dpx )
-            logical, intent(in) :: mk(:,:,:)
-            real, allocatable :: dpx(:,:,:)
-            type(image) :: vol
-            call vol%new([n,n,n], smpd)
-            call vol%set_rmat(merge(0., 1., mk), .false.)
-            call vol%distance_transform
-            dpx = vol%get_rmat() / smpd
-            call vol%kill
-        end function dist_to
+    subroutine discover_sites( evens, odds, counts, names, mskdiam, outdir, nsite )
+        type(string),     intent(in)  :: evens(:), odds(:)
+        real(dp),         intent(in)  :: counts(:)
+        integer,          intent(in)  :: names(:)
+        real,             intent(in)  :: mskdiam
+        character(len=*), intent(in)  :: outdir
+        integer,          intent(out) :: nsite
+        type :: dcand
+            real, allocatable :: m(:,:,:)
+            real    :: r = 0., share = 0., mol = 0., rad = 0.
+            integer :: comp = 0, fac = 0, ncore = 0, seed = 0, vox = 0
+        end type dcand
+        type(dcand), allocatable :: cands(:), tmp(:)
+        type(image)              :: img
+        real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pn(:,:), cc(:,:), vv(:)
+        logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:), cm(:,:,:), b(:,:,:), okk(:)
+        integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:)
+        real(dp), allocatable :: wn(:)
+        character(len=:), allocatable :: mlist
+        real    :: smpd, tot, cosv, sh(2)
+        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios
+        logical :: l_sib
+        wn  = counts / sum(counts)
+        nk  = size(evens)
+        okk = counts >= real(DSEEDMIN,dp)
+        call half_variance(evens, odds, counts, mskdiam, n, smpd, sph, sup, vs, de, dv)
+        core = vs > MFRAC * maxval(vs)
+        call label6(core, lab, nl)
+        tot  = sum(vs, mask=core)
+        allocate(cands(0))
+        do ic = 1, nl
+            cm = lab == ic
+            if( count(cm) < DMINVOX ) cycle
+            if( sum(vs, mask=cm) / tot < DMINSHARE ) cycle
+            if( count(cm) >= 2 * DMINVOX )then
+                nv = count(cm)
+                allocate(pn(nv,nk), vidx(3,nv), vv(nv))
+                iv = 0
+                do z = 1, n
+                    do y = 1, n
+                        do x = 1, n
+                            if( .not. cm(x,y,z) ) cycle
+                            iv = iv + 1
+                            vidx(:,iv) = [x, y, z]
+                            vv(iv)     = vs(x,y,z)
+                            pn(iv,:)   = real(sqrt(wn)) * 0.5 * (de(x,y,z,:) + dv(x,y,z,:))
+                            pn(iv,:)   = pn(iv,:) / max(sqrt(sum(pn(iv,:)**2)), 1.e-30)
+                        end do
+                    end do
+                end do
+                cc = top_dirs(pn, 2)
+                do it = 1, DFACT_ITS
+                    asg = merge(1, 2, abs(matmul(pn, cc(1,:))) >= abs(matmul(pn, cc(2,:))))
+                    do j = 1, 2
+                        if( count(asg == j) > 2 ) cc(j:j,:) = top_dirs(pn(pack([(iv, iv=1,nv)], asg == j),:), 1)
+                    end do
+                end do
+                cosv = abs(dot_product(cc(1,:), cc(2,:)))
+                sh   = [(sum(vv, mask=asg == j) / sum(vv), j=1,2)]
+                if( cosv < DFACT_COS .and. minval(sh) >= DFACT_SHARE .and. min(count(asg == 1), count(asg == 2)) >= DMINVOX )then
+                    write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2)') '>>> SITE_DISCOVER component ', ic, &
+                        &' splits into two factors: |cos| of their state profiles ', cosv, ', variance shares ', sh(1), ' / ', sh(2)
+                    do j = 1, 2
+                        allocate(b(n,n,n), source=.false.)
+                        do iv = 1, nv
+                            if( asg(iv) == j ) b(vidx(1,iv),vidx(2,iv),vidx(3,iv)) = .true.
+                        end do
+                        call label6(b, lb, nb)
+                        do k = 1, nb
+                            if( count(lb == k) < max(20, DMINVOX / 4) ) where( lb == k ) b = .false.
+                        end do
+                        call add(b, ic, j, cc(j,:) / real(sqrt(wn)))
+                        deallocate(b)
+                    end do
+                    deallocate(pn, vidx, vv)
+                    cycle
+                endif
+                write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2,A)') '>>> SITE_DISCOVER component ', ic, ' is one factor (|cos| ', &
+                    &cosv, ', shares ', sh(1), ' / ', sh(2), ')'
+                deallocate(pn, vidx, vv)
+            endif
+            call add(cm, ic, 0)
+        end do
+        nsite = 0
+        ord   = pack([(i, i=1,size(cands))], [(cands(i)%mol <= DMAXMOL, i=1,size(cands))])
+        write(logfhandle,'(A)') '>>> SITE_DISCOVER '//int2str(size(cands) - size(ord))//' of '//int2str(size(cands))//&
+            &' candidates dropped as not local (mask > 0.5 over '//int2str(nint(100. * DMAXMOL))//' % of the molecule)'
+        if( size(ord) == 0 ) return
+        do i = 2, size(ord)
+            j = ord(i)
+            k = i - 1
+            do while( k >= 1 )
+                if( .not. ranks_above(j, ord(k)) ) exit
+                ord(k+1) = ord(k)
+                k = k - 1
+            end do
+            ord(k+1) = j
+        end do
+        allocate(rep(0))
+        allocate(memb(size(cands)), source=0)
+        do i = 1, size(ord)
+            k = 0
+            do j = 1, size(rep)
+                if( dice(cands(ord(i))%m, cands(rep(j))%m) < DDICE ) cycle
+                l_sib = .false.
+                do it = 1, size(cands)
+                    if( memb(it) /= j ) cycle
+                    l_sib = l_sib .or. (cands(ord(i))%fac > 0 .and. cands(it)%fac > 0 .and. cands(it)%comp == cands(ord(i))%comp)
+                end do
+                if( l_sib ) cycle
+                k = j
+                exit
+            end do
+            if( k == 0 )then
+                rep = [rep, ord(i)]
+                k   = size(rep)
+            endif
+            memb(ord(i)) = k
+        end do
+        nsite = size(rep)
+        call img%new([n,n,n], smpd)
+        call fopen(funit, string(outdir//'/sites.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('discover_sites: cannot write '//outdir//'/sites.txt', ios)
+        write(funit,'(A)') '# site candidate repro voxels_above_0.5 molecule_share centre_radius_A seed_state members'
+        do j = 1, nsite
+            i = rep(j)
+            call img%set_rmat(cands(i)%m, .false.)
+            call img%write(string(outdir//'/site_'//pad2(j)//'.mrc'))
+            mlist = ''
+            do it = 1, size(cands)
+                if( memb(it) == j ) mlist = mlist//' '//ctag(it)
+            end do
+            write(funit,'(I0,1X,A,1X,F6.3,1X,I0,1X,F6.3,1X,F6.1,1X,I0,A)') j, ctag(i), cands(i)%r, cands(i)%vox, cands(i)%mol, &
+                &cands(i)%rad, cands(i)%seed, mlist
+            write(logfhandle,'(A,I0,A,F6.3,A,F5.1,A,F5.1,A,I0)') '>>> SITE_DISCOVER SITE ', j, ': '//ctag(i)//' repro ', cands(i)%r, &
+                &', mask > 0.5 ', 100. * cands(i)%mol, ' % of the molecule, centre ', cands(i)%rad, ' A, seed state ', cands(i)%seed
+        end do
+        call fclose(funit)
+        call img%kill
 
-    end subroutine falloff_mask
+    contains
+
+        subroutine add( c, comp, fac, prof )
+            logical,        intent(in) :: c(:,:,:)
+            integer,        intent(in) :: comp, fac
+            real, optional, intent(in) :: prof(:)
+            real(dp) :: num, dsq, osq, ek(nk)
+            real     :: cen(3)
+            integer  :: kk, nc, xx, yy, zz
+            allocate(tmp(size(cands)+1))
+            tmp(1:size(cands)) = cands
+            call move_alloc(tmp, cands)
+            nc = size(cands)
+            cands(nc)%m = dist_px(dilate6(c, nint(MDIL)), n, smpd)
+            cands(nc)%m = exp(-cands(nc)%m**2 / (2. * MFALL**2))
+            where( .not. sph ) cands(nc)%m = 0.
+            num = 0._dp
+            dsq = 0._dp
+            osq = 0._dp
+            do kk = 1, nk
+                ek(kk) = sum(real(de(:,:,:,kk) * cands(nc)%m, dp) * real(dv(:,:,:,kk) * cands(nc)%m, dp))
+                num    = num + wn(kk) * ek(kk)
+                dsq    = dsq + wn(kk) * sum(real(de(:,:,:,kk) * cands(nc)%m, dp)**2)
+                osq    = osq + wn(kk) * sum(real(dv(:,:,:,kk) * cands(nc)%m, dp)**2)
+            end do
+            cands(nc)%r     = real(num / max(sqrt(dsq * osq), 1.e-300_dp))
+            cands(nc)%comp  = comp
+            cands(nc)%fac   = fac
+            cands(nc)%ncore = count(c)
+            cands(nc)%vox   = count(cands(nc)%m > 0.5)
+            cands(nc)%mol   = real(count(cands(nc)%m > 0.5 .and. sup)) / real(max(1, count(sup)))
+            cands(nc)%share = sum(vs, mask=c) / tot
+            cen = 0.
+            do zz = 1, n
+                do yy = 1, n
+                    do xx = 1, n
+                        if( c(xx,yy,zz) ) cen = cen + real([xx, yy, zz] - 1)
+                    end do
+                end do
+            end do
+            cen = cen / real(max(1, count(c)))
+            cands(nc)%rad = sqrt(sum((cen - real(n / 2))**2)) * smpd
+            if( present(prof) )then
+                cands(nc)%seed = names(maxloc(merge(abs(prof), -huge(1.), okk), dim=1))
+            else
+                cands(nc)%seed = names(maxloc(merge(real(ek), -huge(1.), okk), dim=1))
+            endif
+            write(logfhandle,'(A,I0,A,F5.1,A,F5.1,A,F5.1,A,F6.3,A,I0)') '>>> SITE_DISCOVER candidate '//ctag(nc)//': core ', &
+                &cands(nc)%ncore, ' voxels, ', 100. * cands(nc)%share, ' % of the node variance, mask > 0.5 ', 100. * cands(nc)%mol, &
+                &' % of the molecule, centre ', cands(nc)%rad, ' A, repro ', cands(nc)%r, ', seed state ', cands(nc)%seed
+        end subroutine add
+
+        function ctag( i ) result( t )
+            integer, intent(in) :: i
+            character(len=:), allocatable :: t
+            t = int2str(cands(i)%comp)
+            if( cands(i)%fac > 0 ) t = t//'f'//int2str(cands(i)%fac)
+        end function ctag
+
+        logical function ranks_above( a, bb )
+            integer, intent(in) :: a, bb
+            ranks_above = cands(a)%share > cands(bb)%share .or. (cands(a)%share == cands(bb)%share .and. cands(a)%r > cands(bb)%r)
+        end function ranks_above
+
+        real function dice( m1, m2 )
+            real, intent(in) :: m1(:,:,:), m2(:,:,:)
+            dice = 2. * real(count(m1 > 0.5 .and. m2 > 0.5)) / real(max(1, count(m1 > 0.5) + count(m2 > 0.5)))
+        end function dice
+
+    end subroutine discover_sites
+
+    function top_dirs( p, m ) result( c )
+        real,    intent(in) :: p(:,:)
+        integer, intent(in) :: m
+        real, allocatable :: c(:,:)
+        real(dp) :: g(size(p,2),size(p,2)), u(size(p,2),size(p,2)), lam(size(p,2))
+        integer  :: nrot, j, ord(size(p,2))
+        real     :: key(size(p,2))
+        g   = matmul(transpose(real(p,dp)), real(p,dp))
+        call jacobi(g, size(p,2), size(p,2), lam, u, nrot)
+        key = real(-lam)
+        ord = [(j, j=1,size(p,2))]
+        call hpsort(key, ord)
+        allocate(c(m,size(p,2)))
+        do j = 1, m
+            c(j,:) = real(u(:,ord(j)))
+        end do
+    end function top_dirs
+
+    subroutine label6( mk, lab, nl )
+        logical,              intent(in)  :: mk(:,:,:)
+        integer, allocatable, intent(out) :: lab(:,:,:)
+        integer,              intent(out) :: nl
+        integer, allocatable :: stack(:,:)
+        integer :: n1, n2, n3, x, y, z, top, c(3), d(3), q
+        integer, parameter :: NB(3,6) = reshape([1,0,0, -1,0,0, 0,1,0, 0,-1,0, 0,0,1, 0,0,-1], [3,6])
+        n1 = size(mk,1)
+        n2 = size(mk,2)
+        n3 = size(mk,3)
+        allocate(lab(n1,n2,n3), source=0)
+        allocate(stack(3,max(1,count(mk))))
+        nl = 0
+        do z = 1, n3
+            do y = 1, n2
+                do x = 1, n1
+                    if( .not. mk(x,y,z) .or. lab(x,y,z) > 0 ) cycle
+                    nl  = nl + 1
+                    top = 1
+                    stack(:,1) = [x, y, z]
+                    lab(x,y,z) = nl
+                    do while( top > 0 )
+                        c   = stack(:,top)
+                        top = top - 1
+                        do q = 1, 6
+                            d = c + NB(:,q)
+                            if( any(d < 1) .or. d(1) > n1 .or. d(2) > n2 .or. d(3) > n3 ) cycle
+                            if( .not. mk(d(1),d(2),d(3)) .or. lab(d(1),d(2),d(3)) > 0 ) cycle
+                            lab(d(1),d(2),d(3)) = nl
+                            top = top + 1
+                            stack(:,top) = d
+                        end do
+                    end do
+                end do
+            end do
+        end do
+    end subroutine label6
+
+    function dilate6( mk, nit ) result( d )
+        logical, intent(in) :: mk(:,:,:)
+        integer, intent(in) :: nit
+        logical, allocatable :: d(:,:,:), t(:,:,:)
+        integer :: it, n1, n2, n3
+        n1 = size(mk,1)
+        n2 = size(mk,2)
+        n3 = size(mk,3)
+        d  = mk
+        do it = 1, nit
+            t = d
+            t(2:n1,:,:) = t(2:n1,:,:) .or. d(1:n1-1,:,:)
+            t(1:n1-1,:,:) = t(1:n1-1,:,:) .or. d(2:n1,:,:)
+            t(:,2:n2,:) = t(:,2:n2,:) .or. d(:,1:n2-1,:)
+            t(:,1:n2-1,:) = t(:,1:n2-1,:) .or. d(:,2:n2,:)
+            t(:,:,2:n3) = t(:,:,2:n3) .or. d(:,:,1:n3-1)
+            t(:,:,1:n3-1) = t(:,:,1:n3-1) .or. d(:,:,2:n3)
+            d = t
+        end do
+    end function dilate6
+
+    function filtered_vol( x, n, smpd, mode ) result( y )
+        real,    intent(in) :: x(:,:,:), smpd
+        integer, intent(in) :: n, mode
+        real, allocatable :: y(:,:,:)
+        type(image) :: vol
+        call vol%new([n,n,n], smpd)
+        call vol%set_rmat(x, .false.)
+        call fourier_filter(vol, n, smpd, mode)
+        y = vol%get_rmat()
+        call vol%kill
+    end function filtered_vol
+
+    function dist_px( mk, n, smpd ) result( dpx )
+        logical, intent(in) :: mk(:,:,:)
+        integer, intent(in) :: n
+        real,    intent(in) :: smpd
+        real, allocatable :: dpx(:,:,:)
+        type(image) :: vol
+        call vol%new([n,n,n], smpd)
+        call vol%set_rmat(merge(0., 1., mk), .false.)
+        call vol%distance_transform
+        dpx = vol%get_rmat() / smpd
+        call vol%kill
+    end function dist_px
 
     subroutine add_leaf( self, i, mem, l_junk )
         class(hetero_tree), intent(inout) :: self
@@ -939,6 +1490,7 @@ contains
         character(len=*),   intent(in)    :: mask
         call cl%set('refine',          'prob_neigh')
         call cl%set('prob_neigh_mode', 'geom')
+        call cl%set('prob_athres',     ATHR)
         call cl%set('lp',              lp)
         call cl%set('maxits',          maxits)
         call cl%set('center',          'no')

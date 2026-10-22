@@ -705,6 +705,29 @@ contains
         r = 1. - (6. * real(sum((rank1 - rank2)**2))) / real((n * (n**2 - 1)))
     end function spear
 
+    function avg_ranks( v ) result( rk )
+        real, intent(in) :: v(:)
+        real(dp), allocatable :: rk(:)
+        real,     allocatable :: key(:)
+        integer,  allocatable :: ord(:)
+        integer :: i, j, m
+        m   = size(v)
+        key = v
+        ord = [(i, i=1,m)]
+        call hpsort(key, ord)
+        allocate(rk(m))
+        i = 1
+        do while( i <= m )
+            j = i
+            do while( j < m )
+                if( key(j+1) /= key(i) ) exit
+                j = j + 1
+            end do
+            rk(ord(i:j)) = 0.5_dp * real(i + j,dp)
+            i = j + 1
+        end do
+    end function avg_ranks
+
     subroutine normalize_1( arr, err )
         real, intent(inout)  :: arr(:)
         logical, intent(out) :: err

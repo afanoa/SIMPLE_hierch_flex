@@ -38,6 +38,7 @@ type :: state_tree
     procedure :: cut
     procedure :: get_nleaves
     procedure :: get_names
+    procedure :: get_steps
     procedure :: kill
 end type state_tree
 
@@ -526,6 +527,12 @@ contains
         integer, allocatable, intent(out) :: names(:)
         names = self%names
     end subroutine get_names
+
+    subroutine get_steps( self, steps )
+        class(state_tree),    intent(in)  :: self
+        integer, allocatable, intent(out) :: steps(:,:)
+        steps = self%steps(:,1:self%nsteps)
+    end subroutine get_steps
 
     subroutine kill( self )
         class(state_tree), intent(inout) :: self

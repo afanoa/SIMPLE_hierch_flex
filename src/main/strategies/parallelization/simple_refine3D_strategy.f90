@@ -24,6 +24,7 @@ implicit none
 public :: refine3D_strategy, refine3D_inmem_strategy, refine3D_distr_strategy
 public :: create_refine3D_strategy
 public :: strip_refine3D_search_only_args
+public :: PROB_MULTISTATE_MIN_POP
 
 private
 #include "simple_local_flags.inc"

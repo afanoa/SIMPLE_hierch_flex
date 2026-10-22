@@ -59,10 +59,25 @@ type, extends(commander_base) :: commander_state_split
     procedure :: execute      => exec_state_split
 end type commander_state_split
 
+type, extends(commander_base) :: commander_site_rank
+  contains
+    procedure :: execute      => exec_site_rank
+end type commander_site_rank
+
 type, extends(commander_base) :: commander_hetero_tree
   contains
     procedure :: execute      => exec_hetero_tree
 end type commander_hetero_tree
+
+type, extends(commander_base) :: commander_landscape_compare
+  contains
+    procedure :: execute      => exec_landscape_compare
+end type commander_landscape_compare
+
+type, extends(commander_base) :: commander_site_discover
+  contains
+    procedure :: execute      => exec_site_discover
+end type commander_site_discover
 
 contains
 
@@ -2081,7 +2096,7 @@ contains
 
     subroutine exec_state_mergeup( self, cline )
         use simple_state_tree,    only: state_tree
-        use simple_state_mergeup, only: state_mergeup
+        use simple_state_mergeup, only: state_mergeup, EM_LIM
         use simple_eo_partition,  only: ensure_field_halves
         class(commander_state_mergeup), intent(inout) :: self
         class(cmdline),                 intent(inout) :: cline
@@ -2110,7 +2125,7 @@ contains
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         call tree%read(params%infile)
         labels = build%spproj_field%get_all_asint('state')
-        call mergeup%new(params, build)
+        call mergeup%new(params, build, EM_LIM)
         if( cline%defined('infile2') ) call mergeup%leaf_focus(params%infile2)
         call mergeup%run(tree, labels, units)
         do i = 1, size(units)
@@ -2124,7 +2139,7 @@ contains
     end subroutine exec_state_mergeup
 
     subroutine exec_state_split( self, cline )
-        use simple_state_mergeup, only: state_mergeup
+        use simple_state_mergeup, only: state_mergeup, EM_LIM
         use simple_eo_partition,  only: ensure_field_halves
         class(commander_state_split), intent(inout) :: self
         class(cmdline),               intent(inout) :: cline
@@ -2151,7 +2166,7 @@ contains
         call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         labels = build%spproj_field%get_all_asint('state')
-        call split%new(params, build)
+        call split%new(params, build, EM_LIM)
         if( cline%defined('pcg_mskfile') ) call split%focus(params%pcg_mskfile)
         rows = split%get_rows()
         call split%test(labels(rows), maxval(labels), child, kstar, junk)
@@ -2174,6 +2189,245 @@ contains
         call simple_end('**** SIMPLE_STATE_SPLIT NORMAL STOP ****')
     end subroutine exec_state_split
 
+    subroutine exec_site_rank( self, cline )
+        use simple_state_mergeup,     only: state_mergeup, merge_poles
+        use simple_eo_partition,      only: ensure_field_halves
+        use simple_srch_sort_loc,     only: hpsort
+        use simple_string_utils,      only: list_of_ints2arr
+        use simple_refine3D_strategy, only: PROB_MULTISTATE_MIN_POP
+        class(commander_site_rank), intent(inout) :: self
+        class(cmdline),             intent(inout) :: cline
+        character(len=2), parameter :: TAILS(2) = ['lo', 'hi']
+        type(parameters)     :: params
+        type(builder)        :: build
+        type(sp_project)     :: spproj
+        type(state_mergeup)  :: site
+        type(string), allocatable :: names(:)
+        real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:)
+        integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:)
+        logical, allocatable :: seed(:)
+        character(len=:), allocatable :: tag, members
+        real    :: smpd
+        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
+        call cline%set('hp',      40.)
+        call cline%set('oritype', 'ptcl3D')
+        call cline%set('objfun',  'cc')
+        if( .not. cline%defined('box_crop') )then
+            call spproj%read_segment('stk', cline%get_carg('projfile'))
+            box  = spproj%get_box()
+            smpd = spproj%get_smpd()
+            call spproj%kill
+            call cline%set('box_crop', min(box, max(26, 2*ceiling(real(box)*smpd/cline%get_rarg('lp')))))
+        endif
+        call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
+        call ensure_field_halves(build%spproj, params%oritype, params%projfile)
+        nrows = build%spproj_field%get_noris()
+        call site%new(params, build, em_lim=15.)
+        rows  = site%get_rows()
+        n     = size(rows)
+        if( cline%defined('site_dirs') )then
+            dirs = list_of_ints2arr(trim(params%site_dirs))
+            if( size(dirs) == 0 ) THROW_HARD('site_rank: no direction in site_dirs')
+            call read_latent
+        else
+            allocate(dirs(1), source=0)
+            allocate(z(nrows,1))
+            call fopen(funit, params%infile, status='old', action='read', iostat=ios)
+            call fileiochk('site_rank: cannot read '//params%infile%to_char(), ios)
+            do i = 1, nrows
+                read(funit,*) z(i,1)
+            end do
+            call fclose(funit)
+        endif
+        eo    = [(build%spproj_field%get_eo(rows(i)), i=1,n)]
+        ntail = min(15000, n / 6)
+        allocate(posts(n,2*size(dirs)), names(2*size(dirs)))
+        do idir = 1, size(dirs)
+            ord = [(i, i=1,n)]
+            key = z(rows,idir)
+            call hpsort(key, ord)
+            do itail = 1, 2
+                ie  = 2 * (idir - 1) + itail
+                tag = TAILS(itail)
+                if( dirs(idir) > 0 ) tag = 'z'//int2str(dirs(idir))//tag
+                names(ie) = tag
+                allocate(seed(n), source=.false.)
+                if( itail == 1 )then
+                    seed(ord(1:ntail)) = .true.
+                else
+                    seed(ord(n-ntail+1:n)) = .true.
+                endif
+                write(logfhandle,'(A)') '>>> SITE_RANK '//tag//' tail: '//int2str(ntail)//' of '//int2str(n)//' particles'
+                call site%site_em(seed, params%pcg_mskfile, post, nstar, curve)
+                posts(:,ie) = post
+                allocate(top(nrows), source=0)
+                do ih = 0, 1
+                    sel  = pack([(i, i=1,n)], eo == ih)
+                    ordh = [(i, i=1,size(sel))]
+                    key  = -post(sel)
+                    call hpsort(key, ordh)
+                    top(rows(sel(ordh(1:min(nstar/2, size(sel)))))) = 1
+                end do
+                call write_rows('site_post_'//tag//'.txt', post)
+                call write_ints('site_top_'//tag//'.txt', top)
+                call fopen(funit, string('site_curve_'//tag//'.txt'), status='replace', action='write', iostat=ios)
+                call fileiochk('site_rank: cannot write site_curve_'//tag//'.txt', ios)
+                write(funit,'(A)') '# N holdout_corr'
+                do i = 1, size(curve,2)
+                    write(funit,'(I0,1X,F8.4)') nint(curve(1,i)), curve(2,i)
+                end do
+                call fclose(funit)
+                write(logfhandle,'(A,A,A,I0,A,F7.1)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ', site class weight ', sum(post)
+                deallocate(seed, top)
+            end do
+        end do
+        call merge_poles(posts, params%pole_merge, PROB_MULTISTATE_MIN_POP + 1, sp, grp, seeds)
+        do i = 1, size(names)
+            if( grp(i) == 0 ) write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' dropped (technical): '//&
+                &'its pole drew fewer than '//int2str(PROB_MULTISTATE_MIN_POP + 1)//' seeds, the fewest refine3D refines as a state'
+        end do
+        call fopen(funit, string('site_spearman.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_rank: cannot write site_spearman.txt', ios)
+        do i = 1, size(names)
+            do j = i + 1, size(names)
+                write(logfhandle,'(A,F7.3)') '>>> SITE_RANK Spearman '//names(i)%to_char()//' vs '//names(j)%to_char()//' ', sp(i,j)
+                write(funit,'(A,F7.3)') names(i)%to_char()//' '//names(j)%to_char()//' ', sp(i,j)
+            end do
+        end do
+        call fclose(funit)
+        allocate(top(nrows), source=0)
+        top(rows) = seeds
+        call write_ints('site_seeds.txt', top)
+        call fopen(funit, string('site_poles.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_rank: cannot write site_poles.txt', ios)
+        do j = 1, maxval(grp)
+            members = ''
+            do i = 1, size(names)
+                if( grp(i) == j ) members = members//' '//names(i)%to_char()
+            end do
+            write(funit,'(I0,1X,I0,A)') j, count(seeds == j), members
+            write(logfhandle,'(A)') '>>> SITE_RANK pole '//int2str(j)//':'//members//', '//int2str(count(seeds == j))//' seeds'
+        end do
+        call fclose(funit)
+        call site%kill
+        call build%kill_general_tbox
+        call simple_end('**** SIMPLE_SITE_RANK NORMAL STOP ****')
+
+    contains
+
+        subroutine read_latent
+            real,    allocatable :: zq(:)
+            character(len=8192)  :: line
+            integer :: pind, ieo, ilab, nq, io
+            real    :: res1, res2
+            allocate(z(nrows,size(dirs)), source=0.)
+            call fopen(funit, params%infile, status='old', action='read', iostat=ios)
+            call fileiochk('site_rank: cannot read '//params%infile%to_char(), ios)
+            nq = 0
+            do
+                read(funit,'(A)',iostat=io) line
+                if( io /= 0 ) exit
+                if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
+                if( nq == 0 )then
+                    nq = count_words(line) - 5
+                    if( any(dirs < 1 .or. dirs > nq) ) THROW_HARD('site_rank: site_dirs beyond the '//int2str(nq)//' latent directions')
+                    allocate(zq(nq))
+                endif
+                read(line,*) pind, ieo, ilab, res1, res2, zq
+                if( pind >= 1 .and. pind <= nrows ) z(pind,:) = zq(dirs)
+            end do
+            call fclose(funit)
+        end subroutine read_latent
+
+        integer function count_words( line )
+            character(len=*), intent(in) :: line
+            integer :: k
+            count_words = 0
+            do k = 1, len_trim(line)
+                if( line(k:k) /= ' ' .and. (k == 1 .or. line(max(1,k-1):max(1,k-1)) == ' ') ) count_words = count_words + 1
+            end do
+        end function count_words
+
+        subroutine write_rows( fname, vals )
+            character(len=*), intent(in) :: fname
+            real,             intent(in) :: vals(:)
+            real, allocatable :: full(:)
+            integer :: fu, io, k
+            allocate(full(nrows), source=-1.)
+            full(rows) = vals
+            call fopen(fu, string(fname), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write '//fname, io)
+            do k = 1, nrows
+                write(fu,'(F8.5)') full(k)
+            end do
+            call fclose(fu)
+        end subroutine write_rows
+
+        subroutine write_ints( fname, vals )
+            character(len=*), intent(in) :: fname
+            integer,          intent(in) :: vals(:)
+            integer :: fu, io, k
+            call fopen(fu, string(fname), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write '//fname, io)
+            do k = 1, size(vals)
+                write(fu,'(I0)') vals(k)
+            end do
+            call fclose(fu)
+        end subroutine write_ints
+
+    end subroutine exec_site_rank
+
+    subroutine exec_landscape_compare( self, cline )
+        use simple_landscape_compare, only: landscape_compare
+        class(commander_landscape_compare), intent(inout) :: self
+        class(cmdline),                     intent(inout) :: cline
+        type(parameters) :: params
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        if( .not. cline%defined('lp')    ) call cline%set('lp',    15.)
+        call params%new(cline)
+        if( cline%defined('infile2') )then
+            call landscape_compare(params%infile, params%pcg_mskfile, params%lp, 'landscape_compare.txt', params%infile2)
+        else
+            call landscape_compare(params%infile, params%pcg_mskfile, params%lp, 'landscape_compare.txt')
+        endif
+        call simple_end('**** SIMPLE_LANDSCAPE_COMPARE NORMAL STOP ****')
+    end subroutine exec_landscape_compare
+
+    subroutine exec_site_discover( self, cline )
+        use simple_hetero_tree,     only: discover_sites
+        use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
+        class(commander_site_discover), intent(inout) :: self
+        class(cmdline),                 intent(inout) :: cline
+        type(parameters)          :: params
+        type(string), allocatable :: evens(:), odds(:)
+        integer,      allocatable :: labels(:), names(:)
+        real(dp),     allocatable :: counts(:)
+        integer :: s, i, funit, ios, nsite
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        call params%new(cline)
+        allocate(labels(nlines(params%infile)))
+        call fopen(funit, params%infile, status='old', action='read', iostat=ios)
+        call fileiochk('site_discover: cannot read '//params%infile%to_char(), ios)
+        do i = 1, size(labels)
+            read(funit,*) labels(i)
+        end do
+        call fclose(funit)
+        allocate(evens(0), odds(0), names(0), counts(0))
+        do s = 1, maxval(labels)
+            if( count(labels == s) == 0 ) cycle
+            evens  = [evens, params%dir//'/'//refine3D_state_halfvol_fname(s, 'even', .true.)]
+            odds   = [odds,  params%dir//'/'//refine3D_state_halfvol_fname(s, 'odd',  .true.)]
+            names  = [names, s]
+            counts = [counts, real(count(labels == s),dp)]
+        end do
+        if( size(names) < 2 ) THROW_HARD('site_discover needs at least two states')
+        call discover_sites(evens, odds, counts, names, params%mskdiam, '.', nsite)
+        write(logfhandle,'(A)') '>>> SITE_DISCOVER '//int2str(nsite)//' sites over '//int2str(size(names))//' states'
+        call simple_end('**** SIMPLE_SITE_DISCOVER NORMAL STOP ****')
+    end subroutine exec_site_discover
+
     subroutine exec_hetero_tree( self, cline )
         use simple_hetero_tree, only: hetero_tree
         class(commander_hetero_tree), intent(inout) :: self
@@ -2188,6 +2442,8 @@ contains
         if( .not. cline%defined('nparts')   ) call cline%set('nparts',   8)
         if( .not. cline%defined('nthr')     ) call cline%set('nthr',     8)
         if( .not. cline%defined('pgrp')     ) call cline%set('pgrp',     'c1')
+        if( .not. cline%defined('site_dirs')) call cline%set('site_dirs', '1,3')
+        if( .not. cline%defined('pole_merge')) call cline%set('pole_merge', 0.95)
         call cline%set('oritype', 'ptcl3D')
         call params%new(cline)
         call tree%new(params, cline%defined('infile'))
