@@ -898,7 +898,11 @@ contains
             if( any(self%fs(j)%st == [F_RUN, F_TEST, F_UP, F_PREC, F_PREF]) ) dmin = min(dmin, len(self%fs(j)%home) - 1)
         end do
         if( dmin < huge(dmin) )then
-            do j = 1, size(self%fs)
+            key = [(-self%fs(j)%repro, j=1,size(self%fs))]
+            ord = [(j, j=1,size(self%fs))]
+            call hpsort(key, ord)
+            do b = 1, size(ord)
+                j = ord(b)
                 if( self%fs(j)%st /= F_TEST .or. len(self%fs(j)%home) - 1 /= dmin ) cycle
                 if( npoles_of(self%fs_hd(j)) == 0 .and. self%fs(j)%ref == 0 )then
                     l_ok = best_minz(self%fs_hd(j)) >= 2. .and. best_minz(self%fs_hd(j)) < 3.
@@ -933,6 +937,28 @@ contains
                     write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//' = site '//self%fs(best)%name//&
                         &' (pooled at '//self%fs(best)%level//'): Spearman on the '//self%fs(j)%home//' particles '//rstr(rbest)//&
                         &', mask Dice '//rstr(self%fs(j)%dice)
+                    l_chg = .true.
+                    cycle
+                endif
+                rbest = 0.
+                best  = 0
+                do a = 1, size(self%fs)
+                    if( a == j .or. self%fs(a)%home /= self%fs(j)%home ) cycle
+                    if( .not. any(self%fs(a)%st == [F_UP, F_LEVEL, F_COPY]) ) cycle
+                    r = self%fs_rho(self%fs_hd(a), self%fs_hd(j), ev, .false.)
+                    if( r > rbest )then
+                        rbest = r
+                        best  = a
+                    endif
+                end do
+                if( best > 0 .and. rbest >= FGATE )then
+                    self%fs(j)%st     = F_DUP
+                    self%fs(j)%target = self%fs(best)%name
+                    self%fs(j)%rho    = rbest
+                    self%fs(j)%dice   = mask_dice(site_mask(self, j), site_mask(self, best))
+                    write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//' duplicates site '//self%fs(best)%name//&
+                        &' at its node '//self%fs(j)%home//', not pooled: Spearman '//rstr(rbest)//', mask Dice '//&
+                        &rstr(self%fs(j)%dice)
                 else if( len(self%fs(j)%home) == 1 )then
                     self%fs(j)%st = F_LEVEL
                 else
