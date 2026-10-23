@@ -640,11 +640,11 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'oneflex', 'binary', 'One flex per child node', &
         &'A child node skips its mean, whole flex_pca and cheap children: its focus mask comes from the parent''s state maps &
-        &weighted by the child''s particles and its flex mean from the parent''s maps of its states(yes|no){no}', '', &
-        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        &weighted by the child''s particles and its flex mean from the parent''s maps of its states(yes|no){yes}', '', &
+        &.false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'sta0_npeaks', 'num', 'In-plane peaks of the first refinement', &
         &'In-plane peaks per state shift-refined in each node''s first multi-state refinement (stA0), whose maps only feed site &
-        &discovery; 0 keeps refine3D''s default{0}', 'peaks{0}', .false., 0., visibility=UI_VIS_ADVANCED, &
+        &discovery; 0 keeps refine3D''s default{2}', 'peaks{2}', .false., 2., visibility=UI_VIS_ADVANCED, &
         &preserve_default=.true.)
         call hetero_tree%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call hetero_tree%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
