@@ -1,7 +1,7 @@
 !@descr: cross-half split test of the states of a node (SSNR junk screen, docked equal-N pair maps against a stratified shuffle null, cross-half EM, re-test beyond the EM band) and the merge-up of states along a state tree
 module simple_state_mergeup
 !$ use omp_lib
-use simple_defs,          only: dp, logfhandle, OSMPL_PAD_FAC, MAXIMGBATCHSZ, PI, nthr_glob
+use simple_defs,          only: dp, logfhandle, OSMPL_PAD_FAC, MAXIMGBATCHSZ, PI, nthr_glob, KBALPHA
 use simple_type_defs,     only: fplane_type
 use simple_error,         only: simple_exception
 use simple_string,        only: string
@@ -10,6 +10,8 @@ use simple_fileio,        only: fopen, fclose, fileiochk, nlines
 use simple_ori,           only: ori
 use simple_sym,           only: sym
 use simple_image,         only: image
+use simple_projector,     only: projector
+use simple_math,          only: round2even
 use simple_reconstructor, only: reconstructor, exp_samples
 use simple_parameters,    only: parameters
 use simple_builder,       only: builder
@@ -29,7 +31,8 @@ integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000,
 real,    parameter :: SITE_PFLOOR = 1.e-3
 real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
 real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005, MAD_SD = 1.4826
-integer, parameter :: JUNK_ITS = 500, NQ_CON = 81
+integer, parameter :: JUNK_ITS = 500, NQ_CON = 81, NROT_SMEAR = 24
+real,    parameter :: SMEAR_DEG(10) = [0., 1., 2., 3., 4., 6., 8., 11., 15., 20.]
 
 type :: ivec
     integer, allocatable :: v(:)
@@ -1754,7 +1757,7 @@ contains
         real,     allocatable :: rot(:,:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:), res(:), rz(:), wg(:)
         real(dp), allocatable :: epsv(:)
         integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:), asg(:)
-        logical,  allocatable :: ljunk(:), lj(:), lres(:), lid(:)
+        logical,  allocatable :: ljunk(:), lj(:), lres(:), lid(:), lsm(:)
         character(len=:), allocatable :: line
         real(dp) :: mu(3), s2(3), pw(3), gap(3), xm, tc(3), lgc(3)
         real     :: f(0:self%nyq), mv, med, sdr
@@ -1810,7 +1813,7 @@ contains
         v = pack(var, best > 0)
         allocate(ljunk(self%n), source=.false.)
         allocate(asg(self%n), source=0)
-        allocate(lj(3), lid(3), source=.false.)
+        allocate(lj(3), lid(3), lsm(3), source=.false.)
         if( size(x) > 0 )then
             xm = sum(real(x,dp)) / real(size(x),dp)
             mu = real([quantr(x, 0.02), quantr(x, 0.5), quantr(x, 0.5)], dp)
@@ -1893,13 +1896,15 @@ contains
         call fileiochk('junk_screen: cannot write site_junk.txt', ios)
         write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior, '//&
             &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight, '//&
-            &'amplitude component (1 lowest), different structure by the identity test (not applied)'
+            &'amplitude component (1 lowest), different structure by the identity test (not applied), '//&
+            &'different structure after the fitted smear (not applied)'
         do i = 1, self%n
             c = 0
             if( asg(i) > 0 ) c = count(mu < mu(asg(i))) + 1
-            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,2(1X,I0))') &
+            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,3(1X,I0))') &
                 &self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), &
-                &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lid(max(asg(i),1)))
+                &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lid(max(asg(i),1))), &
+                &merge(1, 0, c > 0 .and. lsm(max(asg(i),1)))
         end do
         call fclose(funit)
         where( ljunk ) seeds = 0
@@ -2016,7 +2021,7 @@ contains
             type(ivec)           :: pool(2), offs(2), lmem(2), lcnt(2)
             complex, allocatable :: ml(:,:,:,:), mg(:,:,:,:), ml0(:,:,:,:), mg0(:,:,:,:)
             integer, allocatable :: skey(:), sc(:), st(:), lo(:), go(:)
-            real     :: rd, rn(NSHUF), rm, rs, zc, uc
+            real     :: rd, rn(NSHUF), rm, rs, zc, uc, rsm(0:NSHUF), ssm, usm, csm, s0, u0
             integer  :: i, e, it, kmax, rk
             sc = pack([(i, i=1,self%n)], best > 0)
             st = self%strata(sc)
@@ -2050,8 +2055,10 @@ contains
                     rd  = rdiff(ml, mg, uc)
                     ml0 = ml
                     mg0 = mg
+                    call smear_fit(ml, mg, rsm(0), ssm, usm, csm)
                 else
                     rn(it) = rdiff(ml, mg)
+                    call smear_fit(ml, mg, rsm(it), s0, u0)
                 endif
             end do
             rm = sum(rn) / real(NSHUF)
@@ -2066,6 +2073,15 @@ contains
                 &self%shell_corr(ml0(:,:,:,2), mg0(:,:,:,1), 2, self%kj),dp),3)//' -> '//&
                 &trim(merge('a different structure (identity test, not applied)', &
                 &'the same structure, faint (identity test)         ', identity)))
+            rm     = sum(rsm(1:)) / real(NSHUF)
+            rs     = sqrt(sum((rsm(1:) - rm)**2) / real(NSHUF - 1))
+            lsm(c) = (rsm(0) - rm) / max(rs, 1.e-12) >= HALVES_KSIG
+            call say('component '//int2str(rk)//' after the fitted rotational smear (sigma_theta '//int2str(nint(ssm))//&
+                &' deg; identity smear vs map '//fmtr(real(csm,dp),4)//'): '//fmtr(real(rsm(0),dp),4)//', null '//&
+                &fmtr(real(rm,dp),4)//' +- '//fmtr(real(rs,dp),4)//' (z '//fmtr(real((rsm(0) - rm) / max(rs, 1.e-12),dp),1)//&
+                &'), U '//fmtr(real(usm,dp),4)//'; members at zero contrast '//int2str(count(self%cpj(lmem(1)%v) >= 0.5) + &
+                &count(self%cpj(lmem(2)%v) >= 0.5))//' of '//int2str(size(lmem(1)%v) + size(lmem(2)%v))//' -> '//&
+                &trim(merge('survives the smear', 'explained by it   ', lsm(c)))//' (not applied)')
             if( .not. identity ) return
             do e = 1, 2
                 call self%wimgs(1)%set_ft(.true.)
@@ -2131,6 +2147,70 @@ contains
             call self%wimgs(1)%get_rmat_ptr(rmat)
             env_dot = sum(real(xr,dp) * real(rmat(:self%box,:self%box,:self%box),dp))
         end function env_dot
+
+        subroutine smear_fit( ml, mg, rbest, sbest, ubest, ccheck )
+            complex,        intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
+            real,           intent(out) :: rbest, sbest, ubest
+            real, optional, intent(out) :: ccheck
+            type(projector)      :: vp(2)
+            complex, allocatable :: sm(:,:,:,:)
+            real    :: r, u
+            integer :: e, is, boxpd
+            boxpd = 2 * round2even(KBALPHA * real(self%box / 2))
+            do e = 1, 2
+                call self%wimgs(1)%set_ft(.true.)
+                call self%wimgs(1)%set_cmat(mg(:,:,:,e))
+                call self%wimgs(1)%ifft
+                call vp(e)%new([boxpd,boxpd,boxpd], self%p%smpd_crop)
+                call self%wimgs(1)%pad(vp(e))
+                call vp(e)%fft
+                call vp(e)%expand_cmat()
+            end do
+            allocate(sm(self%nh,self%box,self%box,2))
+            rbest = huge(rbest)
+            sbest = 0.
+            ubest = 0.
+            do is = 1, size(SMEAR_DEG)
+                do e = 1, 2
+                    call smeared(vp(e), smear_rots(SMEAR_DEG(is) * real(PI) / 180.), real(boxpd) / real(self%box), &
+                        &sm(:,:,:,e))
+                end do
+                if( is == 1 .and. present(ccheck) ) ccheck = self%shell_corr(sm(:,:,:,1), mg(:,:,:,1), 2, self%kj)
+                r = rdiff(ml, sm, u)
+                if( r >= rbest ) cycle
+                rbest = r
+                sbest = SMEAR_DEG(is)
+                ubest = u
+            end do
+            do e = 1, 2
+                call vp(e)%kill_expanded
+                call vp(e)%kill
+            end do
+        end subroutine smear_fit
+
+        subroutine smeared( vp, rots, sc, out )
+            class(projector), intent(in)  :: vp
+            real,             intent(in)  :: rots(:,:,:), sc
+            complex,          intent(out) :: out(:,:,:)
+            complex :: acc
+            integer :: hh, kk, ll, j, lg(3)
+            out = cmplx(0.,0.)
+            !$omp parallel do collapse(2) default(shared) private(hh,kk,ll,j,lg,acc) schedule(static) proc_bind(close)
+            do ll = 1, self%box
+                do kk = 1, self%box
+                    do hh = 1, self%nh
+                        if( self%fsh(hh,kk,ll) < 2 .or. self%fsh(hh,kk,ll) > self%kj ) cycle
+                        lg  = [hh - 1, kk - 1 - merge(self%box, 0, kk > self%nyq), ll - 1 - merge(self%box, 0, ll > self%nyq)]
+                        acc = cmplx(0.,0.)
+                        do j = 1, size(rots,3)
+                            acc = acc + vp%interp_fcomp(sc * matmul(real(lg), rots(:,:,j)))
+                        end do
+                        out(hh,kk,ll) = acc / real(size(rots,3))
+                    end do
+                end do
+            end do
+            !$omp end parallel do
+        end subroutine smeared
 
     end subroutine junk_screen
 
@@ -2949,6 +3029,47 @@ contains
             ea  = exp(p(2) + 0.5_dp * p(3) * p(3))
         endif
     end subroutine zl_post
+
+    pure function smear_rots( sig ) result( rots )
+        real, intent(in) :: sig
+        real    :: rots(3,3,NROT_SMEAR), u(3), w(3), t, z, rz, g, a, k(3,3), id(3,3)
+        integer :: j, m, is
+        id      = 0.
+        id(1,1) = 1.
+        id(2,2) = 1.
+        id(3,3) = 1.
+        do j = 1, NROT_SMEAR / 2
+            t  = real(j) - 0.5
+            z  = 1. - 2. * t / real(NROT_SMEAR / 2)
+            rz = sqrt(max(1. - z * z, 0.))
+            g  = real(PI) * (3. - sqrt(5.)) * t
+            u  = [rz * cos(g), rz * sin(g), z]
+            m  = modulo(5 * (j - 1), NROT_SMEAR / 2) + 1
+            a  = sig * chi3_quantile((real(m) - 0.5) / real(NROT_SMEAR / 2))
+            do is = 1, 2
+                w = merge(-1., 1., is == 1) * u
+                k = reshape([0., w(3), -w(2), -w(3), 0., w(1), w(2), -w(1), 0.], [3,3])
+                rots(:,:,2*j-2+is) = id + sin(a) * k + (1. - cos(a)) * matmul(k, k)
+            end do
+        end do
+    end function smear_rots
+
+    pure real function chi3_quantile( p )
+        real, intent(in) :: p
+        real    :: lo, hi, x
+        integer :: it
+        lo = 0.
+        hi = 8.
+        do it = 1, 60
+            x = 0.5 * (lo + hi)
+            if( erf(x / sqrt(2.)) - sqrt(2. / real(PI)) * x * exp(-0.5 * x * x) < p )then
+                lo = x
+            else
+                hi = x
+            endif
+        end do
+        chi3_quantile = 0.5 * (lo + hi)
+    end function chi3_quantile
 
     subroutine sorted_pool( members, skey, kmax, srt, off )
         integer,              intent(in)  :: members(:), skey(:), kmax
