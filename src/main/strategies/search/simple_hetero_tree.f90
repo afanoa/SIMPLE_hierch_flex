@@ -440,6 +440,7 @@ contains
                 call cl%set('projfile',    's.simple')
                 call cl%set('mskdiam',     self%p%mskdiam)
                 call cl%set('pcg_mskfile', mask)
+                call cl%set('pgrp',        trim(self%p%pgrp))
                 call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
                 call self%submit(i, S_SPLIT, cl)
             case(S_SPLIT)
@@ -712,6 +713,7 @@ contains
         call cl%set('infile',   self%root//'/leaf_tree/merge_tree.txt')
         call cl%set('infile2',  md//'/leaf_masks.txt')
         call cl%set('mskdiam',  self%p%mskdiam)
+        call cl%set('pgrp',     trim(self%p%pgrp))
         call cl%set('nthr',     self%p%nthr)
         call self%submit_in(md, cl)
         write(logfhandle,'(A)') '>>> HETERO_TREE merge-up of the '//int2str(nn)//' leaves submitted'
