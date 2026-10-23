@@ -24,7 +24,7 @@ public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles
 private
 #include "simple_local_flags.inc"
 
-integer, parameter :: NSHUF = 20, NVIEW = 40, NEM_ITERS = 3, EM_MIN = 1000, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+integer, parameter :: NSHUF = 20, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
 integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
 real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
@@ -1179,7 +1179,8 @@ contains
             cb  = [(count(mpb == g), g=1,k)]
             do g = 1, k
                 if( .not. l_alive(g) ) cycle
-                if( min(ca(g), cb(g)) < EM_MIN )then
+                ! no size floor: a group leaves only when a half holds none of it; the re-test beyond the EM band decides
+                if( min(ca(g), cb(g)) == 0 .and. count(l_alive) > 1 )then
                     l_alive(g) = .false.
                     write(logfhandle,'(A)') '  group '//int2str(g)//' drained ('//int2str(ca(g))//' / '//int2str(cb(g))//&
                         &' MAP particles) and dropped'
