@@ -504,10 +504,7 @@ contains
             ! match on pinds rather than assuming a contiguous layout, so a part boundary that does
             ! not line up cannot silently misplace rows
             do i = 1, pn
-                hit = locate_2(gpinds, nptcls, ppinds(i))
-                if( hit > 0 )then
-                    if( gpinds(hit) /= ppinds(i) ) hit = 0
-                endif
+                hit = pind_row(gpinds, nptcls, ppinds(i))
                 if( hit < 1 ) THROW_HARD('embed-stats part carries a particle not in the global set')
                 contrast(hit)          = pc(i)
                 resid_energy(hit)      = pre(i)
@@ -556,10 +553,7 @@ contains
         call fileiochk('read_embed_stats_part; payload', io_stat)
         call fclose(funit)
         do i = 1, pn
-            hit = locate_2(gpinds, nptcls, ppinds(i))
-            if( hit > 0 )then
-                if( gpinds(hit) /= ppinds(i) ) hit = 0
-            endif
+            hit = pind_row(gpinds, nptcls, ppinds(i))
             if( hit < 1 ) THROW_HARD('embed-stats part carries a particle not in the global set')
             rows(i) = hit
         end do
@@ -567,5 +561,17 @@ contains
         call del_file(fname)
         call fname%kill
     end subroutine read_embed_stats_part
+
+    ! locate_2 returns n - 1 for the last element, so its exact match can sit one row on
+    pure integer function pind_row( gpinds, n, x ) result( hit )
+        integer, intent(in) :: n, gpinds(n), x
+        hit = locate_2(gpinds, n, x)
+        if( hit < n )then
+            if( gpinds(hit + 1) == x ) hit = hit + 1
+        endif
+        if( hit > 0 )then
+            if( gpinds(hit) /= x ) hit = 0
+        endif
+    end function pind_row
 
 end module simple_flex_pca_embed

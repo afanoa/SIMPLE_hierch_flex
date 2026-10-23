@@ -9,7 +9,7 @@ use simple_parameters,         only: parameters
 use simple_reconstructor,      only: reconstructor
 use simple_image,              only: image
 use simple_flex_pca_rounds,    only: flex_pca_rounds
-use simple_flex_pca_stages,    only: flex_pca_half_of, PCA_STAGE_POLISH, FLEX_FIT_A, FLEX_MOD4_PAIRING
+use simple_flex_pca_stages,    only: flex_pca_half_of, PCA_STAGE_POLISH, PCA_STAGE_EMBED_MERGED, FLEX_FIT_A, FLEX_MOD4_PAIRING
 use simple_flex_pca_pcg,       only: flex_pcg_environment
 use simple_flex_pca_basis,     only: apply_cached_mean_scale, estimate_mean_scale, init_mean_reconstructor, &
     &init_basis_datafree, save_probe_state, load_probe_state, load_probe_basis, COV_PROBE_META
@@ -362,8 +362,13 @@ contains
         type(builder),           intent(inout) :: build
         class(flex_plane_store), intent(inout) :: plane_store
         integer :: s
-        call load_probe_state(model%ncomp, model%eigvals, model%sig2_eff)
-        call load_probe_basis(params, build, model%ncomp, model%basis_recs)
+        if( params%stage == PCA_STAGE_EMBED_MERGED )then
+            call load_probe_state(model%ncomp, model%eigvals, model%sig2_eff, fname='flex_pca_probe_polished.txt')
+            call load_probe_basis(params, build, model%ncomp, model%basis_recs, fprefix='flex_pca_polished_pc')
+        else
+            call load_probe_state(model%ncomp, model%eigvals, model%sig2_eff)
+            call load_probe_basis(params, build, model%ncomp, model%basis_recs)
+        endif
         call embed_latents_with_contrast(params, build, plane_store, model, sel, lat, rounds, stats_only=.true., l_zhalf=.false.)
         call lat%kill
         do s = 1, size(model%basis_recs)

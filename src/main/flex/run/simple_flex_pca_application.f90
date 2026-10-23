@@ -21,12 +21,15 @@ use simple_flex_pca_delivery_3d,     only: deliver_latent_readouts, write_covari
     &write_covariance_eigenvolumes, write_covariance_manifest
 use simple_flex_pca_project_gateway, only: validate_covariance_inputs, load_and_validate_sigma, &
     &write_state_weight_set, write_discrete_state_project, deliver_state_maps, register_embedding_artifact
-use simple_flex_pca_stages,          only: flex_stage_request, PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH
+use simple_flex_pca_stages,          only: flex_stage_request, PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH, &
+    &PCA_STAGE_EMBED_MERGED
 use simple_flex_pca_run_types,       only: flex_run_session
 use simple_flex_pca_pcg,             only: flex_pcg_environment
 use simple_flex_pca_mstep,           only: init_basis_reconstructor
 use simple_flex_pca_basis,           only: estimate_covariance_mean, &
-    &align_basis_to_reference, save_probe_state
+    &align_basis_to_reference, save_probe_state, init_mean_reconstructor, apply_cached_mean_scale
+use simple_fileio,                   only: simple_copy_file
+use simple_syslib,                   only: file_exists
 use simple_flex_pca_embed,           only: embed_latents_with_contrast
 use simple_flex_pca_fit_driver,      only: run_flex_pca_paired, probe_worker_pass, embed_worker_pass
 use simple_image,                    only: image
@@ -180,6 +183,8 @@ contains
             else
                 call estimate_covariance_mean(params, build, self%plane_store, sess%model%mean_rec, &
                     &sess%sel%pinds, sess%sel%nptcls, rounds=rounds)
+                if( rounds%distributed() .and. file_exists(string('flex_pca_mean_scale.bin')) ) &
+                    &call simple_copy_file(string('flex_pca_mean_scale.bin'), string('flex_pca_mean_scale_full.bin'))
                 ! two disjoint mod-4-half fits advanced by one shared loop, merged, axis-weighted
                 ! and polished (combine-then-polish: no restart, frozen rank and axes). The
                 ! full-selection mean built above is not consumed: each fit scales its own.
@@ -240,9 +245,7 @@ contains
     end subroutine resume_from_cache
 
     !> One all-N embedding against the session's basis: the prior precision, the MAP solve with
-    !! per-particle contrast (a qsys round when distributed and the basis is on disk under the plain
-    !! namespace; in-process after the paired merge, whose polished basis the embed workers do not
-    !! load), the cache and the raw readouts.
+    !! per-particle contrast (a qsys round when distributed, on the plain or the merged basis), the cache and the raw readouts.
     subroutine embed_all( self, params, build, rounds )
         class(flex_pca_application), intent(inout) :: self
         class(flex_pca_rounds),      intent(inout) :: rounds
@@ -262,8 +265,16 @@ contains
                 write(logfhandle,'(A)') '>>> FLEX_PCA MERGED EMBED: plain prior; axis reliability is &
                     &the merge match cosine already in eigvals (split-half rho not applied)'
                 call flush(logfhandle)
-                call embed_latents_with_contrast(params, build, self%plane_store, sess%model, &
-                    &sess%sel, sess%latent, rounds, l_zhalf=.true.)
+                if( rounds%distributed() )then
+                    call save_probe_state(sess%model%ncomp, sess%model%eigvals, sess%model%sig2_eff, &
+                        &fname='flex_pca_probe_polished.txt')
+                    call rounds%run_stage(params, flex_stage_request(stage=PCA_STAGE_EMBED_MERGED, label='merged embedding'))
+                    call embed_latents_with_contrast(params, build, self%plane_store, sess%model, &
+                        &sess%sel, sess%latent, rounds, from_parts=.true., l_zhalf=.true.)
+                else
+                    call embed_latents_with_contrast(params, build, self%plane_store, sess%model, &
+                        &sess%sel, sess%latent, rounds, l_zhalf=.true.)
+                endif
             else
                 write(logfhandle,'(A,ES12.4,A,ES12.4)') '>>> FLEX_PCA covariance eigenvalues: max=', &
                     &maxval(sess%model%eigvals),' min=',minval(sess%model%eigvals)
@@ -475,12 +486,17 @@ contains
             &build, sel%pinds, sel%nptcls, rounds=rounds)
         call load_and_validate_sigma(params, build, cline, sigma_loaded, rounds=rounds)
         select case(params%stage)
-            case(PCA_STAGE_PROBE, PCA_STAGE_POLISH, PCA_STAGE_EMBED)
+            case(PCA_STAGE_PROBE, PCA_STAGE_POLISH, PCA_STAGE_EMBED, PCA_STAGE_EMBED_MERGED)
                 call self%plane_store%adopt_cache(params, build, sel%pinds, sel%nptcls)
                 ! the mean's scale comes from the master's cache
-                call estimate_covariance_mean(params, build, self%plane_store, model%mean_rec, &
-                    &sel%pinds, sel%nptcls, rounds=rounds)
-                if( params%stage == PCA_STAGE_EMBED )then
+                if( params%stage == PCA_STAGE_EMBED_MERGED )then
+                    call init_mean_reconstructor(params, build, model%mean_rec)
+                    call apply_cached_mean_scale(params, model%mean_rec, cache_fname='flex_pca_mean_scale_full.bin')
+                else
+                    call estimate_covariance_mean(params, build, self%plane_store, model%mean_rec, &
+                        &sel%pinds, sel%nptcls, rounds=rounds)
+                endif
+                if( params%stage == PCA_STAGE_EMBED .or. params%stage == PCA_STAGE_EMBED_MERGED )then
                     call embed_worker_pass(params, build, self%plane_store, model, sel, rounds=rounds)
                 else
                     if( .not. allocated(self%pcg_env) ) allocate(self%pcg_env)

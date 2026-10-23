@@ -11,7 +11,7 @@ implicit none
 private
 
 public :: flex_stage_request
-public :: PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH
+public :: PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH, PCA_STAGE_EMBED_MERGED
 public :: FLEX_FIT_ALL, FLEX_FIT_A, FLEX_FIT_B
 public :: FLEX_MOD4_PAIRING
 public :: flex_pca_half_of
@@ -25,6 +25,7 @@ integer, parameter :: PCA_STAGE_PROBE  = 3
 ! the merged basis under the polished namespace. A stage, not a string stamp: the stage says what
 ! to compute and which basis namespace to load.
 integer, parameter :: PCA_STAGE_POLISH = 4
+integer, parameter :: PCA_STAGE_EMBED_MERGED = 5
 
 ! Which fit a round serves, carried to the worker in params%pcafit beside the stage: the stage
 ! says what to compute, this says over which particles.
