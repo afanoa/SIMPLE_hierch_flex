@@ -7,7 +7,7 @@ use simple_builder,            only: builder
 use simple_eul_prob_tab,       only: eul_prob_tab
 use simple_eul_prob_tab_utils, only: build_pind_lookup, calc_athres, eulprob_dist_switch, &
     &read_seed_shift_table, write_seed_shift_table, record_seed_shift, sample_likelihood_dist, prob_candidate, &
-    &prob_candidate_buffer, prob_candidate_store, prob_dense_entry, prob_refined_entry
+    &prob_candidate_buffer, prob_candidate_store, prob_dense_entry, prob_refined_entry, posterior_temperature
 use simple_decay_funs,         only: extremal_decay
 use simple_pftc_shsrch_grad,   only: pftc_shsrch_grad, shift_ptcl2ref, shift_ref2ptcl
 use simple_polarft_calc,       only: SHERRSQ
@@ -28,6 +28,7 @@ type, extends(eul_prob_tab) :: eul_prob_tab_neigh
     type(prob_candidate_buffer), allocatable :: candidate_buffers(:) !< per thread, flushed to the part file
     integer,        allocatable :: candidate_fill_counts(:)
     integer,        allocatable :: cand_counts(:)                    !< candidates written per particle (part file)
+    real(dp),       allocatable :: wsqsums(:)
     integer(int64)              :: table_nnz     = 0_int64
     integer                     :: table_nchunks = 0
     logical                     :: l_direct_stoch_neigh = .false.
@@ -43,6 +44,7 @@ contains
     procedure :: ref_assign    => ref_assign_neigh
     procedure :: kill          => kill_neigh
     procedure :: read_tabs_to_glob
+    procedure :: write_state_evidence
     procedure, private :: read_sparse_tab_to_glob
 end type eul_prob_tab_neigh
 
@@ -88,6 +90,7 @@ contains
         call self%kill
         call self%eul_prob_tab%new_worker(params,build,pinds)
         allocate(self%candidate_buffers(nthr_glob))
+        allocate(self%wsqsums(self%nptcls), source=0._dp)
     end subroutine new_neigh_worker
 
     subroutine new_neigh( self, params, build, pinds )
@@ -132,6 +135,7 @@ contains
     subroutine fill_tab_neigh_range( self, i_first, i_last )
         class(eul_prob_tab_neigh), intent(inout) :: self
         integer,                   intent(in)    :: i_first, i_last
+        integer :: i
         ! Search paths
         select case(trim(self%p_ptr%prob_neigh_mode))
             case('shc','snhc')
@@ -143,6 +147,11 @@ contains
             case DEFAULT
                 THROW_HARD('simple_eul_prob_tab_neigh::fill_tab_neigh_range; unsupported prob_neigh_mode')
         end select
+        if( allocated(self%wsqsums) )then
+            do i = max(1, i_first), min(self%nptcls, i_last)
+                self%wsqsums(i) = self%b_ptr%pftc%wsqsum_ptcl_now(self%pinds(i))
+            enddo
+        endif
         if( self%table_is_open ) call self%flush_candidate_buffers
     end subroutine fill_tab_neigh_range
 
@@ -1210,7 +1219,9 @@ contains
     subroutine write_tab( self, binfname )
         class(eul_prob_tab_neigh), intent(inout) :: self
         class(string),             intent(in)    :: binfname
+        type(string)   :: fname
         integer(int64) :: file_header(4), addr
+        integer        :: funit, io_stat
         if( .not. self%table_is_open ) call self%begin_write(binfname)
         call self%flush_candidate_buffers
         ! a partition without particles writes a table without candidates
@@ -1228,6 +1239,14 @@ contains
         self%table_unit    = -1
         self%table_is_open = .false.
         self%table_addr    = 1
+        if( allocated(self%wsqsums) )then
+            fname = string(WSQSUM_FBODY)//int2str_pad(self%p_ptr%part,self%p_ptr%numlen)//'.dat'
+            call fopen(funit,fname,access='STREAM',action='WRITE',status='REPLACE',iostat=io_stat)
+            call fileiochk('simple_eul_prob_tab_neigh; write_tab; file: '//fname%to_char(),io_stat)
+            write(funit) self%nptcls, self%pinds, self%wsqsums
+            call fclose(funit)
+            call fname%kill
+        endif
     end subroutine write_tab
 
     ! Reads one partition candidate stream into the compact global store.
@@ -1362,6 +1381,90 @@ contains
         enddo
         deallocate(self%candidate_fill_counts)
     end subroutine read_tabs_to_glob
+
+    ! Per particle the log-sum over each state's candidates of exp(-T (dist - dist_min)) in nats, T the euclid likelihood's
+    ! scale (posterior_temperature) times the share of the box_crop grid the alignment's soft mask keeps
+    subroutine write_state_evidence( self, nparts, numlen )
+        class(eul_prob_tab_neigh), intent(in) :: self
+        integer,                   intent(in) :: nparts, numlen
+        real(dp), allocatable :: wsq(:), wsq_loc(:), z(:)
+        real,     allocatable :: ev(:)
+        integer,  allocatable :: pinds_loc(:), pind2glob(:)
+        logical,  allocatable :: l_wsq(:)
+        type(string) :: fname
+        real(dp) :: fmsk, temp, dmin, a
+        real     :: e, c1, c2
+        integer  :: ipart, funit, io_stat, nloc, max_pind, i, i_glob, j, k, c, s, n, minlen
+        if( self%p_ptr%cc_objfun /= OBJFUN_EUCLID ) return
+        allocate(wsq(self%nptcls), source=0._dp)
+        allocate(l_wsq(self%nptcls), source=.false.)
+        do ipart = 1, nparts
+            fname = string(WSQSUM_FBODY)//int2str_pad(ipart,numlen)//'.dat'
+            if( .not. file_exists(fname) )then
+                write(logfhandle,'(A)') '>>> STATE EVIDENCE not written: '//fname%to_char()//' is missing'
+                return
+            endif
+            call fopen(funit,fname,access='STREAM',action='READ',status='OLD',iostat=io_stat)
+            call fileiochk('simple_eul_prob_tab_neigh; write_state_evidence; file: '//fname%to_char(),io_stat)
+            read(funit) nloc
+            allocate(pinds_loc(nloc), wsq_loc(nloc))
+            if( nloc > 0 ) read(funit) pinds_loc, wsq_loc
+            call fclose(funit)
+            call build_pind_lookup(self%pinds,pinds_loc,pind2glob,max_pind)
+            do i = 1, nloc
+                if( pinds_loc(i) < 1 .or. pinds_loc(i) > max_pind ) cycle
+                i_glob = pind2glob(pinds_loc(i))
+                if( i_glob < 1 ) cycle
+                wsq(i_glob)   = wsq_loc(i)
+                l_wsq(i_glob) = .true.
+            enddo
+            deallocate(pinds_loc, wsq_loc, pind2glob)
+        enddo
+        if( .not. all(l_wsq) )then
+            write(logfhandle,'(A)') '>>> STATE EVIDENCE not written: table particles without a weighted power'
+            return
+        endif
+        n      = self%p_ptr%box_crop
+        minlen = min(nint(2. * (self%p_ptr%msk_crop + COSMSKHALFWIDTH)), n)
+        fmsk   = 0._dp
+        do j = 1, n
+            c1 = -0.5 * real(n) + real(j - 1)
+            do k = 1, n
+                c2   = -0.5 * real(n) + real(k - 1)
+                e    = cosedge_r2_2d(c1 * c1 + c2 * c2, minlen, self%p_ptr%msk_crop)
+                fmsk = fmsk + real(e, dp)**2
+            enddo
+        enddo
+        fmsk = fmsk / real(n, dp)**2
+        allocate(z(self%p_ptr%nstates), ev(self%p_ptr%nstates))
+        call fopen(funit,string(STATE_EVIDENCE_FNAME),status='replace',action='write',iostat=io_stat)
+        call fileiochk('simple_eul_prob_tab_neigh; write_state_evidence; file: '//STATE_EVIDENCE_FNAME,io_stat)
+        write(funit,'(A,F8.5,A,I0,A)') '# mask_share ', fmsk, ' pftsz ', self%p_ptr%pftsz, &
+            &'; iptcl state T evidence(1..nstates) in nats (-1e9: no candidate)'
+        do i = 1, self%nptcls
+            temp = real(posterior_temperature(wsq(i), self%p_ptr%pftsz), dp) * fmsk
+            dmin = huge(1._dp)
+            do c = int(self%candidate_store%offsets(i)), int(self%candidate_store%offsets(i+1)) - 1
+                if( self%candidate_store%candidates(c)%iref < 1 .or. self%candidate_store%candidates(c)%inpl < 1 ) cycle
+                if( self%candidate_store%candidates(c)%dist >= 0.5 * huge(1.) ) cycle
+                dmin = min(dmin, real(self%candidate_store%candidates(c)%dist, dp))
+            enddo
+            z = 0._dp
+            do c = int(self%candidate_store%offsets(i)), int(self%candidate_store%offsets(i+1)) - 1
+                if( self%candidate_store%candidates(c)%iref < 1 .or. self%candidate_store%candidates(c)%inpl < 1 ) cycle
+                if( self%candidate_store%candidates(c)%dist >= 0.5 * huge(1.) ) cycle
+                s = (self%candidate_store%candidates(c)%iref - 1) / self%p_ptr%nspace + 1
+                if( s > self%p_ptr%nstates ) cycle
+                a = temp * (real(self%candidate_store%candidates(c)%dist, dp) - dmin)
+                if( a < 700._dp ) z(s) = z(s) + exp(-a)
+            enddo
+            ev = -1.e9
+            where( z > 0._dp ) ev = real(log(z))
+            write(funit,'(I0,1X,I0,1X,ES12.5,*(1X,F0.3))') self%pinds(i), self%assgn_map(i)%istate, temp, ev
+        enddo
+        call fclose(funit)
+        call fname%kill
+    end subroutine write_state_evidence
 
     ! COMMON STOCHASTIC/SUBSPACE ROUTINES
 
@@ -1564,6 +1667,7 @@ contains
             deallocate(self%candidate_buffers)
         endif
         if( allocated(self%cand_counts) ) deallocate(self%cand_counts)
+        if( allocated(self%wsqsums)     ) deallocate(self%wsqsums)
         self%table_nnz     = 0
         self%table_nchunks = 0
         call self%candidate_store%kill

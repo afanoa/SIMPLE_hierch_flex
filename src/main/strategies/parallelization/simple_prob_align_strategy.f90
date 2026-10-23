@@ -232,6 +232,7 @@ contains
         ! write the iptcl->(iref,istate) assignment
         fname = string(ASSIGNMENT_FBODY)//'.dat'
         call eulprob_obj_glob_neigh%write_assignment(fname)
+        call eulprob_obj_glob_neigh%write_state_evidence(params%nparts, params%numlen)
         if( L_BENCH_GLOB ) rt_write = toc(t)
         call eulprob_obj_glob_neigh%kill
         ! cleanup
@@ -378,7 +379,10 @@ contains
             do ipart = 1, params%nparts
                 fname = string(DIST_FBODY)//'_neigh_'//int2str_pad(ipart,params%numlen)//'.dat'
                 call del_file(fname)
+                fname = string(WSQSUM_FBODY)//int2str_pad(ipart,params%numlen)//'.dat'
+                call del_file(fname)
             end do
+            call del_file(string(STATE_EVIDENCE_FNAME))
         else
             call del_files(DIST_FBODY, params%nparts, ext='.dat', numlen=params%numlen)
         endif
