@@ -57,6 +57,7 @@ type :: state_mergeup
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
     real,    allocatable :: nv(:), con(:), cam(:), cse(:), cpj(:)
+    real(dp), allocatable :: cb(:,:), cs(:,:)
     real(dp) :: cfit(3) = 0._dp
     integer :: nj = 0, kj = 0, nfit = 0
   contains
@@ -1646,6 +1647,8 @@ contains
             cw(self%jsh(j)) = cw(self%jsh(j)) + self%jw(j)
         end do
         if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
+        if( allocated(self%cb)  ) deallocate(self%cb, self%cs)
+        allocate(self%cb(self%kj,2), self%cs(self%kj,2), source=0._dp)
         allocate(self%con(self%n), source=1.)
         allocate(self%cam(self%n), self%cse(self%n), self%cpj(self%n), source=0.)
         allocate(ok(self%n), source=.false.)
@@ -1666,6 +1669,8 @@ contains
                 sc = sc + real(cw,dp)
             end do
             s2 = max(sr / max(sc, 1._dp), 1.e-12_dp)
+            self%cb(:,e) = beta
+            self%cs(:,e) = s2
             do ii = 1, size(hx(e)%v)
                 i   = hx(e)%v(ii)
                 den = sum(beta * beta * b0(:,i) / s2)
@@ -2025,7 +2030,10 @@ contains
             complex, allocatable :: ml(:,:,:,:), mg(:,:,:,:), ml0(:,:,:,:), mg0(:,:,:,:)
             integer, allocatable :: skey(:), sc(:), st(:), lo(:), go(:)
             real     :: rd, rn(NSHUF), rm, rs, zc, uc, rsm(0:NSHUF), ssm, usm, csm, s0, u0
-            integer  :: i, e, it, kmax, rk
+            complex, allocatable :: d1(:,:,:), d2(:,:,:)
+            real,    allocatable :: egap(:)
+            real(dp) :: tj, er, ef, eg
+            integer  :: i, e, it, kmax, rk, n
             sc = pack([(i, i=1,self%n)], best > 0)
             st = self%strata(sc)
             allocate(skey(self%n), source=0)
@@ -2085,6 +2093,29 @@ contains
                 &'), U '//fmtr(real(usm,dp),4)//'; members at zero contrast '//int2str(count(self%cpj(lmem(1)%v) >= 0.5) + &
                 &count(self%cpj(lmem(2)%v) >= 0.5))//' of '//int2str(size(lmem(1)%v) + size(lmem(2)%v))//' -> '//&
                 &trim(merge('survives the smear', 'explained by it   ', lsm(c)))//' (not applied)')
+            call resid_maps(ml0, mg0, d1, d2)
+            allocate(egap(size(lmem(1)%v) + size(lmem(2)%v)))
+            n = 0
+            do e = 1, 2
+                do i = 1, size(lmem(e)%v)
+                    n = n + 1
+                    egap(n) = member_gap(lmem(e)%v(i), d1, d2)
+                end do
+            end do
+            tj = log((1._dp - pw(c)) / max(pw(c), 1.e-12_dp))
+            er = 0._dp
+            ef = 0._dp
+            do i = 1, n
+                eg = max(real(egap(i),dp), 1.e-12_dp)
+                er = er + 0.5_dp * erfc((tj - eg) / sqrt(4._dp * eg)) / real(n,dp)
+                ef = ef + 0.5_dp * erfc((tj + eg) / sqrt(4._dp * eg)) / real(n,dp)
+            end do
+            call say('component '//int2str(rk)//' per-member evidence gap, its own map vs the matched genuine map at the '//&
+                &'member''s pose, CTF and noise and the component''s mean amplitude (nats): median '//&
+                &fmtr(real(quantr(egap, 0.5),dp),3)//' (25-75 % '//fmtr(real(quantr(egap, 0.25),dp),3)//' - '//&
+                &fmtr(real(quantr(egap, 0.75),dp),3)//') against log((1 - pi) / pi) '//fmtr(tj,2)//' (pi '//fmtr(pw(c),3)//&
+                &'); members above it '//fmtr(real(count(egap >= real(tj)),dp) / real(n,dp),3)//', expected recall if junk '//&
+                &fmtr(er,3)//', expected flag rate if genuine '//fmtr(ef,4)//' (report only)')
             if( .not. identity ) return
             do e = 1, 2
                 call self%wimgs(1)%set_ft(.true.)
@@ -2099,6 +2130,14 @@ contains
             complex,        intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
             real, optional, intent(out) :: u
             complex, allocatable :: d1(:,:,:), d2(:,:,:)
+            call resid_maps(ml, mg, d1, d2)
+            rdiff = self%shell_corr(d1, d2, 2, self%kj)
+            if( present(u) ) u = real(env_dot(d1, d2) / max(env_dot(ml(:,:,:,1), ml(:,:,:,2)), 1.e-30_dp))
+        end function rdiff
+
+        subroutine resid_maps( ml, mg, d1, d2 )
+            complex,              intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
+            complex, allocatable, intent(out) :: d1(:,:,:), d2(:,:,:)
             real(dp) :: num(0:self%nyq), den(0:self%nyq), al(0:self%nyq)
             integer  :: h, k, l, sh
             num = 0._dp
@@ -2126,9 +2165,27 @@ contains
                     end do
                 end do
             end do
-            rdiff = self%shell_corr(d1, d2, 2, self%kj)
-            if( present(u) ) u = real(env_dot(d1, d2) / max(env_dot(ml(:,:,:,1), ml(:,:,:,2)), 1.e-30_dp))
-        end function rdiff
+        end subroutine resid_maps
+
+        real function member_gap( i, d1, d2 )
+            integer, intent(in) :: i
+            complex, intent(in) :: d1(:,:,:), d2(:,:,:)
+            real(dp) :: num, w
+            integer  :: j, is, sh, e, c1(3), c2(3)
+            logical  :: cnj
+            e   = self%eo(i) + 1
+            num = 0._dp
+            do j = 1, self%nj
+                sh = self%jsh(j)
+                w  = real(self%jw(j) * self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)),dp) * self%cb(sh,e)**2 / self%cs(sh,e)
+                do is = 1, size(rot,3)
+                    call plane_cell(rot(:,:,is,i), self%jhk(1,j), self%jhk(2,j), self%nyq, self%box, c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    num = num + w * real(d1(c1(1),c1(2),c1(3)) * conjg(d2(c1(1),c1(2),c1(3))), dp)
+                end do
+            end do
+            member_gap = real(0.5_dp * max(num, 0._dp) / (real(size(rot,3),dp) * real(self%nv(i),dp)))
+        end function member_gap
 
         real(dp) function env_dot( x, y )
             complex, intent(in)  :: x(:,:,:), y(:,:,:)
@@ -2962,6 +3019,7 @@ contains
         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
         if( allocated(self%nv)  ) deallocate(self%nv)
         if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
+        if( allocated(self%cb)  ) deallocate(self%cb, self%cs)
         self%cfit = 0._dp
         self%nfit = 0
         if( allocated(self%msk3) ) deallocate(self%msk3, self%fsh, self%fw)
