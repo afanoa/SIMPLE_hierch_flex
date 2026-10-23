@@ -343,7 +343,7 @@ contains
                 call self%submit(i, S_RECB0, cl)
             case(S_RECB0)
                 st   = project_states(d//'/recB0/b.simple')
-                pres = present_labels(st)
+                pres = with_maps(d//'/recB0', present_labels(st))
                 allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
                 do j = 1, size(pres)
                     evens(j) = d//'/recB0/'//hv(pres(j), 'even')
@@ -395,18 +395,20 @@ contains
                 call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
                 call self%submit(i, S_STAGEA, cl)
             case(S_STAGEA)
-                ks = maxval(project_states(d//'/stageA/r.simple'))
+                ch = compact(project_states(d//'/stageA/r.simple'))
+                ks = maxval(ch)
                 call simple_mkdir(string(d//'/recB'))
-                call simple_copy_file(string(d//'/stageA/r.simple'), string(d//'/recB/b.simple'))
+                call write_states(d//'/stageA/r.simple', d//'/recB/b.simple', ch)
                 call cl%set('prg',      'reconstruct3D')
                 call cl%set('projfile', 'b.simple')
                 call cl%set('nstates',  ks)
                 call common_keys(self, cl)
                 call self%submit(i, S_RECB, cl)
             case(S_RECB)
-                ks = maxval(project_states(d//'/stageA/r.simple'))
+                ch = compact(project_states(d//'/stageA/r.simple'))
+                ks = maxval(ch)
                 call simple_mkdir(string(d//'/stageB'))
-                call simple_copy_file(string(d//'/stageA/r.simple'), string(d//'/stageB/b.simple'))
+                call write_states(d//'/stageA/r.simple', d//'/stageB/b.simple', ch)
                 call cl%set('prg',      'refine3D')
                 call cl%set('projfile', 'b.simple')
                 call cl%set('nstates',  ks)
@@ -416,8 +418,16 @@ contains
                 call refine_keys(self, cl, LPB, ITB, NSPB, BOXB, mask)
                 call self%submit(i, S_STAGEB, cl)
             case(S_STAGEB)
+                st   = project_states(d//'/stageB/b.simple')
+                pres = present_labels(st)
+                if( .not. all([(file_exists(string(d//'/stageB/'//hv(pres(j), 'even'))) .and. &
+                    &file_exists(string(d//'/stageB/'//hv(pres(j), 'odd'))) .and. &
+                    &file_exists(string(d//'/stageB/recvol_state'//pad2(pres(j))//'.mrc')), j=1,size(pres))]) )then
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': stage B maps missing, node stopped'
+                    self%nodes(i)%step = S_FAILED
+                    return
+                endif
                 call simple_mkdir(string(d//'/split'))
-                st = project_states(d//'/stageB/b.simple')
                 if( maxval([0, st]) < 2 )then
                     call write_ints(d//'/split/split_children.txt', merge(1, 0, st > 0))
                     call write_ints(d//'/split/split_junk.txt', [integer ::])
@@ -1238,7 +1248,11 @@ contains
                 endif
                 if( nrun >= max(1, self%p%nodepar) ) return
                 st   = project_states(wd//'/refine_rec/c.simple')
-                pres = present_labels(st)
+                pres = with_maps(wd//'/refine_rec', present_labels(st))
+                if( size(pres) < 2 )then
+                    call finish_ref(.false., 'its class maps FAILED')
+                    return
+                endif
                 allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
                 do s = 1, size(pres)
                     evens(s) = wd//'/refine_rec/'//hv(pres(s), 'even')
@@ -1397,7 +1411,11 @@ contains
                 endif
                 if( nrun >= max(1, self%p%nodepar) ) return
                 st   = project_states(wd//'/pre_rec/c.simple')
-                pres = present_labels(st)
+                pres = with_maps(wd//'/pre_rec', present_labels(st))
+                if( size(pres) < 2 )then
+                    call reject('its class maps FAILED')
+                    return
+                endif
                 allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
                 do s = 1, size(pres)
                     evens(s) = wd//'/pre_rec/'//hv(pres(s), 'even')
@@ -2058,6 +2076,26 @@ contains
         call tree%kill
         call tree_wiener_maps(evens, odds, counts, names, ljunk, steps, self%p%mskdiam, LPD, md)
     end subroutine final_maps
+
+    function with_maps( dir, pres ) result( kept )
+        character(len=*), intent(in) :: dir
+        integer,          intent(in) :: pres(:)
+        integer, allocatable :: kept(:)
+        integer :: j
+        kept = pack(pres, [(file_exists(string(dir//'/'//hv(pres(j), 'even'))) .and. &
+            &file_exists(string(dir//'/'//hv(pres(j), 'odd'))), j=1,size(pres))])
+    end function with_maps
+
+    function compact( st ) result( ch )
+        integer, intent(in)  :: st(:)
+        integer, allocatable :: ch(:), pres(:)
+        integer :: j
+        pres = present_labels(st)
+        allocate(ch(size(st)), source=0)
+        do j = 1, size(pres)
+            where( st == pres(j) ) ch = j
+        end do
+    end function compact
 
     subroutine node_project( self, i )
         class(hetero_tree), intent(inout) :: self
