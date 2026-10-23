@@ -8,6 +8,7 @@ use simple_string,       only: string
 use simple_string_utils, only: int2str
 use simple_fileio,       only: fopen, fclose, fileiochk, nlines
 use simple_ori,          only: ori
+use simple_sym,          only: sym
 use simple_image,        only: image
 use simple_parameters,   only: parameters
 use simple_builder,      only: builder
@@ -36,11 +37,11 @@ type :: landscape_sample
     type(fplane_type), allocatable :: fpls(:)
     type(image) :: wimg
     integer, allocatable :: rows(:), eo(:), st(:), vbin(:), hk(:,:), psh(:), ppar(:), fsh(:,:,:)
-    real,    allocatable :: rot(:,:,:), dfm(:), pw(:), msk3(:,:,:), fw(:,:,:), sc(:,:,:), ppn(:), f2(:,:,:), cw(:,:), nw(:,:,:)
+    real,    allocatable :: rot(:,:,:,:), dfm(:), pw(:), msk3(:,:,:), fw(:,:,:), sc(:,:,:), ppn(:), f2(:,:,:), cw(:,:), nw(:,:,:)
     real(dp),allocatable :: fqh(:), fqk(:), epsv(:)
     complex, allocatable :: refs(:,:,:,:,:)
     real    :: pfrac(-1:1) = 1.
-    integer :: n = 0, box = 0, nh = 0, nyq = 0, kb = 0, kres = 0, np = 0, nst = 0, nrows = 0
+    integer :: n = 0, box = 0, nh = 0, nyq = 0, kb = 0, kres = 0, np = 0, nst = 0, nrows = 0, nsym = 1
     logical :: l_exists = .false.
   contains
     procedure :: new
@@ -79,8 +80,9 @@ contains
         type(ptcl_read_session) :: reads
         type(image) :: mskimg
         type(ori)   :: o
-        real    :: dirs(3,NVIEW), v(3), t, z, rz, g, e1, e2, pws(-1:1)
-        integer :: i, j, ip, h, k, l, r2, b1, b2, ie, sh, q, c1(3), c2(3), cnt
+        type(sym)   :: se
+        real    :: dirs(3,NVIEW), v(3), t, z, rz, g, e1, e2, pws(-1:1), es(3)
+        integer :: i, j, ip, h, k, l, r2, b1, b2, ie, sh, q, c1(3), c2(3), cnt, is
         logical :: cnj
         call self%kill
         self%p => params
@@ -96,7 +98,9 @@ contains
         self%nyq  = self%box / 2
         self%kb   = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / EM_LIM_LS))
         self%kres = nint(real(self%box) * params%smpd_crop / FSC_RES)
-        allocate(self%eo(self%n), self%st(self%n), self%vbin(self%n), self%rot(3,3,self%n), self%dfm(self%n))
+        call se%new(trim(params%pgrp))
+        self%nsym = se%get_nsym()
+        allocate(self%eo(self%n), self%st(self%n), self%vbin(self%n), self%rot(3,3,self%nsym,self%n), self%dfm(self%n))
         do i = 1, NVIEW
             t  = real(i-1) + 0.5
             z  = 1. - 2. * t / real(NVIEW)
@@ -111,13 +115,19 @@ contains
             self%st(i)  = build%spproj_field%get_state(ip)
             self%dfm(i) = 0.5 * (build%spproj_field%get_dfx(ip) + build%spproj_field%get_dfy(ip))
             call o%set_euler(build%spproj_field%get_euler(ip))
-            self%rot(:,:,i) = o%get_mat()
+            self%rot(:,:,1,i) = o%get_mat()
+            do is = 2, self%nsym
+                call se%apply(build%spproj_field%get_euler(ip), is, es)
+                call o%set_euler(es)
+                self%rot(:,:,is,i) = o%get_mat()
+            end do
             e1 = build%spproj_field%e1get(ip) * PI / 180.
             e2 = build%spproj_field%e2get(ip) * PI / 180.
             v  = [sin(e2)*cos(e1), sin(e2)*sin(e1), cos(e2)]
             self%vbin(i) = maxloc(matmul(v, dirs), dim=1)
         end do
         call o%kill
+        call se%kill
         self%nst = maxval(self%st)
         write(logfhandle,'(A)') '>>> LANDSCAPE_SAMPLE loading '//int2str(self%n)//' particles of '//int2str(self%nst)//&
             &' states at box_crop '//int2str(self%box)//' (Nyquist '//fmtr(real(2.*params%smpd_crop,dp),1)//' A)'
@@ -203,20 +213,22 @@ contains
             self%fqk(k) = real(k-1-merge(self%box,0,k>self%nyq),dp) / real(params%box,dp)
         end do
         allocate(den(self%nh,self%box,self%box), source=0._dp)
-        !$omp parallel do default(shared) private(i,j,c1,c2,cnj) schedule(static) reduction(+:den) proc_bind(close)
+        !$omp parallel do default(shared) private(i,j,is,c1,c2,cnj) schedule(static) reduction(+:den) proc_bind(close)
         do i = 1, self%n
             do j = 1, self%np
-                call self%cell_of(i, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
-                if( c1(1) == 0 ) cycle
-                if( c2(1) > 0 )then
-                    den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * self%pw(j) * &
-                        &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
-                    den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * self%pw(j) * &
-                        &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
-                else
-                    den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + self%pw(j) * &
-                        &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
-                endif
+                do is = 1, self%nsym
+                    call self%cell_of(i, is, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    if( c2(1) > 0 )then
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * self%pw(j) * &
+                            &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * self%pw(j) * &
+                            &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
+                    else
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + self%pw(j) * &
+                            &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j))
+                    endif
+                end do
             end do
         end do
         !$omp end parallel do
@@ -407,13 +419,14 @@ contains
         real(dp) :: sa(0:self%nyq), sb(0:self%nyq), sf(0:self%nyq), scn(0:self%nyq), beta(0:self%nyq), sig2(0:self%nyq)
         real(dp) :: ao(0:self%nyq), bo(0:self%nyq), s(0:1), x
         complex  :: pv, dv
-        integer  :: i, j, g, ih, sh, q, c1(3), c2(3)
+        real     :: ws
+        integer  :: i, j, g, ih, sh, q, c1(3), c2(3), is
         logical  :: cnj
         sa  = 0._dp
         sb  = 0._dp
         sf  = 0._dp
         scn = 0._dp
-        !$omp parallel do default(shared) private(i,j,g,ih,sh,c1,c2,cnj,pv,dv) schedule(static) &
+        !$omp parallel do default(shared) private(i,j,g,ih,sh,c1,c2,cnj,pv,dv,ws,is) schedule(static) &
         !$omp& reduction(+:sa,sb,sf,scn) proc_bind(close)
         do i = 1, self%n
             g  = self%st(i)
@@ -421,13 +434,16 @@ contains
             do j = 1, self%np
                 sh = self%psh(j)
                 if( sh < 2 .or. sh > self%kb ) cycle
-                call self%cell_of(i, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
-                if( c1(1) == 0 ) cycle
-                pv = self%refs(c1(1),c1(2),c1(3),ih,g)
-                if( cnj ) pv = conjg(pv)
                 dv = self%fpls(i)%cmplx_plane(self%hk(1,j),self%hk(2,j))
-                sa(sh) = sa(sh) + self%pw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
-                sb(sh) = sb(sh) + self%pw(j) * self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2
+                ws = self%pw(j) / real(self%nsym)
+                do is = 1, self%nsym
+                    call self%cell_of(i, is, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    pv = self%refs(c1(1),c1(2),c1(3),ih,g)
+                    if( cnj ) pv = conjg(pv)
+                    sa(sh) = sa(sh) + ws * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                    sb(sh) = sb(sh) + ws * self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2
+                end do
             end do
             sf(2:self%kb)  = sf(2:self%kb)  + real(self%f2(2:self%kb,0,i) + self%f2(2:self%kb,1,i), dp)
             scn(2:self%kb) = scn(2:self%kb) + real(self%cw(2:self%kb,0) + self%cw(2:self%kb,1), dp)
@@ -436,7 +452,8 @@ contains
         beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 4._dp)
         sig2 = max((sf - 2._dp*beta*sa + beta*beta*sb) / max(scn, 1._dp), 1.e-12_dp)
         allocate(self%sc(0:1,self%nst,self%n), self%ppn(self%n), source=0.)
-        !$omp parallel do default(shared) private(i,j,g,ih,sh,q,c1,c2,cnj,pv,dv,s,ao,bo,x) schedule(static) proc_bind(close)
+        !$omp parallel do default(shared) private(i,j,g,ih,sh,q,c1,c2,cnj,pv,dv,s,ao,bo,x,ws,is) schedule(static) &
+        !$omp& proc_bind(close)
         do i = 1, self%n
             ih = 2 - self%eo(i)
             do g = 1, self%nst
@@ -446,17 +463,20 @@ contains
                 do j = 1, self%np
                     sh = self%psh(j)
                     if( sh < 2 .or. sh > self%kb ) cycle
-                    call self%cell_of(i, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    pv = self%refs(c1(1),c1(2),c1(3),ih,g)
-                    if( cnj ) pv = conjg(pv)
                     dv = self%fpls(i)%cmplx_plane(self%hk(1,j),self%hk(2,j))
                     q  = self%ppar(j)
-                    x  = real(self%pw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv)), dp)
-                    ao(sh) = ao(sh) + x
-                    bo(sh) = bo(sh) + real(self%pw(j) * self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2, dp)
-                    s(q)   = s(q) + 0.5_dp * (2._dp * beta(sh) * x - beta(sh)**2 * real(self%pw(j) * &
-                        &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2, dp)) / sig2(sh)
+                    ws = self%pw(j) / real(self%nsym)
+                    do is = 1, self%nsym
+                        call self%cell_of(i, is, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
+                        if( c1(1) == 0 ) cycle
+                        pv = self%refs(c1(1),c1(2),c1(3),ih,g)
+                        if( cnj ) pv = conjg(pv)
+                        x  = real(ws * (real(pv)*real(dv) + aimag(pv)*aimag(dv)), dp)
+                        ao(sh) = ao(sh) + x
+                        bo(sh) = bo(sh) + real(ws * self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2, dp)
+                        s(q)   = s(q) + 0.5_dp * (2._dp * beta(sh) * x - beta(sh)**2 * real(ws * &
+                            &self%fpls(i)%ctfsq_plane(self%hk(1,j),self%hk(2,j)) * abs(pv)**2, dp)) / sig2(sh)
+                    end do
                 end do
                 self%sc(:,g,i) = real(s)
                 if( g == self%st(i) ) self%ppn(i) = real(sum((real(self%f2(2:self%kb,0,i) + self%f2(2:self%kb,1,i), dp) - &
@@ -759,10 +779,10 @@ contains
         real, allocatable,       intent(out)   :: u(:)
         complex, allocatable :: dm(:,:,:,:), e(:,:,:)
         integer, allocatable :: strat(:), idx(:)
-        real     :: qd(2), scl
+        real     :: qd(2), scl, ws
         real(dp) :: acc
         complex  :: pv, dv
-        integer  :: ih, i, j, sh, c1(3), c2(3), k, ii, ns
+        integer  :: ih, i, j, sh, c1(3), c2(3), k, ii, ns, is
         logical  :: cnj
         allocate(dm(self%nh,self%box,self%box,0:1), e(self%nh,self%box,self%box))
         do ih = 0, 1
@@ -774,7 +794,7 @@ contains
             dm(:,:,:,ih) = dm(:,:,:,ih) - e
         end do
         allocate(u(size(sel)), source=0.)
-        !$omp parallel do default(shared) private(ii,i,ih,j,sh,c1,c2,cnj,pv,dv,acc) schedule(static) proc_bind(close)
+        !$omp parallel do default(shared) private(ii,i,ih,j,sh,c1,c2,cnj,pv,dv,acc,ws,is) schedule(static) proc_bind(close)
         do ii = 1, size(sel)
             i   = sel(ii)
             ih  = self%eo(i)
@@ -782,12 +802,15 @@ contains
             do j = 1, self%np
                 sh = self%psh(j)
                 if( self%ppar(j) /= q .or. sh < 2 ) cycle
-                call self%cell_of(i, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
-                if( c1(1) == 0 ) cycle
-                pv = dm(c1(1),c1(2),c1(3),1-ih)
-                if( cnj ) pv = conjg(pv)
                 dv = self%fpls(i)%cmplx_plane(self%hk(1,j),self%hk(2,j))
-                acc = acc + real(self%pw(j) * self%nw(sh,q,ih) * (real(pv)*real(dv) + aimag(pv)*aimag(dv)), dp)
+                ws = self%pw(j) / real(self%nsym)
+                do is = 1, self%nsym
+                    call self%cell_of(i, is, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    pv = dm(c1(1),c1(2),c1(3),1-ih)
+                    if( cnj ) pv = conjg(pv)
+                    acc = acc + real(ws * self%nw(sh,q,ih) * (real(pv)*real(dv) + aimag(pv)*aimag(dv)), dp)
+                end do
             end do
             u(ii) = real(acc)
         end do
@@ -818,30 +841,34 @@ contains
         complex(dp), allocatable :: num(:,:,:)
         real(dp),    allocatable :: den(:,:,:)
         real, pointer :: rmat(:,:,:)
-        complex(dp) :: v
+        complex(dp) :: v, vj
         real(dp)    :: c2v, reg
-        integer     :: ii, j, c1(3), c2(3), hh, kk, ll
+        integer     :: ii, j, c1(3), c2(3), hh, kk, ll, is
         logical     :: cnj
         allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
         allocate(den(self%nh,self%box,self%box), source=0._dp)
-        !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,v,c2v) schedule(static) reduction(+:num,den) proc_bind(close)
+        !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,v,vj,c2v,is) schedule(static) reduction(+:num,den) &
+        !$omp& proc_bind(close)
         do ii = 1, size(pidx)
             do j = 1, self%np
                 if( q >= 0 .and. self%ppar(j) /= q ) cycle
-                call self%cell_of(pidx(ii), self%hk(1,j), self%hk(2,j), c1, c2, cnj)
-                if( c1(1) == 0 ) cycle
-                v   = real(self%pw(j), dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(self%hk(1,j),self%hk(2,j)), kind=dp)
+                vj  = real(self%pw(j), dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(self%hk(1,j),self%hk(2,j)), kind=dp)
                 c2v = real(self%pw(j), dp) * real(self%fpls(pidx(ii))%ctfsq_plane(self%hk(1,j),self%hk(2,j)), dp)
-                if( cnj ) v = conjg(v)
-                if( c2(1) > 0 )then
-                    num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
-                    den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
-                    num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
-                    den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
-                else
-                    num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
-                    den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
-                endif
+                do is = 1, self%nsym
+                    call self%cell_of(pidx(ii), is, self%hk(1,j), self%hk(2,j), c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    v = vj
+                    if( cnj ) v = conjg(v)
+                    if( c2(1) > 0 )then
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
             end do
         end do
         !$omp end parallel do
@@ -862,13 +889,13 @@ contains
         out = self%wimg%get_cmat()
     end subroutine nnmap
 
-    subroutine cell_of( self, i, h, k, c1, c2, cnj )
+    subroutine cell_of( self, i, is, h, k, c1, c2, cnj )
         class(landscape_sample), intent(in)  :: self
-        integer,                 intent(in)  :: i, h, k
+        integer,                 intent(in)  :: i, is, h, k
         integer,                 intent(out) :: c1(3), c2(3)
         logical,                 intent(out) :: cnj
         integer :: p(3)
-        p   = nint(real(h) * self%rot(1,:,i) + real(k) * self%rot(2,:,i))
+        p   = nint(real(h) * self%rot(1,:,is,i) + real(k) * self%rot(2,:,is,i))
         cnj = p(1) < 0
         if( cnj ) p = -p
         c1  = 0

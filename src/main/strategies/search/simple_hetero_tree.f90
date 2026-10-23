@@ -662,6 +662,7 @@ contains
             call cl%set('infile',   seed_dir(nd)//'/site_poles.txt')
             call cl%set('infile2',  nd//'/split/split_children.txt')
             call cl%set('mskdiam',  self%p%mskdiam)
+            call cl%set('pgrp',     trim(self%p%pgrp))
             call cl%set('nthr',     self%p%nthr)
             call self%submit_in(ld, cl)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape submitted, '//int2str(np)//&

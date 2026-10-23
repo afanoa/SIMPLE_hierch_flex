@@ -28,8 +28,8 @@ real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
 real,    parameter :: SITE_PFLOOR = 1.e-3
 real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
-real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005
-integer, parameter :: JUNK_ITS = 500
+real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005, MAD_SD = 1.4826
+integer, parameter :: JUNK_ITS = 500, NQ_CON = 81
 
 type :: ivec
     integer, allocatable :: v(:)
@@ -53,7 +53,9 @@ type :: state_mergeup
     logical :: l_exists = .false.
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
-    integer :: nj = 0, kj = 0
+    real,    allocatable :: nv(:), con(:), cam(:), cse(:), cpj(:)
+    real(dp) :: cfit(3) = 0._dp
+    integer :: nj = 0, kj = 0, nfit = 0
   contains
     procedure :: new
     procedure :: focus
@@ -61,6 +63,7 @@ type :: state_mergeup
     procedure :: run
     procedure :: test
     procedure :: site_em
+    procedure :: fit_contrast
     procedure :: junk_screen
     procedure :: get_rows
     procedure :: holdout_band
@@ -80,6 +83,10 @@ type :: state_mergeup
     procedure, private :: shell_fsc
     procedure, private :: shell_corr
     procedure, private :: shell_dot
+    procedure, private :: sym_rots
+    procedure, private :: band_density
+    procedure, private :: band_wiener
+    procedure, private :: band_terms
     procedure          :: half_rel
     procedure          :: half_corr
 end type state_mergeup
@@ -216,6 +223,7 @@ contains
             deallocate(self%fpls(i)%transfer_plane)
         end do
         !$omp end parallel do
+        self%nv = merge(sdn * sdn, 1., sdn > 0.)
         allocate(self%fsh(self%nh,self%box,self%box), self%fw(self%nh,self%box,self%box))
         do l = 1, self%box
             do k = 1, self%box
@@ -1257,20 +1265,22 @@ contains
         logical,              intent(in)    :: l_all
         type(image)          :: vol
         complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:), da(:,:,:), db(:,:,:)
-        real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:), fw2(:), key(:)
+        real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:,:), fw2(:), key(:), cn(:)
         real(dp),allocatable :: epsb(:), epsf(:)
         integer, allocatable :: ia(:), ib(:), oa(:), ob(:), fhk(:,:)
         real(dp) :: bta(self%nshem), btb(self%nshem), s2a(self%nshem), s2b(self%nshem), pra(2), prb(2)
         real    :: f(0:self%nyq), cbest, chga, chgb
-        integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2
+        integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2, nsym
         call vol%read_and_crop(mfile, self%p%smpd, self%box, self%p%smpd_crop)
         sm = min(max(vol%get_rmat(), 0.), 1.) * self%msk3
         call vol%kill
-        allocate(rot(3,3,self%n))
-        do i = 1, self%n
-            call self%os(1)%set_euler(self%eul(:,i))
-            rot(:,:,i) = self%os(1)%get_mat()
-        end do
+        rot  = self%sym_rots()
+        nsym = size(rot,3)
+        if( allocated(self%con) )then
+            cn = self%con
+        else
+            allocate(cn(self%n), source=1.)
+        endif
         nfull = 0
         do ig = 1, 2
             do k = lbound(self%fpls(1)%cmplx_plane,2), 0
@@ -1384,43 +1394,30 @@ contains
 
     contains
 
-        subroutine cell_of( i, h, k, c1, c2, cnj )
-            integer, intent(in)  :: i, h, k
-            integer, intent(out) :: c1(3), c2(3)
-            logical, intent(out) :: cnj
-            integer :: p(3)
-            p   = nint(real(h) * rot(1,:,i) + real(k) * rot(2,:,i))
-            cnj = p(1) < 0
-            if( cnj ) p = -p
-            c1  = 0
-            c2  = 0
-            if( any(abs(p) >= self%nyq) ) return
-            c1 = [p(1) + 1, modulo(p(2), self%box) + 1, modulo(p(3), self%box) + 1]
-            if( p(1) == 0 ) c2 = [1, modulo(-p(2), self%box) + 1, modulo(-p(3), self%box) + 1]
-        end subroutine cell_of
-
         function density( pidx, hk, sw ) result( epsv )
             integer, intent(in)   :: pidx(:), hk(:,:)
             real,    intent(in)   :: sw(:)
             real(dp), allocatable :: epsv(:)
             real(dp), allocatable :: den(:,:,:)
             real,     allocatable :: vals(:)
-            integer :: ii, j, c1(3), c2(3), s, cnt
-            logical :: cnj
+            real(dp) :: c2v
+            integer  :: ii, j, is, c1(3), c2(3), s, cnt
+            logical  :: cnj
             allocate(den(self%nh,self%box,self%box), source=0._dp)
-            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj) schedule(static) reduction(+:den) proc_bind(close)
+            !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,c2v) schedule(static) reduction(+:den) proc_bind(close)
             do ii = 1, size(pidx)
                 do j = 1, size(sw)
-                    call cell_of(pidx(ii), hk(1,j), hk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    if( c2(1) > 0 )then
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * sw(j) * &
-                            &self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
-                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * sw(j) * &
-                            &self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
-                    else
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + sw(j) * self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j))
-                    endif
+                    c2v = real(sw(j) * cn(pidx(ii))**2, dp) * real(self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j)), dp)
+                    do is = 1, nsym
+                        call plane_cell(rot(:,:,is,pidx(ii)), hk(1,j), hk(2,j), self%nyq, self%box, c1, c2, cnj)
+                        if( c1(1) == 0 ) cycle
+                        if( c2(1) > 0 )then
+                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                            den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                        else
+                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                        endif
+                    end do
                 end do
             end do
             !$omp end parallel do
@@ -1441,30 +1438,34 @@ contains
             complex,  intent(out) :: out(:,:,:)
             complex(dp), allocatable :: num(:,:,:)
             real(dp),    allocatable :: den(:,:,:)
-            complex(dp) :: v
+            complex(dp) :: v, vj
             real(dp)    :: c2v, wsum
-            integer     :: ii, j, c1(3), c2(3), hh, kk, ll
+            integer     :: ii, j, is, c1(3), c2(3), hh, kk, ll
             logical     :: cnj
             allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
             allocate(den(self%nh,self%box,self%box), source=0._dp)
-            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,v,c2v) schedule(static) reduction(+:num,den) proc_bind(close)
+            !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,v,vj,c2v) schedule(static) reduction(+:num,den) &
+            !$omp& proc_bind(close)
             do ii = 1, size(pidx)
                 if( pw(ii) <= 0. ) cycle
                 do j = 1, size(sw)
-                    call cell_of(pidx(ii), hk(1,j), hk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    v   = real(pw(ii) * sw(j), dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(hk(1,j),hk(2,j)), kind=dp)
-                    c2v = real(pw(ii) * sw(j), dp) * real(self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j)), dp)
-                    if( cnj ) v = conjg(v)
-                    if( c2(1) > 0 )then
-                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
-                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
-                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
-                    else
-                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
-                    endif
+                    vj  = real(pw(ii) * sw(j) * cn(pidx(ii)), dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(hk(1,j),hk(2,j)), kind=dp)
+                    c2v = real(pw(ii) * sw(j) * cn(pidx(ii))**2, dp) * real(self%fpls(pidx(ii))%ctfsq_plane(hk(1,j),hk(2,j)), dp)
+                    do is = 1, nsym
+                        call plane_cell(rot(:,:,is,pidx(ii)), hk(1,j), hk(2,j), self%nyq, self%box, c1, c2, cnj)
+                        if( c1(1) == 0 ) cycle
+                        v = vj
+                        if( cnj ) v = conjg(v)
+                        if( c2(1) > 0 )then
+                            num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
+                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                            num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
+                            den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                        else
+                            num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
+                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                        endif
+                    end do
                 end do
             end do
             !$omp end parallel do
@@ -1531,22 +1532,27 @@ contains
             complex,           intent(in)  :: refs(:,:,:,:)
             real, allocatable, intent(out) :: aa(:,:,:), bb(:,:,:)
             complex  :: pv, dv
-            integer  :: ii, gg, j, c1(3), c2(3), sh
+            real     :: wc, wc2, c2v
+            integer  :: ii, gg, j, is, c1(3), c2(3), sh
             logical  :: cnj
             allocate(aa(self%nshem,2,size(pidx)), bb(self%nshem,2,size(pidx)), source=0.)
-            !$omp parallel do default(shared) private(ii,gg,j,c1,c2,cnj,sh,pv,dv) schedule(static) proc_bind(close)
+            !$omp parallel do default(shared) private(ii,gg,j,is,c1,c2,cnj,sh,pv,dv,wc,wc2,c2v) schedule(static) proc_bind(close)
             do ii = 1, size(pidx)
+                wc  = cn(pidx(ii)) / real(nsym)
+                wc2 = cn(pidx(ii))**2 / real(nsym)
                 do j = 1, self%nem
-                    call cell_of(pidx(ii), self%emhk(1,j), self%emhk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    sh = self%emsh(j)
-                    dv = self%fpls(pidx(ii))%cmplx_plane(self%emhk(1,j),self%emhk(2,j))
-                    do gg = 1, 2
-                        pv = refs(c1(1),c1(2),c1(3),gg)
-                        if( cnj ) pv = conjg(pv)
-                        aa(sh,gg,ii) = aa(sh,gg,ii) + self%emw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
-                        bb(sh,gg,ii) = bb(sh,gg,ii) + self%emw(j) * &
-                            &self%fpls(pidx(ii))%ctfsq_plane(self%emhk(1,j),self%emhk(2,j)) * abs(pv)**2
+                    sh  = self%emsh(j)
+                    dv  = self%fpls(pidx(ii))%cmplx_plane(self%emhk(1,j),self%emhk(2,j))
+                    c2v = self%fpls(pidx(ii))%ctfsq_plane(self%emhk(1,j),self%emhk(2,j))
+                    do is = 1, nsym
+                        call plane_cell(rot(:,:,is,pidx(ii)), self%emhk(1,j), self%emhk(2,j), self%nyq, self%box, c1, c2, cnj)
+                        if( c1(1) == 0 ) cycle
+                        do gg = 1, 2
+                            pv = refs(c1(1),c1(2),c1(3),gg)
+                            if( cnj ) pv = conjg(pv)
+                            aa(sh,gg,ii) = aa(sh,gg,ii) + self%emw(j) * wc * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                            bb(sh,gg,ii) = bb(sh,gg,ii) + self%emw(j) * wc2 * c2v * abs(pv)**2
+                        end do
                     end do
                 end do
             end do
@@ -1602,6 +1608,135 @@ contains
 
     end subroutine site_em
 
+    ! per-particle contrast against the other half's mean map at its own noise level: zero-contrast atom vs log-normal genuine
+    subroutine fit_contrast( self )
+        class(state_mergeup), intent(inout) :: self
+        type(ivec)            :: hx(2)
+        complex,  allocatable :: mp(:,:,:,:)
+        real,     allocatable :: rot(:,:,:,:), a0(:,:), b0(:,:), x(:), v(:), snr(:)
+        real(dp), allocatable :: epsv(:)
+        logical,  allocatable :: ok(:)
+        real(dp) :: sa(self%kj), sb(self%kj), sr(self%kj), sc(self%kj), beta(self%kj), s2(self%kj), a(self%kj,1), b(self%kj,1)
+        real(dp) :: tq(NQ_CON), lgq(NQ_CON), den, r, et, et2, ea
+        real     :: cw(self%kj)
+        integer  :: e, i, ii, j, its
+        rot = self%sym_rots()
+        do e = 1, 2
+            hx(e)%v = pack([(i, i=1,self%n)], self%eo == e - 1)
+        end do
+        epsv = 0.5_dp * (self%band_density(rot, hx(1)%v) + self%band_density(rot, hx(2)%v))
+        allocate(mp(self%nh,self%box,self%box,2))
+        do e = 1, 2
+            call self%band_wiener(rot, hx(e)%v, epsv, mp(:,:,:,e))
+        end do
+        allocate(a0(self%kj,self%n), b0(self%kj,self%n))
+        !$omp parallel do default(shared) private(i,a,b) schedule(static) proc_bind(close)
+        do i = 1, self%n
+            call self%band_terms(rot, i, mp(:,:,:,2-self%eo(i):2-self%eo(i)), a, b)
+            a0(:,i) = real(a(:,1))
+            b0(:,i) = real(b(:,1))
+        end do
+        !$omp end parallel do
+        deallocate(mp, rot)
+        cw = 0.
+        do j = 1, self%nj
+            cw(self%jsh(j)) = cw(self%jsh(j)) + self%jw(j)
+        end do
+        if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
+        allocate(self%con(self%n), source=1.)
+        allocate(self%cam(self%n), self%cse(self%n), self%cpj(self%n), source=0.)
+        allocate(ok(self%n), source=.false.)
+        do e = 1, 2
+            sa = 0._dp
+            sb = 0._dp
+            sr = 0._dp
+            sc = 0._dp
+            do ii = 1, size(hx(e)%v)
+                i  = hx(e)%v(ii)
+                sa = sa + real(a0(:,i),dp) / real(self%nv(i),dp)
+                sb = sb + real(b0(:,i),dp) / real(self%nv(i),dp)
+            end do
+            beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
+            do ii = 1, size(hx(e)%v)
+                i  = hx(e)%v(ii)
+                sr = sr + (real(self%f2j(:,i),dp) - 2._dp*beta*a0(:,i) + beta*beta*b0(:,i)) / real(self%nv(i),dp)
+                sc = sc + real(cw,dp)
+            end do
+            s2 = max(sr / max(sc, 1._dp), 1.e-12_dp)
+            do ii = 1, size(hx(e)%v)
+                i   = hx(e)%v(ii)
+                den = sum(beta * beta * b0(:,i) / s2)
+                if( den <= 0._dp ) cycle
+                self%cam(i) = real(sum(beta * a0(:,i) / s2) / den)
+                self%cse(i) = real(sqrt(real(self%nv(i),dp) / den))
+                ok(i)       = .true.
+            end do
+        end do
+        x = pack(self%cam, ok)
+        v = pack(self%cse**2, ok)
+        self%cfit = 0._dp
+        self%nfit = 0
+        if( size(x) > 1 )then
+            do j = 1, NQ_CON
+                tq(j) = -6._dp + 12._dp * real(j-1,dp) / real(NQ_CON-1,dp)
+            end do
+            lgq = -0.5_dp * tq * tq
+            lgq = lgq - log(sum(exp(lgq)))
+            call zl_fit
+            do i = 1, self%n
+                if( .not. ok(i) ) cycle
+                call zl_post(real(self%cam(i),dp), real(self%cse(i),dp)**2, self%cfit, tq, lgq, r, et, et2, ea)
+                self%cpj(i) = real(r)
+                self%con(i) = real((1._dp - r) * ea)
+            end do
+        endif
+        snr = pack(self%cam / max(self%cse, 1.e-12), ok)
+        write(logfhandle,'(A)') '>>> STATE_MERGEUP contrast of '//int2str(count(ok))//' particles against the other half''s '//&
+            &'mean map (shells 2..'//int2str(self%kj)//'), each at its own noise level: zero-contrast weight '//&
+            &fmtr(self%cfit(1),4)//', genuine contrast median '//fmtr(exp(self%cfit(2)),3)//' and log-sd '//&
+            &fmtr(self%cfit(3),3)//' ('//int2str(self%nfit)//' EM iterations); contrast / se 5 / 50 / 95 % '//&
+            &fmtr(real(quantr(snr,0.05),dp),1)//' / '//fmtr(real(quantr(snr,0.5),dp),1)//' / '//&
+            &fmtr(real(quantr(snr,0.95),dp),1)//'; '//int2str(count(self%cpj >= 0.5))//' at zero contrast (posterior >= 0.5)'
+
+    contains
+
+        subroutine zl_fit
+            real(dp) :: p(3), pn(3), sr1, s1, st, st2, med
+            integer  :: ii
+            med  = real(medianr(pack(x, x > 0.)), dp)
+            p(1) = 0.5_dp
+            p(2) = log(max(med, 1.e-6_dp))
+            p(3) = max(real(MAD_SD,dp) * real(medianr(abs(x - real(med))),dp) / max(med, 1.e-6_dp), 0.05_dp)
+            do its = 1, JUNK_ITS
+                sr1 = 0._dp
+                s1  = 0._dp
+                st  = 0._dp
+                st2 = 0._dp
+                !$omp parallel do default(shared) private(ii,r,et,et2,ea) schedule(static) reduction(+:sr1,s1,st,st2) &
+                !$omp& proc_bind(close)
+                do ii = 1, size(x)
+                    call zl_post(real(x(ii),dp), real(v(ii),dp), p, tq, lgq, r, et, et2, ea)
+                    sr1 = sr1 + r
+                    s1  = s1  + (1._dp - r)
+                    st  = st  + (1._dp - r) * et
+                    st2 = st2 + (1._dp - r) * et2
+                end do
+                !$omp end parallel do
+                pn(1) = sr1 / real(size(x),dp)
+                pn(2) = p(2) + p(3) * st / max(s1, 1.e-12_dp)
+                pn(3) = p(3) * sqrt(max(st2 / max(s1, 1.e-12_dp) - (st / max(s1, 1.e-12_dp))**2, 1.e-12_dp))
+                self%nfit = its
+                if( maxval(abs(pn - p)) < 1.e-6_dp )then
+                    p = pn
+                    exit
+                endif
+                p = pn
+            end do
+            self%cfit = p
+        end subroutine zl_fit
+
+    end subroutine fit_contrast
+
     ! per-node junk screen at the seeding labels: amplitudes against every state's other-half reference, 3-component mixture cut
     subroutine junk_screen( self, seeds )
         use simple_srch_sort_loc, only: hpsort
@@ -1609,27 +1744,24 @@ contains
         integer,              intent(inout) :: seeds(:)
         type(ivec)            :: hx(2)
         complex,  allocatable :: mp(:,:,:,:,:), rf(:,:,:,:)
-        real,     allocatable :: rot(:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:)
+        real,     allocatable :: rot(:,:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:), res(:), rz(:), wg(:)
         real(dp), allocatable :: epsv(:)
-        integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:)
-        logical,  allocatable :: ljunk(:), lj(:)
+        integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:)
+        logical,  allocatable :: ljunk(:), lj(:), lres(:)
         character(len=:), allocatable :: line
         real(dp) :: mu(3), s2(3), pw(3), gap(3), xm
-        real     :: f(0:self%nyq), mv
+        real     :: f(0:self%nyq), mv, med, sdr
         integer  :: nk, i, g, e, c, cg, h, k, l, funit, rep, ios, nf
         nk = maxval([0, seeds])
         if( nk == 0 )then
             write(logfhandle,'(A)') '>>> JUNK_SCREEN no seed state, nothing screened'
             return
         endif
+        if( .not. allocated(self%cpj) ) call self%fit_contrast
         lab = seeds
         call fopen(rep, string('site_junk_report.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('junk_screen: cannot write site_junk_report.txt', ios)
-        allocate(rot(3,3,self%n))
-        do i = 1, self%n
-            call self%os(1)%set_euler(self%eul(:,i))
-            rot(:,:,i) = self%os(1)%get_mat()
-        end do
+        rot = self%sym_rots()
         allocate(cnt(nk,2))
         do e = 1, 2
             hx(e)%v  = pack([(i, i=1,self%n)], self%eo == e - 1)
@@ -1638,13 +1770,12 @@ contains
         call say(int2str(nk)//' seed states, '//int2str(self%n)//' particles, band shells 2..'//int2str(self%kj)//' ('//&
             &fmtr(real(real(self%box)*self%p%smpd_crop/real(self%kj),dp),1)//' A, '//int2str(self%nj)//' plane samples), '//&
             &'every particle against the other half''s state references')
-        allocate(epsv(0:self%nyq))
-        epsv = 0.5_dp * (dens(hx(1)%v) + dens(hx(2)%v))
+        epsv = 0.5_dp * (self%band_density(rot, hx(1)%v) + self%band_density(rot, hx(2)%v))
         allocate(mp(self%nh,self%box,self%box,0:nk,2))
         do e = 1, 2
-            call wiener(hx(e)%v, mp(:,:,:,0,e))
+            call self%band_wiener(rot, hx(e)%v, epsv, mp(:,:,:,0,e))
             do g = 1, nk
-                call wiener(pack(hx(e)%v, lab(hx(e)%v) == g), mp(:,:,:,g,e))
+                call self%band_wiener(rot, pack(hx(e)%v, lab(hx(e)%v) == g), epsv, mp(:,:,:,g,e))
             end do
         end do
         allocate(fs(0:self%nyq,nk))
@@ -1653,7 +1784,7 @@ contains
             fs(:,g) = min(max(f, 0.), 1.)
         end do
         allocate(rf(self%nh,self%box,self%box,nk))
-        allocate(amp(self%n), var(self%n), post(self%n), source=0.)
+        allocate(amp(self%n), var(self%n), post(self%n), res(self%n), rz(self%n), source=0.)
         allocate(best(self%n), source=0)
         do e = 1, 2
             do g = 1, nk
@@ -1713,6 +1844,20 @@ contains
             call say('junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//int2str(nint(JUNK_GAP))//&
                 &' sd below the genuine one):'//line)
         endif
+        do e = 1, 2
+            idx = pack(hx(e)%v, best(hx(e)%v) > 0)
+            if( size(idx) == 0 ) cycle
+            med = medianr(res(idx))
+            sdr = MAD_SD * medianr(abs(res(idx) - med))
+            if( sdr > 0. ) rz(idx) = (res(idx) - med) / sdr
+        end do
+        lres = best > 0 .and. rz >= HALVES_KSIG
+        wg   = (1. - self%cpj) * merge(0., 1., lres)
+        call say('diagnostic, not applied: contrast against the other half''s mean map at each particle''s own noise level, '//&
+            &'zero-contrast weight '//fmtr(self%cfit(1),4)//', genuine contrast median / log-sd '//fmtr(exp(self%cfit(2)),3)//&
+            &' / '//fmtr(self%cfit(3),3)//'; '//int2str(count(self%cpj >= 0.5))//' at zero contrast, '//int2str(count(lres))//&
+            &' with a residual '//int2str(nint(HALVES_KSIG))//' robust sd above their half''s median, '//&
+            &int2str(count(wg < 0.5))//' with a genuine weight under 0.5')
         nf = count(ljunk)
         call say(int2str(nf)//' of '//int2str(self%n)//' particles flagged junk ('//fmtr(real(nf,dp)/real(self%n,dp),4)//&
             &'; half 1 '//fmtr(real(count(ljunk(hx(1)%v)),dp)/real(max(1,size(hx(1)%v)),dp),4)//', half 2 '//&
@@ -1728,10 +1873,12 @@ contains
         call fclose(rep)
         call fopen(funit, string('site_junk.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('junk_screen: cannot write site_junk.txt', ios)
-        write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior'
+        write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior, '//&
+            &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight'
         do i = 1, self%n
-            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4)') self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), &
-                &best(i), post(i)
+            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4)') self%rows(i), &
+                &merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), self%con(i), self%cpj(i), &
+                &rz(i), wg(i)
         end do
         call fclose(funit)
         where( ljunk ) seeds = 0
@@ -1744,105 +1891,13 @@ contains
             write(rep,'(A)') str
         end subroutine say
 
-        subroutine cell( i, h, k, c1, c2, cnj )
-            integer, intent(in)  :: i, h, k
-            integer, intent(out) :: c1(3), c2(3)
-            logical, intent(out) :: cnj
-            integer :: p(3)
-            p   = nint(real(h) * rot(1,:,i) + real(k) * rot(2,:,i))
-            cnj = p(1) < 0
-            if( cnj ) p = -p
-            c1  = 0
-            c2  = 0
-            if( any(abs(p) >= self%nyq) ) return
-            c1 = [p(1) + 1, modulo(p(2), self%box) + 1, modulo(p(3), self%box) + 1]
-            if( p(1) == 0 ) c2 = [1, modulo(-p(2), self%box) + 1, modulo(-p(3), self%box) + 1]
-        end subroutine cell
-
-        function dens( pidx ) result( ev )
-            integer, intent(in)   :: pidx(:)
-            real(dp), allocatable :: ev(:)
-            real(dp), allocatable :: den(:,:,:)
-            real,     allocatable :: vals(:)
-            real(dp) :: c2v
-            integer  :: ii, j, c1(3), c2(3), s, nv
-            logical  :: cnj
-            allocate(den(self%nh,self%box,self%box), source=0._dp)
-            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,c2v) schedule(static) reduction(+:den) proc_bind(close)
-            do ii = 1, size(pidx)
-                do j = 1, self%nj
-                    call cell(pidx(ii), self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
-                    if( c2(1) > 0 )then
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
-                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
-                    else
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
-                    endif
-                end do
-            end do
-            !$omp end parallel do
-            allocate(ev(0:self%nyq), source=1._dp)
-            do s = 0, self%nyq
-                vals = real(pack(den, self%fsh == s .and. den > 0._dp))
-                nv   = size(vals)
-                if( nv == 0 ) cycle
-                call hpsort(vals)
-                ev(s) = real(vals((nv + 1) / 2), dp) / real(max(1, size(pidx)), dp)
-            end do
-        end function dens
-
-        subroutine wiener( pidx, out )
-            integer, intent(in)  :: pidx(:)
-            complex, intent(out) :: out(:,:,:)
-            complex(dp), allocatable :: num(:,:,:)
-            real(dp),    allocatable :: den(:,:,:)
-            complex(dp) :: cv
-            real(dp)    :: c2v
-            integer     :: ii, j, c1(3), c2(3), hh, kk, ll
-            logical     :: cnj
-            allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
-            allocate(den(self%nh,self%box,self%box), source=0._dp)
-            !$omp parallel do default(shared) private(ii,j,c1,c2,cnj,cv,c2v) schedule(static) reduction(+:num,den) proc_bind(close)
-            do ii = 1, size(pidx)
-                do j = 1, self%nj
-                    call cell(pidx(ii), self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    cv  = real(self%jw(j),dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(self%jhk(1,j),self%jhk(2,j)), kind=dp)
-                    c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
-                    if( cnj ) cv = conjg(cv)
-                    if( c2(1) > 0 )then
-                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * cv
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
-                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(cv)
-                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
-                    else
-                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + cv
-                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
-                    endif
-                end do
-            end do
-            !$omp end parallel do
-            do ll = 1, self%box
-                do kk = 1, self%box
-                    do hh = 1, self%nh
-                        out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * &
-                            &real(max(1, size(pidx)),dp)), kind=kind(out))
-                    end do
-                end do
-            end do
-        end subroutine wiener
-
         subroutine score( pidx, loff, e )
             integer, intent(in) :: pidx(:), e
             logical, intent(in) :: loff(:)
             real(dp) :: sa(self%kj), sb(self%kj), sf(self%kj), sc(self%kj), beta(self%kj), wsh(self%kj)
-            real(dp) :: a(self%kj,nk), b(self%kj,nk), num, den, s, smax
-            real     :: cw(self%kj), c2v
-            complex  :: pv, dv
-            integer  :: ii, i, j, g, c1(3), c2(3), sh, nd
-            logical  :: cnj
+            real(dp) :: a(self%kj,nk), b(self%kj,nk), num, den, s, smax, tot, rmin
+            real     :: cw(self%kj)
+            integer  :: ii, i, j, g, nd
             cw = 0.
             do j = 1, self%nj
                 cw(self%jsh(j)) = cw(self%jsh(j)) + self%jw(j)
@@ -1851,54 +1906,33 @@ contains
             sb = 0._dp
             sf = 0._dp
             sc = 0._dp
-            !$omp parallel do default(shared) private(ii,i,j,g,c1,c2,cnj,sh,pv,dv,c2v) schedule(static) &
-            !$omp& reduction(+:sa,sb,sf,sc) proc_bind(close)
+            !$omp parallel do default(shared) private(ii,i,g,a,b) schedule(static) reduction(+:sa,sb,sf,sc) proc_bind(close)
             do ii = 1, size(pidx)
                 i = pidx(ii)
                 g = lab(i)
                 if( g < 1 ) cycle
                 if( .not. loff(g) ) cycle
-                do j = 1, self%nj
-                    call cell(i, self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    sh  = self%jsh(j)
-                    dv  = self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j))
-                    c2v = self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j))
-                    pv  = rf(c1(1),c1(2),c1(3),g)
-                    if( cnj ) pv = conjg(pv)
-                    sa(sh) = sa(sh) + self%jw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
-                    sb(sh) = sb(sh) + self%jw(j) * c2v * abs(pv)**2
-                end do
+                call self%band_terms(rot, i, rf(:,:,:,g:g), a(:,1:1), b(:,1:1))
+                sa = sa + a(:,1)
+                sb = sb + b(:,1)
                 sf = sf + real(self%f2j(:,i),dp)
                 sc = sc + real(cw,dp)
             end do
             !$omp end parallel do
             beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
             wsh  = 1._dp / max((sf - 2._dp*beta*sa + beta*beta*sb) / max(sc, 1._dp), 1.e-12_dp)
-            !$omp parallel do default(shared) private(ii,i,j,g,c1,c2,cnj,sh,pv,dv,c2v,a,b,num,den,s,smax) schedule(static) &
-            !$omp& proc_bind(close)
+            !$omp parallel do default(shared) private(ii,i,g,a,b,num,den,s,smax,tot,rmin) schedule(static) proc_bind(close)
             do ii = 1, size(pidx)
                 i = pidx(ii)
-                a = 0._dp
-                b = 0._dp
-                do j = 1, self%nj
-                    call cell(i, self%jhk(1,j), self%jhk(2,j), c1, c2, cnj)
-                    if( c1(1) == 0 ) cycle
-                    sh  = self%jsh(j)
-                    dv  = self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j))
-                    c2v = self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j))
-                    do g = 1, nk
-                        pv = rf(c1(1),c1(2),c1(3),g)
-                        if( cnj ) pv = conjg(pv)
-                        a(sh,g) = a(sh,g) + self%jw(j) * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
-                        b(sh,g) = b(sh,g) + self%jw(j) * c2v * abs(pv)**2
-                    end do
-                end do
+                call self%band_terms(rot, i, rf, a, b)
+                tot  = sum(wsh * real(self%f2j(:,i),dp))
+                rmin = tot
                 smax = -huge(smax)
                 do g = 1, nk
                     if( .not. loff(g) ) cycle
                     num = sum(wsh * beta * a(:,g))
                     den = sum(wsh * beta * beta * b(:,g))
+                    if( num > 0._dp .and. den > 0._dp ) rmin = min(rmin, tot - num * num / den)
                     s   = num - 0.5_dp * den
                     if( s <= smax ) cycle
                     smax    = s
@@ -1906,6 +1940,7 @@ contains
                     amp(i)  = real(num / max(den, 1.e-12_dp))
                     var(i)  = real(1._dp / max(den, 1.e-12_dp))
                 end do
+                res(i) = real(rmin) / self%nv(i)
             end do
             !$omp end parallel do
             nd = count([(best(pidx(ii)) /= lab(pidx(ii)), ii=1,size(pidx))])
@@ -1956,6 +1991,141 @@ contains
         end function jpost
 
     end subroutine junk_screen
+
+    function sym_rots( self ) result( rot )
+        class(state_mergeup), intent(inout) :: self
+        real, allocatable :: rot(:,:,:,:)
+        real    :: es(3)
+        integer :: i, is, nsym
+        nsym = self%syms(1)%get_nsym()
+        allocate(rot(3,3,nsym,self%n))
+        do i = 1, self%n
+            call self%os(1)%set_euler(self%eul(:,i))
+            rot(:,:,1,i) = self%os(1)%get_mat()
+            do is = 2, nsym
+                call self%syms(1)%apply(self%eul(:,i), is, es)
+                call self%os(1)%set_euler(es)
+                rot(:,:,is,i) = self%os(1)%get_mat()
+            end do
+        end do
+    end function sym_rots
+
+    function band_density( self, rot, pidx ) result( ev )
+        use simple_srch_sort_loc, only: hpsort
+        class(state_mergeup), intent(in) :: self
+        real,                 intent(in) :: rot(:,:,:,:)
+        integer,              intent(in) :: pidx(:)
+        real(dp), allocatable :: ev(:)
+        real(dp), allocatable :: den(:,:,:)
+        real,     allocatable :: vals(:)
+        real(dp) :: c2v
+        integer  :: ii, j, is, c1(3), c2(3), s, cnt
+        logical  :: cnj
+        allocate(den(self%nh,self%box,self%box), source=0._dp)
+        !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,c2v) schedule(static) reduction(+:den) proc_bind(close)
+        do ii = 1, size(pidx)
+            do j = 1, self%nj
+                c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
+                do is = 1, size(rot,3)
+                    call plane_cell(rot(:,:,is,pidx(ii)), self%jhk(1,j), self%jhk(2,j), self%nyq, self%box, c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    if( c2(1) > 0 )then
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
+            end do
+        end do
+        !$omp end parallel do
+        allocate(ev(0:self%nyq), source=1._dp)
+        do s = 0, self%nyq
+            vals = real(pack(den, self%fsh == s .and. den > 0._dp))
+            cnt  = size(vals)
+            if( cnt == 0 ) cycle
+            call hpsort(vals)
+            ev(s) = real(vals((cnt + 1) / 2), dp) / real(max(1, size(pidx)), dp)
+        end do
+    end function band_density
+
+    subroutine band_wiener( self, rot, pidx, epsv, out )
+        class(state_mergeup), intent(in)  :: self
+        real,                 intent(in)  :: rot(:,:,:,:)
+        integer,              intent(in)  :: pidx(:)
+        real(dp),             intent(in)  :: epsv(0:)
+        complex,              intent(out) :: out(:,:,:)
+        complex(dp), allocatable :: num(:,:,:)
+        real(dp),    allocatable :: den(:,:,:)
+        complex(dp) :: cv, cj
+        real(dp)    :: c2v
+        integer     :: ii, j, is, c1(3), c2(3), hh, kk, ll
+        logical     :: cnj
+        allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
+        allocate(den(self%nh,self%box,self%box), source=0._dp)
+        !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,cv,cj,c2v) schedule(static) reduction(+:num,den) &
+        !$omp& proc_bind(close)
+        do ii = 1, size(pidx)
+            do j = 1, self%nj
+                cj  = real(self%jw(j),dp) * cmplx(self%fpls(pidx(ii))%cmplx_plane(self%jhk(1,j),self%jhk(2,j)), kind=dp)
+                c2v = real(self%jw(j) * self%fpls(pidx(ii))%ctfsq_plane(self%jhk(1,j),self%jhk(2,j)), dp)
+                do is = 1, size(rot,3)
+                    call plane_cell(rot(:,:,is,pidx(ii)), self%jhk(1,j), self%jhk(2,j), self%nyq, self%box, c1, c2, cnj)
+                    if( c1(1) == 0 ) cycle
+                    cv = cj
+                    if( cnj ) cv = conjg(cv)
+                    if( c2(1) > 0 )then
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * cv
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                        num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(cv)
+                        den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                    else
+                        num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + cv
+                        den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                    endif
+                end do
+            end do
+        end do
+        !$omp end parallel do
+        do ll = 1, self%box
+            do kk = 1, self%box
+                do hh = 1, self%nh
+                    out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * &
+                        &real(max(1, size(pidx)),dp)), kind=kind(out))
+                end do
+            end do
+        end do
+    end subroutine band_wiener
+
+    subroutine band_terms( self, rot, i, refs, a, b )
+        class(state_mergeup), intent(in)  :: self
+        real,                 intent(in)  :: rot(:,:,:,:)
+        integer,              intent(in)  :: i
+        complex,              intent(in)  :: refs(:,:,:,:)
+        real(dp),             intent(out) :: a(:,:), b(:,:)
+        complex :: pv, dv
+        real    :: c2v, ws
+        integer :: j, is, g, sh, c1(3), c2(3)
+        logical :: cnj
+        a = 0._dp
+        b = 0._dp
+        do j = 1, self%nj
+            sh  = self%jsh(j)
+            dv  = self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j))
+            c2v = self%fpls(i)%ctfsq_plane(self%jhk(1,j),self%jhk(2,j))
+            ws  = self%jw(j) / real(size(rot,3))
+            do is = 1, size(rot,3)
+                call plane_cell(rot(:,:,is,i), self%jhk(1,j), self%jhk(2,j), self%nyq, self%box, c1, c2, cnj)
+                if( c1(1) == 0 ) cycle
+                do g = 1, size(refs,4)
+                    pv = refs(c1(1),c1(2),c1(3),g)
+                    if( cnj ) pv = conjg(pv)
+                    a(sh,g) = a(sh,g) + ws * (real(pv)*real(dv) + aimag(pv)*aimag(dv))
+                    b(sh,g) = b(sh,g) + ws * c2v * abs(pv)**2
+                end do
+            end do
+        end do
+    end subroutine band_terms
 
     subroutine merge_poles( posts, thr, minseed, sp, grp, seeds )
         real,                 intent(in)  :: posts(:,:), thr
@@ -2565,6 +2735,10 @@ contains
         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
+        if( allocated(self%nv)  ) deallocate(self%nv)
+        if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
+        self%cfit = 0._dp
+        self%nfit = 0
         if( allocated(self%msk3) ) deallocate(self%msk3, self%fsh, self%fw)
         if( allocated(self%fqh) ) deallocate(self%fqh, self%fqk)
         if( allocated(self%lmsk) ) deallocate(self%lmsk, self%lslot, self%msk0)
@@ -2594,6 +2768,45 @@ contains
         g = k - 1
         q = k
     end subroutine pair_index
+
+    pure subroutine plane_cell( r, h, k, nyq, box, c1, c2, cnj )
+        real,    intent(in)  :: r(3,3)
+        integer, intent(in)  :: h, k, nyq, box
+        integer, intent(out) :: c1(3), c2(3)
+        logical, intent(out) :: cnj
+        integer :: p(3)
+        p   = nint(real(h) * r(1,:) + real(k) * r(2,:))
+        cnj = p(1) < 0
+        if( cnj ) p = -p
+        c1  = 0
+        c2  = 0
+        if( any(abs(p) >= nyq) ) return
+        c1 = [p(1) + 1, modulo(p(2), box) + 1, modulo(p(3), box) + 1]
+        if( p(1) == 0 ) c2 = [1, modulo(-p(2), box) + 1, modulo(-p(3), box) + 1]
+    end subroutine plane_cell
+
+    pure subroutine zl_post( x, v, p, tq, lgq, r, et, et2, ea )
+        real(dp), intent(in)  :: x, v, p(3), tq(:), lgq(:)
+        real(dp), intent(out) :: r, et, et2, ea
+        real(dp) :: lg(size(tq)), aq(size(tq)), q(size(tq)), l0, m, sq
+        aq = exp(p(2) + p(3) * tq)
+        lg = log(max(1._dp - p(1), 1.e-300_dp)) + lgq - 0.5_dp * (x - aq)**2 / v
+        l0 = log(max(p(1), 1.e-300_dp)) - 0.5_dp * x * x / v
+        m  = max(l0, maxval(lg))
+        q  = exp(lg - m)
+        sq = sum(q)
+        r  = exp(l0 - m) / (exp(l0 - m) + sq)
+        if( sq > 0._dp )then
+            q   = q / sq
+            et  = sum(q * tq)
+            et2 = sum(q * tq * tq)
+            ea  = sum(q * aq)
+        else
+            et  = 0._dp
+            et2 = 1._dp
+            ea  = exp(p(2) + 0.5_dp * p(3) * p(3))
+        endif
+    end subroutine zl_post
 
     subroutine rnd_subset( sel, m )
         use simple_rnd, only: partial_shuffle

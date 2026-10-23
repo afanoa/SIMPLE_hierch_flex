@@ -735,6 +735,7 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'The particles are Fourier-cropped to this Nyquist resolution{10}', 'in Angstroms{10}', &
         &.false., 10., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
         call landscape_sample%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call landscape_sample%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call landscape_sample%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
         call add_ui_program('landscape_sample', landscape_sample, prgtab, UI_CATEGORY)
     end subroutine new_landscape_sample

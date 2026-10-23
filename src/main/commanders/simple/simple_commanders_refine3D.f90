@@ -2239,6 +2239,7 @@ contains
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         nrows = build%spproj_field%get_noris()
         call site%new(params, build, em_lim=15.)
+        call site%fit_contrast
         rows  = site%get_rows()
         n     = size(rows)
         if( cline%defined('site_dirs') )then
