@@ -57,6 +57,7 @@ type :: parameters
     character(len=3)          :: site_disc='no'
     character(len=3)          :: site_layer='yes'
     character(len=3)          :: node_rows='yes'
+    character(len=3)          :: node_proj='no'
     character(len=3)          :: site_size='no'
     character(len=3)          :: oneflex='yes'
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
