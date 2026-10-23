@@ -1754,7 +1754,7 @@ contains
         real,     allocatable :: rot(:,:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:), res(:), rz(:), wg(:)
         real(dp), allocatable :: epsv(:)
         integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:), asg(:)
-        logical,  allocatable :: ljunk(:), lj(:), lres(:)
+        logical,  allocatable :: ljunk(:), lj(:), lres(:), lid(:)
         character(len=:), allocatable :: line
         real(dp) :: mu(3), s2(3), pw(3), gap(3), xm, tc(3), lgc(3)
         real     :: f(0:self%nyq), mv, med, sdr
@@ -1810,7 +1810,7 @@ contains
         v = pack(var, best > 0)
         allocate(ljunk(self%n), source=.false.)
         allocate(asg(self%n), source=0)
-        allocate(lj(3), source=.false.)
+        allocate(lj(3), lid(3), source=.false.)
         if( size(x) > 0 )then
             xm = sum(real(x,dp)) / real(size(x),dp)
             mu = real([quantr(x, 0.02), quantr(x, 0.5), quantr(x, 0.5)], dp)
@@ -1830,7 +1830,7 @@ contains
                 asg(i) = maxloc(lgc, dim=1)
             end do
             do c = 1, 3
-                if( lj(c) ) lj(c) = identity(c)
+                if( lj(c) ) lid(c) = identity(c)
             end do
             if( any(lj) )then
                 do i = 1, self%n
@@ -1860,7 +1860,7 @@ contains
                 end do
             endif
             call say('junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//int2str(nint(JUNK_GAP))//&
-                &' sd below the genuine one, a different structure by the identity test):'//line)
+                &' sd below the genuine one):'//line)
         endif
         do e = 1, 2
             idx = pack(hx(e)%v, best(hx(e)%v) > 0)
@@ -1893,13 +1893,13 @@ contains
         call fileiochk('junk_screen: cannot write site_junk.txt', ios)
         write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior, '//&
             &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight, '//&
-            &'amplitude component (1 lowest), confirmed junk component'
+            &'amplitude component (1 lowest), different structure by the identity test (not applied)'
         do i = 1, self%n
             c = 0
             if( asg(i) > 0 ) c = count(mu < mu(asg(i))) + 1
             write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,2(1X,I0))') &
                 &self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), &
-                &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lj(max(asg(i),1)))
+                &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lid(max(asg(i),1)))
         end do
         call fclose(funit)
         where( ljunk ) seeds = 0
@@ -2063,7 +2063,8 @@ contains
                 &', null '//fmtr(real(rm,dp),4)//' +- '//fmtr(real(rs,dp),4)//' (z '//fmtr(real(zc,dp),1)//'), its map vs '//&
                 &'the genuine one '//fmtr(0.5_dp*real(self%shell_corr(ml0(:,:,:,1), mg0(:,:,:,2), 2, self%kj) + &
                 &self%shell_corr(ml0(:,:,:,2), mg0(:,:,:,1), 2, self%kj),dp),3)//' -> '//&
-                &trim(merge('junk (a different structure)', 'genuine, faint              ', identity)))
+                &trim(merge('a different structure (identity test, not applied)', &
+                &'the same structure, faint (identity test)         ', identity)))
             if( .not. identity ) return
             do e = 1, 2
                 call self%wimgs(1)%set_ft(.true.)
