@@ -31,7 +31,7 @@ private
 integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_ITS = 40, POLL_SECS = 5, RND_SEED = 0
 integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
 real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3
-integer,  parameter :: ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
+integer,  parameter :: ITA0 = 3, ITA = 1, ITB = 1, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
 integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
 real,     parameter :: ATHR = 0.01, LPD = 10.
@@ -343,7 +343,7 @@ contains
                 do j = 1, ks
                     call cl%set('vol'//int2str(j), d//'/fflex/recvol_state'//pad2(pres(j))//'.mrc')
                 end do
-                call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
+                call refine_keys(self, cl, LPA, ITA0, NSPA, BOXA, mask)
                 if( self%p%sta0_npeaks > 0 ) call cl%set('npeaks_inpl', self%p%sta0_npeaks)
                 call self%submit(i, S_STA0, cl)
             case(S_STA0)
