@@ -2554,9 +2554,9 @@ contains
             real :: se
             se = halves_se(reps)
             if( flr >= 0. )then
-                write(s,'(4(1X,F7.3))') m, se, flr, m / max(se, flr, 1.e-6)
+                write(s,'(4(1X,F0.3))') m, se, flr, m / max(se, flr, 1.e-6)
             else
-                write(s,'(3(1X,F7.3))') m, se, m / max(se, 1.e-6)
+                write(s,'(3(1X,F0.3))') m, se, m / max(se, 1.e-6)
             endif
             write(funit,'(A)') what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
             write(logfhandle,'(A)') '>>> SITE_RANK halves '//what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
