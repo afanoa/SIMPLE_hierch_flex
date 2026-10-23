@@ -269,7 +269,7 @@ contains
         type(string), allocatable :: evens(:), odds(:)
         integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:)
         real(dp),     allocatable :: w(:)
-        character(len=:), allocatable :: d, mask, sitemask
+        character(len=:), allocatable :: d, mask, sitemask, sd
         integer :: s, k, j, ks
         s = self%nodes(i)%step
         if( present(done_step) ) s = done_step
@@ -372,13 +372,35 @@ contains
                 endif
                 call site_step(sitemask)
             case(S_SITE)
-                seeds = read_ints(d//'/site/site_seeds.txt')
+                sd    = seed_dir(d)
+                seeds = read_ints(sd//'/site_seeds.txt')
                 ks    = maxval([0, seeds])
-                call log_lines(d//'/site/site_poles.txt', 'pole (index, seeds, endpoints)')
-                call log_lines(d//'/site/site_halves.txt', 'halves')
-                call log_lines(d//'/site/site_spearman.txt', 'endpoint Spearman (merged at >= '//&
+                call log_lines(sd//'/site_poles.txt', 'pole (index, seeds, endpoints)')
+                call log_lines(sd//'/site_halves.txt', 'halves')
+                call log_lines(sd//'/site_pole_rule.txt', 'pole rule')
+                call log_lines(sd//'/site_spearman.txt', 'endpoint Spearman (merged at >= '//&
                     &trim(adjustl(rfmt2(self%p%pole_merge)))//')')
-                call log_lines(d//'/site/site_junk_report.txt', 'junk screen')
+                call log_lines(sd//'/site_junk_report.txt', 'junk screen')
+                if( ks < 2 )then
+                    j = str2int(trim(adjustl(first_line(d//'/sites/seed_site.txt', '1'))))
+                    if( j < nsites(d) )then
+                        call write_ints(d//'/sites/seed_site.txt', [j + 1])
+                        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(j)//' gives no split, '//&
+                            &'ranking site '//int2str(j + 1)
+                        call site_step(d//'/sites/site_'//pad2(j + 1)//'.mrc')
+                        return
+                    endif
+                    ch = two_groups(d)
+                    if( maxval([0, ch]) >= 2 )then
+                        if( size(seeds) == size(ch) )then
+                            where( seeds == 0 ) ch = 0
+                        endif
+                        seeds = ch
+                        ks    = 2
+                        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the two '//&
+                            &'groups of its fflex states seed the refinement'
+                    endif
+                endif
                 if( ks < 2 )then
                     write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': fewer than two seed states (accepted '//&
                         &'poles and the rest), the node is refined as one state and becomes a leaf'
@@ -464,8 +486,10 @@ contains
 
         subroutine site_step( smask )
             character(len=*), intent(in) :: smask
-            call simple_mkdir(string(d//'/site'))
-            call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/site/s.simple'))
+            character(len=:), allocatable :: sdir
+            sdir = seed_dir(d)
+            call simple_mkdir(string(sdir))
+            call simple_copy_file(string(d//'/'//NODE_PROJ), string(sdir//'/s.simple'))
             call cl%set('prg',         'site_rank')
             call cl%set('projfile',    's.simple')
             call cl%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
@@ -476,7 +500,10 @@ contains
             call cl%set('pgrp',        trim(self%p%pgrp))
             call cl%set('mskdiam',     self%p%mskdiam)
             call cl%set('nthr',        max(self%p%nthr, SITE_NTHR))
-            call self%submit(i, S_SITE, cl)
+            call self%submit_in(sdir, cl)
+            self%nodes(i)%step = S_SITE
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//sdir(index(sdir, '/', back=.true.)+1:)//&
+                &' submitted'
         end subroutine site_step
 
         subroutine log_lines( fname, what )
@@ -615,7 +642,7 @@ contains
             ld = nd//'/landscape'
             if( .not. file_exists(string(nd//'/split/split_children.txt')) ) cycle
             if( file_exists(string(ld//'/'//STEP_EXIT)) ) cycle
-            np = count_poles(nd//'/site/site_poles.txt')
+            np = count_poles(seed_dir(nd)//'/site_poles.txt')
             if( np < 2 )then
                 call simple_mkdir(string(ld))
                 call write_ints(ld//'/landscape_pairs.txt', [integer ::])
@@ -632,7 +659,7 @@ contains
             call cl%set('prg',      'landscape_sample')
             call cl%set('projfile', nd//'/stageB/b.simple')
             call cl%set('dir',      nd//'/stageB')
-            call cl%set('infile',   nd//'/site/site_poles.txt')
+            call cl%set('infile',   seed_dir(nd)//'/site_poles.txt')
             call cl%set('infile2',  nd//'/split/split_children.txt')
             call cl%set('mskdiam',  self%p%mskdiam)
             call cl%set('nthr',     self%p%nthr)
@@ -646,7 +673,7 @@ contains
             if( self%nodes(i)%step /= S_DONE ) cycle
             ld = self%ndir(i)//'/landscape'
             if( .not. file_exists(string(ld//'/'//STEP_EXIT)) ) cycle
-            np = count_poles(self%ndir(i)//'/site/site_poles.txt')
+            np = count_poles(seed_dir(self%ndir(i))//'/site_poles.txt')
             call read_exit_code(string(ld//'/'//STEP_EXIT), code, err)
             if( np < 2 )then
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': landscape skipped, '//int2str(np)//&
@@ -1812,13 +1839,15 @@ contains
     integer function step_status( self, i, istep )
         class(hetero_tree), intent(in) :: self
         integer,            intent(in) :: i, istep
-        character(len=:), allocatable :: f
+        character(len=:), allocatable :: f, sdir
         logical :: err
-        f = self%ndir(i)//'/'//trim(STEP_DIRS(istep))//'/'//STEP_EXIT
+        sdir = self%ndir(i)//'/'//trim(STEP_DIRS(istep))
+        if( istep == S_SITE ) sdir = seed_dir(self%ndir(i))
+        f = sdir//'/'//STEP_EXIT
         if( file_exists(string(f)) )then
             call read_exit_code(string(f), step_status, err)
             if( err ) step_status = -1
-        else if( file_exists(string(f//JOB_INFO_EXT)) .or. self%pending(self%ndir(i)//'/'//trim(STEP_DIRS(istep))) )then
+        else if( file_exists(string(f//JOB_INFO_EXT)) .or. self%pending(sdir) )then
             step_status = -1
         else
             step_status = -2
@@ -2114,6 +2143,68 @@ contains
         call tree%kill
         call tree_wiener_maps(evens, odds, counts, names, ljunk, steps, self%p%mskdiam, LPD, md)
     end subroutine final_maps
+
+    function seed_dir( nd ) result( sd )
+        character(len=*), intent(in) :: nd
+        character(len=:), allocatable :: sd
+        integer :: k
+        k  = str2int(trim(adjustl(first_line(nd//'/sites/seed_site.txt', '1'))))
+        sd = nd//'/site'
+        if( k > 1 ) sd = nd//'/fsite_'//nd(index(nd, '/node_', back=.true.)+6:)//'_s'//int2str(k)
+    end function seed_dir
+
+    function first_line( fname, dflt ) result( ln )
+        character(len=*), intent(in) :: fname, dflt
+        character(len=:), allocatable :: ln
+        character(len=256) :: buf
+        integer :: fu, io
+        ln = dflt
+        if( .not. file_exists(string(fname)) ) return
+        call fopen(fu, string(fname), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        read(fu,'(A)',iostat=io) buf
+        if( io == 0 .and. len_trim(buf) > 0 ) ln = trim(buf)
+        call fclose(fu)
+    end function first_line
+
+    integer function nsites( nd )
+        character(len=*), intent(in) :: nd
+        character(len=4096) :: ln
+        integer :: fu, io
+        nsites = 0
+        if( .not. file_exists(string(nd//'/sites/sites.txt')) ) return
+        call fopen(fu, string(nd//'/sites/sites.txt'), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) > 0 .and. ln(1:1) /= '#' ) nsites = nsites + 1
+        end do
+        call fclose(fu)
+    end function nsites
+
+    function two_groups( nd ) result( lab )
+        character(len=*), intent(in) :: nd
+        integer, allocatable :: lab(:), st(:), pres(:), grp(:)
+        type(string), allocatable :: evens(:), odds(:)
+        real(dp),     allocatable :: cnt(:)
+        type(state_tree) :: tree
+        integer :: j
+        st   = project_states(nd//'/fflex/f.simple')
+        pres = with_maps(nd//'/fflex', present_labels(st))
+        allocate(lab(size(st)), source=0)
+        if( size(pres) < 2 ) return
+        evens = [(string(nd//'/fflex/'//hv(pres(j), 'even')), j=1,size(pres))]
+        odds  = [(string(nd//'/fflex/'//hv(pres(j), 'odd')), j=1,size(pres))]
+        cnt   = [(real(count(st == pres(j)), dp), j=1,size(pres))]
+        call tree%new(evens, odds, pres, cnt, find_img_smpd(evens(1)), 40., 10.)
+        call tree%build('complete', 0.)
+        call tree%cut(2, grp)
+        call tree%kill
+        do j = 1, size(pres)
+            where( st == pres(j) ) lab = grp(j)
+        end do
+    end function two_groups
 
     function with_maps( dir, pres ) result( kept )
         character(len=*), intent(in) :: dir
@@ -3321,9 +3412,9 @@ contains
         character(len=256) :: ln
         integer :: fu, io, r, fl, n
         allocate(jr(0))
-        if( .not. file_exists(string(nd//'/site/site_junk.txt')) ) return
-        allocate(buf(nlines(string(nd//'/site/site_junk.txt'))))
-        call fopen(fu, string(nd//'/site/site_junk.txt'), status='old', action='read', iostat=io)
+        if( .not. file_exists(string(seed_dir(nd)//'/site_junk.txt')) ) return
+        allocate(buf(nlines(string(seed_dir(nd)//'/site_junk.txt'))))
+        call fopen(fu, string(seed_dir(nd)//'/site_junk.txt'), status='old', action='read', iostat=io)
         if( io /= 0 ) return
         n = 0
         do

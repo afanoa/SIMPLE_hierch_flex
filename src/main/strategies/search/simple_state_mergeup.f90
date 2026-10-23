@@ -18,7 +18,7 @@ use simple_stat,          only: avg_ranks
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
-public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff
+public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles
 private
 #include "simple_local_flags.inc"
 

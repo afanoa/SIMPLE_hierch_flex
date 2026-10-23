@@ -2196,7 +2196,8 @@ contains
 
     subroutine exec_site_rank( self, cline )
         use simple_state_mergeup,     only: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, &
-                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG, mask_neff
+                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG, mask_neff, &
+                                          &seed_poles
         use simple_eo_partition,      only: ensure_field_halves
         use simple_srch_sort_loc,     only: hpsort
         use simple_string_utils,      only: list_of_ints2arr
@@ -2376,6 +2377,7 @@ contains
                     &' (each other''s best partner in both directions): '//trim(merge('accepted', 'rejected', ok(i)))
             end do
             call fclose(funit)
+            if( maxval([0, grp]) > 0 ) call pole_rule
         endif
         do i = 1, size(names)
             if( grp(i) /= 0 ) cycle
@@ -2506,6 +2508,114 @@ contains
             write(logfhandle,'(A)') '>>> SITE_RANK rest state (best pole posterior < 0.5): '//trim(merge('accepted as a state       ', &
                 &'rejected, to its best pole', grp(m+1) > 0))
         end subroutine test_rest
+
+        ! a pole keeps its seeds when they hold under half of the node and their own maps pass the halves accept test
+        subroutine pole_rule
+            complex,  allocatable :: dh(:,:,:,:,:), dhq(:,:,:,:,:)
+            real(dp), allocatable :: gp(:,:)
+            real,     allocatable :: hs(:)
+            integer,  allocatable :: plab(:), sd(:), kid(:)
+            logical,  allocatable :: keep(:), pt(:), lpole(:)
+            real    :: share, zr, zc
+            integer :: g, np, m, k, f, fu, io
+            np = maxval(grp)
+            m  = size(names)
+            pt = halves_cand(craw, rel1, rel2, cq) .and. [(names(f)%to_char() /= 'rest', f=1,m)]
+            allocate(keep(np), source=.true.)
+            lpole = [(.not. any([(grp(f) == g .and. names(f)%to_char() == 'rest', f=1,m)]), g=1,np)]
+            call fopen(fu, string('site_pole_rule.txt'), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write site_pole_rule.txt', io)
+            write(fu,'(A)') '# pole, seeds, share of the node, halves accept margin / SE of the seeds'' own maps (row, column), '//&
+                &'kept (share < 0.5 and both >= '//int2str(nint(HALVES_KSIG))//')'
+            do g = 1, np
+                if( .not. lpole(g) ) cycle
+                share = real(count(seeds == g)) / real(n)
+                zr    = -huge(zr)
+                zc    = -huge(zc)
+                if( share < 0.5 )then
+                    hs = merge(1., 0., seeds == g)
+                    do h = 1, 2
+                        call site%site_em(hsel(:,h) .and. fit, hsel(:,h) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
+                            &devs, hs, .false.)
+                        if( .not. allocated(dh) ) allocate(dh(size(devs,1),size(devs,2),size(devs,3),2,2))
+                        dh(:,:,:,:,h) = devs
+                    end do
+                    do k = 1, 4
+                        call site%site_em(qsel(:,k) .and. fit, qsel(:,k) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
+                            &devs, hs, .false.)
+                        if( .not. allocated(dhq) ) allocate(dhq(size(devs,1),size(devs,2),size(devs,3),2,4))
+                        dhq(:,:,:,:,k) = devs
+                    end do
+                    zr = seed_z(dh, dhq, g, pt, .true.)
+                    zc = seed_z(dh, dhq, g, pt, .false.)
+                endif
+                keep(g) = share < 0.5 .and. zr >= HALVES_KSIG .and. zc >= HALVES_KSIG
+                write(fu,'(I0,1X,I0,1X,F6.3,2(1X,F0.3),1X,A)') g, count(seeds == g), share, max(zr, -999.), max(zc, -999.), &
+                    &trim(merge('kept    ', 'rejected', keep(g)))
+                write(line,'(A,I0,A,I0,A,F6.3,A,F0.3,A,F0.3,A)') '>>> SITE_RANK pole rule: pole ', g, ', ', count(seeds == g), &
+                    &' seeds (', share, ' of the node), seed maps accept z ', max(zr, -999.), ' / ', max(zc, -999.), ': '//&
+                    &trim(merge('kept    ', 'rejected', keep(g)))
+                write(logfhandle,'(A)') trim(line)
+            end do
+            call fclose(fu)
+            if( all(keep) ) return
+            kid = pack([(g, g=1,np)], keep)
+            if( .not. any(keep .and. lpole) )then
+                seeds = 1
+                grp   = 0
+                write(logfhandle,'(A)') '>>> SITE_RANK pole rule: no pole kept, one state'
+                return
+            endif
+            allocate(gp(n,size(kid)), source=0._dp)
+            do k = 1, size(kid)
+                do f = 1, m
+                    if( grp(f) == kid(k) ) gp(:,k) = gp(:,k) + real(posts(:,f),dp) / real(count(grp == kid(k)),dp)
+                end do
+            end do
+            call seed_poles(gp, PROB_MULTISTATE_MIN_POP + 1, all(lpole(kid)), sd, plab)
+            do f = 1, m
+                if( grp(f) == 0 ) cycle
+                if( keep(grp(f)) )then
+                    grp(f) = plab(findloc(kid, grp(f), dim=1))
+                else
+                    grp(f) = 0
+                endif
+            end do
+            seeds = sd
+        end subroutine pole_rule
+
+        real function seed_z( dh, dhq, g, pt, l_row )
+            complex, intent(in) :: dh(:,:,:,:,:), dhq(:,:,:,:,:)
+            integer, intent(in) :: g
+            logical, intent(in) :: pt(:), l_row
+            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
+            real    :: mm(0:4), best, c
+            integer :: k, f
+            do k = 0, 4
+                if( k == 0 )then
+                    mm(0) = site%half_corr(dh(:,:,:,:,1), dh(:,:,:,:,2))
+                else
+                    mm(k) = site%half_corr(dhq(:,:,:,:,QA(k)), dhq(:,:,:,:,QB(k)))
+                endif
+                best = -huge(best)
+                do f = 1, size(pt)
+                    if( .not. pt(f) .or. grp(f) == g ) cycle
+                    if( k == 0 .and. l_row )then
+                        c = site%half_corr(dh(:,:,:,:,1), dall(:,:,:,:,f,2))
+                    else if( k == 0 )then
+                        c = site%half_corr(dall(:,:,:,:,f,1), dh(:,:,:,:,2))
+                    else if( l_row )then
+                        c = site%half_corr(dhq(:,:,:,:,QA(k)), dq(:,:,:,:,f,QB(k)))
+                    else
+                        c = site%half_corr(dq(:,:,:,:,f,QA(k)), dhq(:,:,:,:,QB(k)))
+                    endif
+                    best = max(best, c)
+                end do
+                if( best > -huge(best) ) mm(k) = mm(k) - best
+            end do
+            seed_z = -huge(1.)
+            if( mm(0) > 0. ) seed_z = mm(0) / max(halves_se(mm(1:4)), 1.e-6)
+        end function seed_z
 
         subroutine halves_margins
             logical, allocatable :: cnd(:), solo(:), pt(:)
