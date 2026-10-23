@@ -6,7 +6,7 @@ use simple_error,           only: simple_exception
 use simple_string,          only: string
 use simple_string_utils,    only: int2str
 use simple_fileio,          only: fopen, fclose, fileiochk, nlines, read_exit_code, simple_copy_file
-use simple_syslib,          only: file_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file
+use simple_syslib,          only: file_exists, dir_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file
 use simple_imghead,         only: find_ldim_nptcls, find_img_smpd
 use simple_rnd,             only: seed_rnd_fixed, ran3
 use simple_linalg,          only: eigh, jacobi
@@ -400,6 +400,7 @@ contains
                 if( ks < 2 )then
                     j = str2int(trim(adjustl(first_line(d//'/sites/seed_site.txt', '1'))))
                     if( j < nsites(d) )then
+                        call simple_mkdir(string(d//'/nsite_'//self%nodes(i)%id//'_s'//int2str(j + 1)))
                         call write_ints(d//'/sites/seed_site.txt', [j + 1])
                         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(j)//' gives no split, '//&
                             &'ranking site '//int2str(j + 1)
@@ -2305,7 +2306,11 @@ contains
         integer :: k
         k  = str2int(trim(adjustl(first_line(nd//'/sites/seed_site.txt', '1'))))
         sd = nd//'/site'
-        if( k > 1 ) sd = nd//'/fsite_'//nd(index(nd, '/node_', back=.true.)+6:)//'_s'//int2str(k)
+        if( k > 1 )then
+            sd = nd//'/nsite_'//nd(index(nd, '/node_', back=.true.)+6:)//'_s'//int2str(k)
+            ! fsite_ is the per-site layer's ranking of the same site; trees begun before nsite_ ranked there too
+            if( .not. dir_exists(sd) ) sd = nd//'/fsite_'//nd(index(nd, '/node_', back=.true.)+6:)//'_s'//int2str(k)
+        endif
     end function seed_dir
 
     function first_line( fname, dflt ) result( ln )
@@ -3494,7 +3499,8 @@ contains
         call fopen(funit, string(fname), status='old', action='read', iostat=ios)
         call fileiochk('hetero_tree: cannot read '//fname, ios)
         do j = 1, n
-            read(funit,*) v(j)
+            read(funit,*,iostat=ios) v(j)
+            if( ios /= 0 ) THROW_HARD('cannot read line '//int2str(j)//' of '//int2str(n)//' in '//fname//'; read_ints')
         end do
         call fclose(funit)
     end function read_ints
