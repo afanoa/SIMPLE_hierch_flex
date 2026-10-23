@@ -2299,16 +2299,23 @@ contains
             real    :: r = 0., share = 0., mol = 0., rad = 0.
             integer :: comp = 0, fac = 0, ncore = 0, seed = 0, vox = 0
         end type dcand
+        type :: dreg
+            integer, allocatable :: v(:)
+            real    :: cut = 0.
+            integer :: comp = 0
+            logical :: top = .true.
+        end type dreg
         type(dcand), allocatable :: cands(:), tmp(:)
+        type(dreg),  allocatable :: regs(:), rtmp(:)
         type(image)              :: img
         real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pn(:,:), cc(:,:), vv(:)
         logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:), cm(:,:,:), b(:,:,:), okk(:)
         integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:)
         real(dp), allocatable :: wn(:)
         character(len=:), allocatable :: mlist
-        real    :: smpd, tot, cosv, sh(2)
-        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios
-        logical :: l_sib
+        real    :: smpd, tot, cosv, sh(2), cut2
+        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios, ir, nc0, np2
+        logical :: l_sib, l_fac
         wn  = counts / sum(counts)
         nk  = size(evens)
         okk = counts >= real(DSEEDMIN,dp)
@@ -2316,11 +2323,22 @@ contains
         core = vs > MFRAC * maxval(vs)
         call label6(core, lab, nl)
         tot  = sum(vs, mask=core)
-        allocate(cands(0))
+        allocate(cands(0), regs(0))
         do ic = 1, nl
-            cm = lab == ic
+            call push(lab == ic, MFRAC * maxval(vs), .true., ic)
+        end do
+        ir  = 0
+        np2 = nl
+        do while( ir < size(regs) )
+            ir = ir + 1
+            if( allocated(cm) ) deallocate(cm)
+            allocate(cm(n,n,n), source=.false.)
+            call set_voxels(cm, regs(ir)%v)
             if( count(cm) < DMINVOX ) cycle
-            if( sum(vs, mask=cm) / tot < DMINSHARE ) cycle
+            if( regs(ir)%top .and. sum(vs, mask=cm) / tot < DMINSHARE ) cycle
+            ic    = regs(ir)%comp
+            nc0   = size(cands)
+            l_fac = .false.
             if( count(cm) >= 2 * DMINVOX )then
                 nv = count(cm)
                 allocate(pn(nv,nk), vidx(3,nv), vv(nv))
@@ -2361,14 +2379,26 @@ contains
                         call add(b, ic, j, cc(j,:) / real(sqrt(wn)))
                         deallocate(b)
                     end do
-                    deallocate(pn, vidx, vv)
-                    cycle
+                    l_fac = .true.
+                else
+                    write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2,A)') '>>> SITE_DISCOVER component ', ic, ' is one factor (|cos| ', &
+                        &cosv, ', shares ', sh(1), ' / ', sh(2), ')'
                 endif
-                write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2,A)') '>>> SITE_DISCOVER component ', ic, ' is one factor (|cos| ', &
-                    &cosv, ', shares ', sh(1), ' / ', sh(2), ')'
                 deallocate(pn, vidx, vv)
             endif
-            call add(cm, ic, 0)
+            if( .not. l_fac ) call add(cm, ic, 0)
+            if( all([(cands(k)%mol <= DMAXMOL, k=nc0+1,size(cands))]) ) cycle
+            ! a component whose candidates are not local is re-cut inside itself at its cut plus MFRAC of its excess, while that splits it
+            cut2 = regs(ir)%cut + MFRAC * (maxval(vs, mask=cm) - regs(ir)%cut)
+            call label6(cm .and. vs > cut2, lb, nb)
+            write(logfhandle,'(A,I0,A,F6.3,A,I0,A)') '>>> SITE_DISCOVER component ', ic, ' is not local: re-cut at ', cut2 / maxval(vs), &
+                &' x max gives ', count([(count(lb == k) >= DMINVOX, k=1,nb)]), ' piece(s) of at least '//int2str(DMINVOX)//' voxels'
+            if( count([(count(lb == k) >= DMINVOX, k=1,nb)]) < 2 ) cycle
+            do k = 1, nb
+                if( count(lb == k) < DMINVOX ) cycle
+                np2 = np2 + 1
+                call push(lb == k, cut2, .false., np2)
+            end do
         end do
         nsite = 0
         ord   = pack([(i, i=1,size(cands))], [(cands(i)%mol <= DMAXMOL, i=1,size(cands))])
@@ -2428,6 +2458,31 @@ contains
         call img%kill
 
     contains
+
+        subroutine push( m, cut, top, comp )
+            logical, intent(in) :: m(:,:,:)
+            real,    intent(in) :: cut
+            logical, intent(in) :: top
+            integer, intent(in) :: comp
+            integer :: q
+            allocate(rtmp(size(regs)+1))
+            rtmp(1:size(regs)) = regs
+            call move_alloc(rtmp, regs)
+            regs(size(regs))%v   = pack([(q, q=1,size(m))], reshape(m, [size(m)]))
+            regs(size(regs))%cut = cut
+            regs(size(regs))%top  = top
+            regs(size(regs))%comp = comp
+        end subroutine push
+
+        subroutine set_voxels( m, v )
+            logical, intent(inout) :: m(:,:,:)
+            integer, intent(in)    :: v(:)
+            integer :: q, nn
+            nn = size(m,1)
+            do q = 1, size(v)
+                m(mod(v(q)-1, nn) + 1, mod((v(q)-1) / nn, nn) + 1, (v(q)-1) / (nn*nn) + 1) = .true.
+            end do
+        end subroutine set_voxels
 
         subroutine add( c, comp, fac, prof )
             logical,        intent(in) :: c(:,:,:)
