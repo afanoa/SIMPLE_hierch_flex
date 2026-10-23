@@ -267,7 +267,7 @@ contains
         integer, optional,  intent(in)    :: done_step
         type(cmdline)             :: cl
         type(string), allocatable :: evens(:), odds(:)
-        integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:)
+        integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:), jk(:)
         real(dp),     allocatable :: w(:)
         character(len=:), allocatable :: d, mask, sitemask, sd
         integer :: s, k, j, ks
@@ -391,10 +391,9 @@ contains
                         return
                     endif
                     ch = two_groups(d)
-                    if( maxval([0, ch]) >= 2 )then
-                        if( size(seeds) == size(ch) )then
-                            where( seeds == 0 ) ch = 0
-                        endif
+                    jk = junk_rows(d)
+                    if( size(jk) > 0 .and. size(ch) > 0 ) ch(jk) = 0
+                    if( count(ch == 1) > 0 .and. count(ch == 2) > 0 )then
                         seeds = ch
                         ks    = 2
                         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the two '//&
@@ -406,6 +405,13 @@ contains
                         &'poles and the rest), the node is refined as one state and becomes a leaf'
                     if( ks < 1 ) seeds = merge(1, 0, project_states(d//'/'//NODE_PROJ) > 0)
                     ks    = 1
+                endif
+                if( any([(count(seeds == j) == 0, j=1,ks)]) )then
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': ERROR, seed states 1..'//int2str(ks)//&
+                        &' hold '//joined([(count(seeds == j), j=1,ks)])//' particles; a state without particles cannot be '//&
+                        &'reconstructed, node stopped'
+                    self%nodes(i)%step = S_FAILED
+                    return
                 endif
                 call write_contrast(d//'/'//NODE_PROJ, sd//'/site_contrast.txt')
                 call simple_mkdir(string(d//'/seeds'))
