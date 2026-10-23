@@ -20,6 +20,8 @@ use simple_image,           only: image
 use simple_state_tree,      only: state_tree
 use simple_tree_wiener,     only: tree_wiener_maps
 use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
+use simple_stat,            only: avg_ranks
+use simple_state_mergeup,   only: mask_neff
 implicit none
 
 public :: hetero_tree, discover_sites
@@ -39,22 +41,38 @@ character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean',
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
 character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE = 'hetero_tree_leaves.txt'
 character(len=*), parameter :: STEP_EXIT = 'hetero_step.exit', NODE_PROJ = 'n.simple'
+integer,  parameter :: SITE_NFIT = 100000, F_FAIL = -1, F_RUN = 1, F_TEST = 2, F_UP = 3, F_LEVEL = 4, F_COPY = 5, F_NOPOLE = 6, &
+                     & F_DUP = 7, F_KEEP = 8, F_MAPS = 9, F_DONE = 10, F_REC = 11, F_REF = 12, F_READY = 13, F_PREC = 14, &
+                     & F_PREF = 15, F_SIZE = 16
+real,     parameter :: FGATE = 0.5
+character(len=*), parameter :: SITE_TABLE = 'hetero_tree_sites', FDIR = 'factorial'
+character(len=8), parameter :: FST_NAMES(F_FAIL:F_SIZE) = [character(len=8) :: 'failed', '-', 'ranking', 'ranked', 'pooling', &
+                                                           & 'level', 'copy', 'no_pole', 'dup', 'kept', 'maps', 'done', 'refclass', &
+                                                           & 'refrank', 'ready', 'prerec', 'preref', 'sizing']
 
 type :: tnode
     character(len=:), allocatable :: id, pproj, prows
     integer :: depth = 0, step = S_QUEUED
 end type tnode
 
+type :: fsite
+    character(len=:), allocatable :: name, home, level, target
+    integer :: k = 0, st = F_RUN, ref = 0
+    real    :: repro = 0., rho = 0., dice = 0.
+end type fsite
+
 type :: hetero_tree
     private
     class(parameters), pointer :: p => null()
     type(tnode), allocatable :: nodes(:)
+    type(fsite), allocatable :: fs(:)
     type(string), allocatable :: subd(:)
+    logical,      allocatable :: tjunk(:)
     type(qsys_env) :: qenv, qsite
     character(len=:), allocatable :: root, sitemask
     real    :: smpd = 0.
     integer :: box = 0, nrows = 0, npcur = 0
-    logical :: l_subtree = .false., l_lsdone = .false.
+    logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false.
   contains
     procedure :: new
     procedure :: run
@@ -75,6 +93,32 @@ type :: hetero_tree
     procedure, private :: read_table
     procedure, private :: write_table
     procedure, private :: ndir
+    procedure, private :: fs_sync
+    procedure, private :: factorial
+    procedure, private :: fs_rank
+    procedure, private :: fs_climb
+    procedure, private :: fs_maps
+    procedure, private :: fs_output
+    procedure, private :: fs_hd
+    procedure, private :: fs_rd
+    procedure, private :: fs_rho
+    procedure, private :: fs_eval_rows
+    procedure, private :: fs_labels
+    procedure, private :: dir_status
+    procedure, private :: fs_nrun
+    procedure, private :: fs_cd
+    procedure, private :: fs_md
+    procedure, private :: fs_fd
+    procedure, private :: fs_refine
+    procedure, private :: fs_guard
+    procedure, private :: fs_prerefine
+    procedure, private :: fs_size
+    procedure, private :: fs_sets
+    procedure, private :: fs_mask
+    procedure, private :: fs_zd
+    procedure, private :: tree_junk
+    procedure, private :: fs_read_table
+    procedure, private :: fs_write_table
 end type hetero_tree
 
 contains
@@ -171,6 +215,7 @@ contains
                 nact = nact + 1
                 call self%write_table
             end do
+            if( self%p%site_layer .eq. 'yes' ) call self%fs_sync
             if( nact == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED) )then
                 if( self%final() ) exit
             endif
@@ -492,14 +537,20 @@ contains
 
     logical function final( self )
         class(hetero_tree), intent(inout) :: self
+        logical :: l_fac
         final = .false.
         if( .not. self%plain() ) return
+        l_fac = self%factorial()
         if( .not. self%l_lsdone )then
             if( .not. self%landscape() ) return
             self%l_lsdone = .true.
         endif
         if( .not. file_exists(string(self%root//'/final_maps/choice.txt')) ) call final_maps(self)
-        final = self%mergeup()
+        if( .not. self%l_mudone )then
+            if( .not. self%mergeup() ) return
+            self%l_mudone = .true.
+        endif
+        final = l_fac
     end function final
 
     ! the landscape between the accepted poles of every finished node (landscape_sample in node_<id>/landscape)
@@ -655,6 +706,1052 @@ contains
         call self%submit_in(md, cl)
         write(logfhandle,'(A)') '>>> HETERO_TREE merge-up of the '//int2str(nn)//' leaves submitted'
     end function mergeup
+
+    subroutine fs_sync( self )
+        class(hetero_tree), intent(inout) :: self
+        type(fsite), allocatable :: tmp(:)
+        character(len=4096) :: ln
+        character(len=:), allocatable :: f, sd
+        integer :: i, j, funit, ios, nrun, code
+        logical :: l_reg, l_chg
+        if( .not. self%l_fsread )then
+            call self%fs_read_table
+            self%l_fsread = .true.
+        endif
+        l_chg = .false.
+        do i = 1, size(self%nodes)
+            f = self%ndir(i)//'/sites/sites.txt'
+            if( .not. file_exists(string(f)) ) cycle
+            l_reg = .false.
+            do j = 1, size(self%fs)
+                if( self%fs(j)%home == self%nodes(i)%id ) l_reg = .true.
+            end do
+            if( l_reg ) cycle
+            call fopen(funit, string(f), status='old', action='read', iostat=ios)
+            if( ios /= 0 ) cycle
+            do
+                read(funit,'(A)',iostat=ios) ln
+                if( ios /= 0 ) exit
+                if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+                allocate(tmp(size(self%fs) + 1))
+                tmp(1:size(self%fs)) = self%fs
+                j = size(tmp)
+                tmp(j)%k      = str2int(word(ln, 1))
+                tmp(j)%name   = self%nodes(i)%id//'_s'//int2str(tmp(j)%k)
+                tmp(j)%home   = self%nodes(i)%id
+                tmp(j)%level  = self%nodes(i)%id
+                tmp(j)%target = '-'
+                tmp(j)%repro  = str2real(word(ln, 3))
+                call move_alloc(tmp, self%fs)
+                l_chg = .true.
+            end do
+            call fclose(funit)
+        end do
+        nrun = self%fs_nrun()
+        do j = 1, size(self%fs)
+            if( self%fs(j)%st /= F_RUN ) cycle
+            sd   = self%fs_hd(j)
+            code = self%dir_status(sd)
+            if( code == -1 ) cycle
+            if( code == -2 )then
+                if( self%fs(j)%k == 1 .or. nrun >= max(1, self%p%nodepar) ) cycle
+                call self%fs_rank(sd, self%fs(j)%home, site_mask(self, j), '', '', SITE_NFIT, .false.)
+                write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': ranking at its node submitted'
+                nrun = nrun + 1
+                cycle
+            endif
+            self%fs(j)%st = merge(F_TEST, F_FAIL, code == 0)
+            if( code /= 0 ) write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': ranking FAILED (exit code '//&
+                &int2str(code)//')'
+            l_chg = .true.
+        end do
+        if( l_chg ) call self%fs_write_table
+    end subroutine fs_sync
+
+    logical function factorial( self )
+        class(hetero_tree), intent(inout) :: self
+        integer, allocatable :: ev(:), ord(:)
+        real,    allocatable :: key(:)
+        character(len=:), allocatable :: sd
+        integer :: j, a, b, dmin, nrun, code, best, np
+        real    :: r, rbest
+        logical :: l_chg, l_dup, l_ok
+        factorial = .true.
+        if( self%p%site_layer .ne. 'yes' ) return
+        call self%fs_sync
+        factorial = .false.
+        l_chg     = .false.
+        nrun      = self%fs_nrun()
+        do j = 1, size(self%fs)
+            if( self%fs(j)%st /= F_UP ) cycle
+            sd   = self%fs_cd(j)
+            code = self%dir_status(sd)
+            if( code == -1 ) cycle
+            if( code == -2 )then
+                if( nrun >= max(1, self%p%nodepar) ) cycle
+                call self%fs_climb(j)
+                nrun = nrun + 1
+                cycle
+            endif
+            l_chg = .true.
+            np    = count_poles(sd//'/site_poles.txt')
+            r     = 0.
+            if( code == 0 ) r = self%fs_rho(sd, self%fs_hd(j), self%fs_eval_rows(self%fs(j)%home), .true.)
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': pooling test '//self%fs(j)%level//' -> '//&
+                &parent_of(self%fs(j)%level)//', first pole Spearman on the '//self%fs(j)%home//' particles '//rstr(r)//', '//&
+                &int2str(np)//' pole(s) pass the halves test there'//trim(merge(' (run FAILED)', '             ', code /= 0))
+            if( code /= 0 .or. r < FGATE )then
+                self%fs(j)%st = F_LEVEL
+                cycle
+            endif
+            self%fs(j)%level = parent_of(self%fs(j)%level)
+            self%fs(j)%rho   = r
+            if( len(self%fs(j)%level) == 1 )then
+                self%fs(j)%st = F_LEVEL
+            else if( nrun < max(1, self%p%nodepar) )then
+                call self%fs_climb(j)
+                nrun = nrun + 1
+            endif
+        end do
+        do j = 1, size(self%fs)
+            if( any(self%fs(j)%st == [F_PREC, F_PREF]) ) call self%fs_prerefine(j, nrun, l_chg)
+        end do
+        dmin = huge(dmin)
+        do j = 1, size(self%fs)
+            if( any(self%fs(j)%st == [F_RUN, F_TEST, F_UP, F_PREC, F_PREF]) ) dmin = min(dmin, len(self%fs(j)%home) - 1)
+        end do
+        if( dmin < huge(dmin) )then
+            do j = 1, size(self%fs)
+                if( self%fs(j)%st /= F_TEST .or. len(self%fs(j)%home) - 1 /= dmin ) cycle
+                if( npoles_of(self%fs_hd(j)) == 0 .and. self%fs(j)%ref == 0 )then
+                    l_ok = best_minz(self%fs_hd(j)) >= 2. .and. best_minz(self%fs_hd(j)) < 3.
+                    if( l_ok )then
+                        if( nrun < max(1, self%p%nodepar) ) call self%fs_prerefine(j, nrun, l_chg)
+                        cycle
+                    endif
+                endif
+                if( npoles_of(self%fs_hd(j)) == 0 )then
+                    self%fs(j)%st = F_NOPOLE
+                    l_chg = .true.
+                    write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': no accepted pole, not a site'
+                    cycle
+                endif
+                ev    = self%fs_eval_rows(self%fs(j)%home)
+                rbest = 0.
+                best  = 0
+                do a = 1, size(self%fs)
+                    if( self%fs(a)%st /= F_LEVEL .or. len(self%fs(a)%home) - 1 >= dmin ) cycle
+                    if( .not. is_anc(self%fs(a)%level, self%fs(j)%home) ) cycle
+                    r = self%fs_rho(self%fs_rd(a), self%fs_hd(j), ev, .false.)
+                    if( r > rbest )then
+                        rbest = r
+                        best  = a
+                    endif
+                end do
+                if( best > 0 .and. rbest >= FGATE )then
+                    self%fs(j)%st     = F_COPY
+                    self%fs(j)%target = self%fs(best)%name
+                    self%fs(j)%rho    = rbest
+                    self%fs(j)%dice   = mask_dice(site_mask(self, j), site_mask(self, best))
+                    write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//' = site '//self%fs(best)%name//&
+                        &' (pooled at '//self%fs(best)%level//'): Spearman on the '//self%fs(j)%home//' particles '//rstr(rbest)//&
+                        &', mask Dice '//rstr(self%fs(j)%dice)
+                else if( len(self%fs(j)%home) == 1 )then
+                    self%fs(j)%st = F_LEVEL
+                else
+                    if( nrun >= max(1, self%p%nodepar) ) cycle
+                    self%fs(j)%st  = F_UP
+                    self%fs(j)%rho = rbest
+                    call self%fs_climb(j)
+                    nrun = nrun + 1
+                endif
+                l_chg = .true.
+            end do
+            if( l_chg ) call self%fs_write_table
+            return
+        endif
+        if( any([(self%fs(j)%st == F_LEVEL, j=1,size(self%fs))]) )then
+            key = [(-self%fs(j)%repro, j=1,size(self%fs))]
+            ord = [(j, j=1,size(self%fs))]
+            call hpsort(key, ord)
+            do b = 1, size(ord)
+                j = ord(b)
+                if( self%fs(j)%st /= F_LEVEL ) cycle
+                ev    = self%fs_eval_rows(self%fs(j)%level)
+                l_dup = .false.
+                do a = 1, size(self%fs)
+                    if( self%fs(a)%st /= F_KEEP .or. self%fs(a)%level /= self%fs(j)%level ) cycle
+                    r = self%fs_rho(self%fs_rd(a), self%fs_rd(j), ev, .false.)
+                    if( r < FGATE ) cycle
+                    self%fs(j)%st     = F_DUP
+                    self%fs(j)%target = self%fs(a)%name
+                    self%fs(j)%rho    = r
+                    self%fs(j)%dice   = mask_dice(site_mask(self, j), site_mask(self, a))
+                    write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//' duplicates site '//self%fs(a)%name//&
+                        &' at '//self%fs(j)%level//': Spearman '//rstr(r)//', mask Dice '//rstr(self%fs(j)%dice)
+                    l_dup = .true.
+                    exit
+                end do
+                if( .not. l_dup ) self%fs(j)%st = F_KEEP
+            end do
+            l_chg = .true.
+        endif
+        do j = 1, size(self%fs)
+            if( any(self%fs(j)%st == [F_KEEP, F_REC, F_REF]) )then
+                call self%fs_refine(j, nrun, l_chg)
+            else if( self%fs(j)%st == F_READY .or. (self%fs(j)%st == F_DONE .and. &
+                &self%dir_status(self%fs_zd(j)) == -2) )then
+                if( nrun >= max(1, self%p%nodepar) ) cycle
+                call self%fs_size(j)
+                nrun  = nrun + 1
+                l_chg = .true.
+            else if( self%fs(j)%st == F_SIZE )then
+                code = self%dir_status(self%fs_zd(j))
+                if( code == -1 ) cycle
+                if( code == -2 )then
+                    if( nrun >= max(1, self%p%nodepar) ) cycle
+                    call self%fs_size(j)
+                    nrun = nrun + 1
+                    cycle
+                endif
+                if( code /= 0 ) write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': sizing FAILED, its '//&
+                    &'labels and maps keep the top-N* sets of its ranking'
+                l_chg = .true.
+                if( self%dir_status(self%fs_md(j)) == 0 )then
+                    self%fs(j)%st = F_DONE
+                else
+                    if( nrun >= max(1, self%p%nodepar) ) cycle
+                    call self%fs_maps(j)
+                    nrun = nrun + 1
+                endif
+            else if( self%fs(j)%st == F_MAPS )then
+                sd   = self%fs_md(j)
+                code = self%dir_status(sd)
+                if( code == -1 ) cycle
+                if( code == -2 )then
+                    if( nrun >= max(1, self%p%nodepar) ) cycle
+                    call self%fs_maps(j)
+                    nrun = nrun + 1
+                    cycle
+                endif
+                if( code /= 0 ) write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': pole maps FAILED'
+                self%fs(j)%st = F_DONE
+                l_chg = .true.
+            endif
+        end do
+        if( l_chg ) call self%fs_write_table
+        if( any([(any(self%fs(j)%st == [F_KEEP, F_REC, F_REF, F_READY, F_MAPS, F_SIZE]), j=1,size(self%fs))]) ) return
+        if( .not. file_exists(string(self%root//'/'//FDIR//'/sites.txt')) .or. l_chg ) call self%fs_output
+        factorial = .true.
+    end function factorial
+
+    subroutine fs_rank( self, sd, id, mask, startf, srcproj, nfit, l_size )
+        class(hetero_tree), intent(inout) :: self
+        character(len=*),   intent(in)    :: sd, id, mask, startf, srcproj
+        integer,            intent(in)    :: nfit
+        logical,            intent(in)    :: l_size
+        type(cmdline)        :: cl
+        integer, allocatable :: rows(:), jk(:), st(:)
+        character(len=:), allocatable :: nd
+        nd = self%root//'/node_'//id
+        call simple_mkdir(string(sd))
+        if( len(srcproj) > 0 )then
+            call simple_copy_file(string(srcproj), string(sd//'/s.simple'))
+            st = project_states(sd//'/s.simple')
+        else
+            rows = read_ints(nd//'/rows.txt')
+            allocate(st(self%nrows), source=0)
+            st(rows) = 1
+            jk = junk_rows(nd)
+            if( size(jk) > 0 ) st(jk) = 0
+            call write_states(nd//'/'//NODE_PROJ, sd//'/s.simple', st)
+        endif
+        call cl%set('prg',         'site_rank')
+        call cl%set('projfile',    's.simple')
+        if( len(startf) > 0 )then
+            call cl%set('infile2',   startf)
+        else
+            call cl%set('infile',    nd//'/fflex/flex_pca_coordinates.txt')
+            call cl%set('site_dirs', trim(self%p%site_dirs))
+        endif
+        call cl%set('nsample',     nfit)
+        if( l_size ) call cl%set('site_size', 'yes')
+        call cl%set('pole_merge',  self%p%pole_merge)
+        call cl%set('junk_screen', trim(self%p%junk_screen))
+        call cl%set('pcg_mskfile', mask)
+        call cl%set('pgrp',        trim(self%p%pgrp))
+        call cl%set('mskdiam',     self%p%mskdiam)
+        call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
+        call self%submit_in(sd, cl)
+    end subroutine fs_rank
+
+    subroutine fs_climb( self, j )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        integer, allocatable :: rows(:), v(:)
+        real,    allocatable :: pp(:,:)
+        logical, allocatable :: tp(:,:)
+        character(len=:), allocatable :: sd, p
+        integer :: a, funit, ios
+        p  = parent_of(self%fs(j)%level)
+        sd = self%fs_cd(j)
+        call site_poles(self%fs_rd(j), self%nrows, rows, pp, tp)
+        call simple_mkdir(string(sd))
+        call fopen(funit, string(sd//'/starts.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//sd//'/starts.txt', ios)
+        do a = 1, size(pp,2)
+            allocate(v(self%nrows), source=0)
+            v(pack(rows, tp(:,a))) = 1
+            call write_ints(sd//'/start_p'//int2str(a)//'.txt', v)
+            write(funit,'(A)') 'p'//int2str(a)//' '//sd//'/start_p'//int2str(a)//'.txt'
+            deallocate(v)
+        end do
+        call fclose(funit)
+        call self%fs_rank(sd, p, site_mask(self, j), sd//'/starts.txt', '', SITE_NFIT, .false.)
+        write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': pooling run at '//p//' submitted, started from its '//&
+            &int2str(size(pp,2))//' pole(s) at '//self%fs(j)%level
+    end subroutine fs_climb
+
+    subroutine fs_maps( self, j )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        type(cmdline)        :: cl
+        integer, allocatable :: lab(:), pres(:), st(:)
+        character(len=:), allocatable :: wd
+        integer :: a
+        wd   = self%fs_md(j)
+        lab  = self%fs_sets(j, 1)
+        pres = present_labels(lab)
+        if( size(pres) == 0 )then
+            self%fs(j)%st = F_DONE
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': no pole particles, no maps'
+            return
+        endif
+        allocate(st(size(lab)), source=0)
+        do a = 1, size(pres)
+            where( lab == pres(a) ) st = a
+        end do
+        call simple_mkdir(string(wd))
+        call write_states(self%root//'/node_'//self%fs(j)%level//'/stageB/b.simple', wd//'/p.simple', st)
+        call cl%set('prg',      'reconstruct3D')
+        call cl%set('projfile', 'p.simple')
+        call cl%set('nstates',  size(pres))
+        call self%set_parts(count(st > 0))
+        call common_keys(self, cl)
+        call self%submit_in(wd, cl)
+        self%fs(j)%st = F_MAPS
+        write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': maps of its '//int2str(size(pres))//' pole(s) at '//&
+            &self%fs(j)%level//' submitted'
+    end subroutine fs_maps
+
+    subroutine fs_output( self )
+        class(hetero_tree), intent(inout) :: self
+        integer, allocatable :: lab(:), rows(:), pres(:), epm(:)
+        real,    allocatable :: pp(:,:), z(:)
+        logical, allocatable :: tp(:,:)
+        character(len=:), allocatable :: fd, sd, md, line, nm
+        character(len=64) :: nums
+        integer :: j, a, i, fsit, ftab, fpost, ios, np, nkeep
+        fd = self%root//'/'//FDIR
+        call simple_mkdir(string(fd))
+        call simple_mkdir(string(fd//'/labels'))
+        call simple_mkdir(string(fd//'/post'))
+        call simple_mkdir(string(fd//'/maps'))
+        call simple_mkdir(string(fd//'/maps/halves'))
+        call fopen(fsit, string(fd//'/sites.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//fd//'/sites.txt', ios)
+        call fopen(ftab, string(fd//'/table.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//fd//'/table.txt', ios)
+        write(fsit,'(A)') '# site home candidate discovery_repro state level joins Spearman mask_Dice mask refined | kept sites: '//&
+            &'poles | particles per pole | halves z per pole (the weakest accept test of its endpoints) | hard share per pole '//&
+            &'(posterior >= 0.5 over the level''s non-junk particles) | equivalent pure members per pole (its own top-EPM set; '//&
+            &'far fewer than its particles marks a pole labelled by the complement)'
+        write(ftab,'(A)') '# site level labels (0 neither, j pole j) posteriors (one column per pole, -1 outside the level) rows'
+        call self%tree_junk
+        nkeep = 0
+        do j = 1, size(self%fs)
+            nm = self%fs(j)%name
+            write(nums,'(3(1X,F6.3))') self%fs(j)%repro, self%fs(j)%rho, self%fs(j)%dice
+            md   = site_mask(self, j)
+            if( self%fs(j)%ref == 1 ) md = self%root//'/node_'//self%fs(j)%level//'/fsite_'//nm//'/refine_mask.mrc'
+            if( self%fs(j)%ref == 2 ) md = self%root//'/node_'//self%fs(j)%home//'/fsite_'//nm//'/pre_mask.mrc'
+            line = nm//' '//self%fs(j)%home//' '//int2str(self%fs(j)%k)//' '//word(nums, 1)//' '//&
+                &trim(FST_NAMES(self%fs(j)%st))//' '//self%fs(j)%level//' '//self%fs(j)%target//' '//word(nums, 2)//' '//&
+                &word(nums, 3)//' '//md//' '//trim(merge('yes  ', merge('first', 'no   ', self%fs(j)%ref == 2), self%fs(j)%ref == 1))
+            if( self%fs(j)%st == F_DONE )then
+                nkeep = nkeep + 1
+                sd    = self%fs_fd(j)
+                lab   = self%fs_labels(j)
+                call site_poles(sd, self%nrows, rows, pp, tp)
+                np = size(pp,2)
+                z  = pole_z(sd, np)
+                call write_ints(fd//'/labels/'//nm//'.txt', lab)
+                call fopen(fpost, string(fd//'/post/'//nm//'.txt'), status='replace', action='write', iostat=ios)
+                call fileiochk('hetero_tree: cannot write '//fd//'/post/'//nm//'.txt', ios)
+                if( allocated(pres) ) deallocate(pres)
+                allocate(pres(self%nrows), source=0)
+                pres(rows) = [(i, i=1,size(rows))]
+                do i = 1, self%nrows
+                    if( pres(i) == 0 .or. self%tjunk(i) )then
+                        write(fpost,'(*(F8.4,:,1X))') [(-1., a=1,np)]
+                    else
+                        write(fpost,'(*(F8.5,:,1X))') pp(pres(i),:)
+                    endif
+                end do
+                call fclose(fpost)
+                deallocate(pres)
+                write(ftab,'(A)') nm//' '//self%fs(j)%level//' '//fd//'/labels/'//nm//'.txt '//fd//'/post/'//nm//'.txt '//&
+                    &self%root//'/node_'//self%fs(j)%level//'/rows.txt'
+                line = line//' | '//int2str(np)//' |'
+                do a = 1, np
+                    line = line//' '//int2str(count(lab == a))
+                end do
+                line = line//' |'
+                do a = 1, np
+                    line = line//' '//rstr(z(a))
+                end do
+                line = line//' |'
+                do a = 1, np
+                    line = line//' '//rstr(real(count(pp(:,a) >= 0.5 .and. .not. self%tjunk(rows))) / &
+                        &real(max(1, count(.not. self%tjunk(rows)))))
+                end do
+                line = line//' |'
+                do a = 1, np
+                    epm = read_ints(self%fs_zd(j)//'/site_epm_p'//int2str(a)//'.txt')
+                    if( size(epm) == self%nrows )then
+                        line = line//' '//int2str(count(epm(rows) > 0 .and. .not. self%tjunk(rows)))
+                    else
+                        line = line//' -'
+                    endif
+                end do
+                md   = self%fs_md(j)
+                pres = present_labels(lab)
+                do a = 1, size(pres)
+                    if( .not. (file_exists(string(md//'/'//hv(a, 'even'))) .and. file_exists(string(md//'/'//hv(a, 'odd')))) ) cycle
+                    call pole_map(md//'/'//hv(a, 'even'), md//'/'//hv(a, 'odd'), fd//'/maps/'//nm//'_pole'//int2str(pres(a))//&
+                        &'.mrc', fd//'/maps/halves/'//nm//'_pole'//int2str(pres(a)), self%p%mskdiam)
+                end do
+            endif
+            write(fsit,'(A)') line
+        end do
+        call fclose(fsit)
+        call fclose(ftab)
+        write(logfhandle,'(A)') '>>> HETERO_TREE per-site layer: '//int2str(nkeep)//' sites kept of '//int2str(size(self%fs))//&
+            &' candidates ('//int2str(count_st(F_COPY))//' joined an ancestor''s site, '//int2str(count_st(F_DUP))//&
+            &' duplicated a kept site, '//int2str(count_st(F_NOPOLE))//' without a pole, '//int2str(count_st(F_FAIL))//&
+            &' failed): '//fd//'/sites.txt, table.txt, maps'
+
+    contains
+
+        integer function count_st( st )
+            integer, intent(in) :: st
+            integer :: jj
+            count_st = 0
+            do jj = 1, size(self%fs)
+                if( self%fs(jj)%st == st ) count_st = count_st + 1
+            end do
+        end function count_st
+
+    end subroutine fs_output
+
+    function fs_hd( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        if( self%fs(j)%ref == 2 )then
+            d = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name//'/pre'
+        else if( self%fs(j)%k == 1 )then
+            d = self%root//'/node_'//self%fs(j)%home//'/site'
+        else
+            d = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name
+        endif
+    end function fs_hd
+
+    function fs_rd( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        if( self%fs(j)%level == self%fs(j)%home )then
+            d = self%fs_hd(j)
+        else
+            d = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name
+        endif
+    end function fs_rd
+
+    function fs_cd( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        d = self%root//'/node_'//parent_of(self%fs(j)%level)//'/fsite_'//self%fs(j)%name
+    end function fs_cd
+
+    function fs_fd( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        if( self%fs(j)%ref == 1 )then
+            d = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name//'/refine'
+        else
+            d = self%fs_rd(j)
+        endif
+    end function fs_fd
+
+    subroutine fs_refine( self, j, nrun, l_chg )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        integer,            intent(inout) :: nrun
+        logical,            intent(inout) :: l_chg
+        type(cmdline)             :: cl
+        type(string), allocatable :: evens(:), odds(:)
+        integer,      allocatable :: lab(:), st(:), rows(:), pres(:)
+        real(dp),     allocatable :: w(:)
+        character(len=:), allocatable :: wd, sf
+        integer :: code, s
+        logical :: l_ok
+        wd = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name
+        select case(self%fs(j)%st)
+            case(F_KEEP)
+                if( self%fs(j)%ref == 2 )then
+                    self%fs(j)%st = F_READY
+                    l_chg = .true.
+                    return
+                endif
+                if( count_poles(self%fs_rd(j)//'/site_poles.txt') == 0 )then
+                    self%fs(j)%st = F_READY
+                    l_chg = .true.
+                    write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': no pole passes the halves test at '//&
+                        &self%fs(j)%level//', not refined'
+                    return
+                endif
+                if( nrun >= max(1, self%p%nodepar) ) return
+                call submit_classes
+            case(F_REC)
+                code = self%dir_status(wd//'/refine_rec')
+                if( code == -1 ) return
+                if( code == -2 )then
+                    if( nrun < max(1, self%p%nodepar) ) call submit_classes
+                    return
+                endif
+                if( code /= 0 )then
+                    call finish_ref(.false., 'its class maps FAILED')
+                    return
+                endif
+                if( nrun >= max(1, self%p%nodepar) ) return
+                st   = project_states(wd//'/refine_rec/c.simple')
+                pres = present_labels(st)
+                allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
+                do s = 1, size(pres)
+                    evens(s) = wd//'/refine_rec/'//hv(pres(s), 'even')
+                    odds(s)  = wd//'/refine_rec/'//hv(pres(s), 'odd')
+                    w(s)     = real(count(st == pres(s)), dp)
+                end do
+                call falloff_mask(self, evens, odds, w, wd//'/refine_mask.mrc')
+                sf = ''
+                if( self%fs(j)%level /= self%fs(j)%home )then
+                    sf = wd//'/refine/starts.txt'
+                    call simple_mkdir(string(wd//'/refine'))
+                    call simple_copy_file(string(self%fs_rd(j)//'/starts.txt'), string(sf))
+                endif
+                call self%fs_rank(wd//'/refine', self%fs(j)%level, wd//'/refine_mask.mrc', sf, self%fs_rd(j)//'/s.simple', &
+                    &merge(0, SITE_NFIT, self%fs(j)%k == 1 .and. self%fs(j)%level == self%fs(j)%home), .false.)
+                nrun = nrun + 1
+                self%fs(j)%st = F_REF
+                l_chg = .true.
+                write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': ranking with the mask from its '//&
+                    &int2str(size(pres))//' class maps submitted'
+            case(F_REF)
+                code = self%dir_status(wd//'/refine')
+                if( code == -1 ) return
+                if( code == -2 )then
+                    self%fs(j)%st = F_REC
+                    return
+                endif
+                if( code /= 0 )then
+                    call finish_ref(.false., 'its ranking FAILED')
+                    return
+                endif
+                l_ok = self%fs_guard(j, self%fs_rd(j), wd//'/refine', .false.)
+                call finish_ref(l_ok, trim(merge('kept    ', 'rejected', l_ok)))
+        end select
+
+    contains
+
+        subroutine submit_classes
+            lab  = self%fs_sets(j, 0)
+            rows = read_ints(self%root//'/node_'//self%fs(j)%level//'/rows.txt')
+            allocate(st(self%nrows), source=0)
+            st(rows) = maxval([0, lab]) + 1
+            where( lab > 0 ) st = lab
+            where( self%tjunk ) st = 0
+            pres = present_labels(st)
+            lab  = st
+            do s = 1, size(pres)
+                where( lab == pres(s) ) st = s
+            end do
+            call simple_mkdir(string(wd//'/refine_rec'))
+            call write_states(self%root//'/node_'//self%fs(j)%level//'/'//NODE_PROJ, wd//'/refine_rec/c.simple', st)
+            call cl%set('prg',      'reconstruct3D')
+            call cl%set('projfile', 'c.simple')
+            call cl%set('nstates',  size(pres))
+            call self%set_parts(count(st > 0))
+            call common_keys(self, cl)
+            call self%submit_in(wd//'/refine_rec', cl)
+            nrun = nrun + 1
+            self%fs(j)%st = F_REC
+            l_chg = .true.
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': maps of its '//int2str(size(pres))//&
+                &' classes for the mask refinement submitted'
+        end subroutine submit_classes
+
+        subroutine finish_ref( l_keep, what )
+            logical,          intent(in) :: l_keep
+            character(len=*), intent(in) :: what
+            self%fs(j)%ref = merge(1, -1, l_keep)
+            self%fs(j)%st  = F_READY
+            l_chg = .true.
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': refined mask '//what
+        end subroutine finish_ref
+
+    end subroutine fs_refine
+
+    logical function fs_guard( self, j, od, nd, l_halves )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        character(len=*),   intent(in)    :: od, nd
+        logical,            intent(in)    :: l_halves
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:)
+        real,         allocatable :: v0(:), v1(:)
+        logical,      allocatable :: ok(:)
+        character(len=4096) :: ln
+        character(len=:), allocatable :: e
+        real    :: sc, mc, n0, n1, r0, r1, se, sh0, sh1
+        integer :: k, fu, io, b(2), bc
+        logical :: l_pass
+        fs_guard = npoles_of(nd) > 0
+        if( .not. fs_guard )then
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': the refined ranking accepts no pole'
+            return
+        endif
+        call fopen(fu, string(nd//'/site_neff.txt'), status='old', action='read', iostat=io)
+        call fileiochk('hetero_tree: cannot read '//nd//'/site_neff.txt', io)
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( ln(1:1) /= '#' ) exit
+        end do
+        call fclose(fu)
+        read(ln,*) bc, sc, mc, b(1), b(2), n1
+        n0 = mask_neff(string(site_mask(self, j)), self%smpd, bc, sc, mc, b(1), b(2))
+        call pole_ends(od, ends, pole, l_halves)
+        call self%tree_junk
+        do k = 1, size(ends)
+            e   = ends(k)%to_char()
+            r0  = curve_peak(od//'/site_curve_'//e//'.txt')
+            r1  = curve_peak(nd//'/site_curve_'//e//'.txt')
+            se  = sqrt(((1. - r0**2) / sqrt(max(n0 - 3., 1.)))**2 + ((1. - r1**2) / sqrt(max(n1 - 3., 1.)))**2)
+            v0  = read_reals(od//'/site_post_'//e//'.txt')
+            v1  = read_reals(nd//'/site_post_'//e//'.txt')
+            if( size(v0) /= self%nrows .or. size(v1) /= self%nrows )then
+                fs_guard = .false.
+                cycle
+            endif
+            ok  = v0 >= 0. .and. v1 >= 0. .and. .not. self%tjunk
+            sh0 = real(count(ok .and. v0 >= 0.5)) / real(max(1, count(ok)))
+            sh1 = real(count(ok .and. v1 >= 0.5)) / real(max(1, count(ok)))
+            l_pass = r0 - r1 <= se .and. ((sh0 < 0.5) .eqv. (sh1 < 0.5))
+            if( .not. l_pass ) fs_guard = .false.
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//' endpoint '//e//': hold-out peak '//rstr(r0)//&
+                &' -> '//rstr(r1)//' (combined SE '//rstr(se)//', n_eff '//rstr(n0)//' -> '//rstr(n1)//'), class share '//&
+                &rstr(sh0)//' -> '//rstr(sh1)//trim(merge(' passes', ' fails ', l_pass))
+        end do
+    end function fs_guard
+
+    subroutine fs_prerefine( self, j, nrun, l_chg )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        integer,            intent(inout) :: nrun
+        logical,            intent(inout) :: l_chg
+        type(cmdline)             :: cl
+        type(string), allocatable :: evens(:), odds(:), ends(:)
+        integer,      allocatable :: st(:), pres(:), pole(:), top(:), lab(:)
+        real,         allocatable :: v(:), pm(:), best(:)
+        real(dp),     allocatable :: w(:)
+        character(len=:), allocatable :: wd, hd
+        integer :: code, s, e, np
+        wd = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name
+        hd = self%fs_hd(j)
+        select case(self%fs(j)%st)
+            case(F_TEST)
+                call submit_classes
+            case(F_PREC)
+                code = self%dir_status(wd//'/pre_rec')
+                if( code == -1 ) return
+                if( code == -2 )then
+                    if( nrun < max(1, self%p%nodepar) ) call submit_classes
+                    return
+                endif
+                if( code /= 0 )then
+                    call reject('its class maps FAILED')
+                    return
+                endif
+                if( nrun >= max(1, self%p%nodepar) ) return
+                st   = project_states(wd//'/pre_rec/c.simple')
+                pres = present_labels(st)
+                allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
+                do s = 1, size(pres)
+                    evens(s) = wd//'/pre_rec/'//hv(pres(s), 'even')
+                    odds(s)  = wd//'/pre_rec/'//hv(pres(s), 'odd')
+                    w(s)     = real(count(st == pres(s)), dp)
+                end do
+                call falloff_mask(self, evens, odds, w, wd//'/pre_mask.mrc')
+                call self%fs_rank(wd//'/pre', self%fs(j)%home, wd//'/pre_mask.mrc', '', hd//'/s.simple', &
+                    &merge(0, SITE_NFIT, self%fs(j)%k == 1), .false.)
+                nrun = nrun + 1
+                self%fs(j)%st = F_PREF
+                l_chg = .true.
+                write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': fails the halves test narrowly, ranking with '//&
+                    &'the mask from its '//int2str(size(pres))//' class maps submitted'
+            case(F_PREF)
+                code = self%dir_status(wd//'/pre')
+                if( code == -1 ) return
+                if( code == -2 )then
+                    self%fs(j)%st = F_PREC
+                    return
+                endif
+                if( code /= 0 )then
+                    call reject('its ranking FAILED')
+                    return
+                endif
+                if( .not. self%fs_guard(j, hd, wd//'/pre', .true.) )then
+                    call reject('its refined ranking fails the halves test or the guard')
+                    return
+                endif
+                self%fs(j)%ref = 2
+                self%fs(j)%st  = F_TEST
+                l_chg = .true.
+                write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': refined first, its refined ranking passes '//&
+                    &'the halves test and the guard and becomes its ranking'
+        end select
+
+    contains
+
+        subroutine submit_classes
+            call pole_ends(hd, ends, pole, .true.)
+            np = maxval([0, pole])
+            if( np == 0 )then
+                call reject('no endpoint')
+                return
+            endif
+            v = read_reals(hd//'/site_post_'//ends(1)%to_char()//'.txt')
+            allocate(lab(self%nrows), source=0)
+            allocate(best(self%nrows), source=-1.)
+            where( v >= 0. ) lab = np + 1
+            do s = 1, np
+                allocate(pm(self%nrows), source=0.)
+                allocate(top(self%nrows), source=0)
+                do e = 1, size(ends)
+                    if( pole(e) /= s ) cycle
+                    pm = pm + read_reals(hd//'/site_post_'//ends(e)%to_char()//'.txt') / real(count(pole == s))
+                    top = max(top, read_ints(hd//'/site_top_'//ends(e)%to_char()//'.txt'))
+                end do
+                where( top > 0 .and. v >= 0. .and. pm > best )
+                    lab  = s
+                    best = pm
+                end where
+                deallocate(pm, top)
+            end do
+            call self%tree_junk
+            where( self%tjunk ) lab = 0
+            pres = present_labels(lab)
+            allocate(st(self%nrows), source=0)
+            do s = 1, size(pres)
+                where( lab == pres(s) ) st = s
+            end do
+            call simple_mkdir(string(wd//'/pre_rec'))
+            call write_states(self%root//'/node_'//self%fs(j)%home//'/'//NODE_PROJ, wd//'/pre_rec/c.simple', st)
+            call cl%set('prg',      'reconstruct3D')
+            call cl%set('projfile', 'c.simple')
+            call cl%set('nstates',  size(pres))
+            call self%set_parts(count(st > 0))
+            call common_keys(self, cl)
+            call self%submit_in(wd//'/pre_rec', cl)
+            nrun = nrun + 1
+            self%fs(j)%st = F_PREC
+            l_chg = .true.
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': fails the halves test narrowly (best endpoint '//&
+                &rstr(best_minz(hd))//' SE), maps of its '//int2str(size(pres))//' classes for refining first submitted'
+        end subroutine submit_classes
+
+        subroutine reject( why )
+            character(len=*), intent(in) :: why
+            self%fs(j)%st = F_NOPOLE
+            l_chg = .true.
+            write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': not a site after refining first, '//why
+        end subroutine reject
+
+    end subroutine fs_prerefine
+
+    function fs_zd( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        d = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name//'/size'
+    end function fs_zd
+
+    function fs_mask( self, j ) result( f )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: f
+        select case(self%fs(j)%ref)
+            case(1)
+                f = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name//'/refine_mask.mrc'
+            case(2)
+                f = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name//'/pre_mask.mrc'
+            case default
+                f = site_mask(self, j)
+        end select
+    end function fs_mask
+
+    subroutine fs_size( self, j )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        integer, allocatable :: rows(:)
+        real,    allocatable :: pp(:,:), v(:)
+        logical, allocatable :: tp(:,:)
+        character(len=:), allocatable :: sd
+        integer :: a, funit, ios
+        sd = self%fs_zd(j)
+        call site_poles(self%fs_fd(j), self%nrows, rows, pp, tp)
+        call simple_mkdir(string(sd))
+        call fopen(funit, string(sd//'/rankings.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//sd//'/rankings.txt', ios)
+        allocate(v(self%nrows))
+        do a = 1, size(pp,2)
+            v       = -1.
+            v(rows) = pp(:,a)
+            call write_reals(sd//'/pole_p'//int2str(a)//'.txt', v)
+            write(funit,'(A)') 'p'//int2str(a)//' '//sd//'/pole_p'//int2str(a)//'.txt'
+        end do
+        call fclose(funit)
+        call self%fs_rank(sd, self%fs(j)%level, self%fs_mask(j), sd//'/rankings.txt', self%fs_fd(j)//'/s.simple', SITE_NFIT, .true.)
+        self%fs(j)%st = F_SIZE
+        write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': sizing of its '//int2str(size(pp,2))//&
+            &' pole ranking(s) at '//self%fs(j)%level//' submitted'
+    end subroutine fs_size
+
+    function fs_md( self, j ) result( d )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: d
+        d = self%root//'/node_'//self%fs(j)%level//'/fsite_'//self%fs(j)%name//'/maps'
+    end function fs_md
+
+    integer function dir_status( self, sd )
+        class(hetero_tree), intent(in) :: self
+        character(len=*),   intent(in) :: sd
+        logical :: err
+        if( file_exists(string(sd//'/'//STEP_EXIT)) )then
+            call read_exit_code(string(sd//'/'//STEP_EXIT), dir_status, err)
+            if( err ) dir_status = -1
+        else if( file_exists(string(sd//'/'//STEP_EXIT//JOB_INFO_EXT)) .or. self%pending(sd) )then
+            dir_status = -1
+        else
+            dir_status = -2
+        endif
+    end function dir_status
+
+    integer function fs_nrun( self )
+        class(hetero_tree), intent(in) :: self
+        integer :: j
+        fs_nrun = 0
+        do j = 1, size(self%fs)
+            select case(self%fs(j)%st)
+                case(F_RUN)
+                    if( self%fs(j)%k > 1 .and. self%dir_status(self%fs_hd(j)) == -1 ) fs_nrun = fs_nrun + 1
+                case(F_UP)
+                    if( self%dir_status(self%fs_cd(j)) == -1 ) fs_nrun = fs_nrun + 1
+                case(F_MAPS)
+                    if( self%dir_status(self%fs_md(j)) == -1 ) fs_nrun = fs_nrun + 1
+            end select
+        end do
+    end function fs_nrun
+
+    real function fs_rho( self, sda, sdb, ev, l_first )
+        class(hetero_tree), intent(in) :: self
+        character(len=*),   intent(in) :: sda, sdb
+        integer,            intent(in) :: ev(:)
+        logical,            intent(in) :: l_first
+        integer,  allocatable :: ra(:), rb(:), ia(:), ib(:), sel(:)
+        real,     allocatable :: pa(:,:), pb(:,:)
+        logical,  allocatable :: ta(:,:), tb(:,:)
+        real(dp), allocatable :: ka(:,:), kb(:,:)
+        integer :: a, b, i, n
+        fs_rho = 0.
+        call site_poles(sda, self%nrows, ra, pa, ta)
+        call site_poles(sdb, self%nrows, rb, pb, tb)
+        if( size(pa,2) == 0 .or. size(pb,2) == 0 ) return
+        allocate(ia(self%nrows), ib(self%nrows), source=0)
+        ia(ra) = [(i, i=1,size(ra))]
+        ib(rb) = [(i, i=1,size(rb))]
+        sel = pack(ev, ia(ev) > 0 .and. ib(ev) > 0)
+        n   = size(sel)
+        if( n < 3 ) return
+        allocate(ka(n,size(pa,2)), kb(n,size(pb,2)))
+        do a = 1, size(pa,2)
+            ka(:,a) = avg_ranks(pa(ia(sel),a))
+            ka(:,a) = ka(:,a) - sum(ka(:,a)) / real(n,dp)
+        end do
+        do b = 1, size(pb,2)
+            kb(:,b) = avg_ranks(pb(ib(sel),b))
+            kb(:,b) = kb(:,b) - sum(kb(:,b)) / real(n,dp)
+        end do
+        do a = 1, size(pa,2)
+            do b = 1, size(pb,2)
+                if( l_first .and. (a > 1 .or. b > 1) ) cycle
+                fs_rho = max(fs_rho, real(abs(sum(ka(:,a) * kb(:,b))) / max(sqrt(sum(ka(:,a)**2) * sum(kb(:,b)**2)), 1.e-30_dp)))
+            end do
+        end do
+    end function fs_rho
+
+    function fs_eval_rows( self, id ) result( ev )
+        class(hetero_tree), intent(in) :: self
+        character(len=*),   intent(in) :: id
+        integer, allocatable :: ev(:), jk(:)
+        logical, allocatable :: m(:)
+        ev = read_ints(self%root//'/node_'//id//'/rows.txt')
+        jk = junk_rows(self%root//'/node_'//id)
+        if( size(jk) == 0 ) return
+        allocate(m(self%nrows), source=.false.)
+        m(jk) = .true.
+        ev = pack(ev, .not. m(ev))
+    end function fs_eval_rows
+
+    function fs_labels( self, j ) result( lab )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j
+        integer, allocatable :: lab(:)
+        lab = self%fs_sets(j, 2)
+    end function fs_labels
+
+    function fs_sets( self, j, kind ) result( lab )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: j, kind
+        integer, allocatable :: lab(:), rows(:), top(:), mi(:)
+        real,    allocatable :: pp(:,:)
+        logical, allocatable :: tp(:,:), minor(:)
+        character(len=:), allocatable :: sz
+        integer :: i, a, best
+        real    :: pb, fmin
+        call site_poles(self%fs_fd(j), self%nrows, rows, pp, tp)
+        call self%tree_junk
+        sz = self%fs_zd(j)
+        if( kind > 0 .and. self%dir_status(sz) == 0 )then
+            do a = 1, size(pp,2)
+                if( .not. file_exists(string(sz//'/site_'//merge('top', 'epm', kind == 1)//'_p'//int2str(a)//'.txt')) ) cycle
+                top     = read_ints(sz//'/site_'//merge('top', 'epm', kind == 1)//'_p'//int2str(a)//'.txt')
+                tp(:,a) = top(rows) > 0
+            end do
+            if( kind == 2 )then
+                minor = [(count(pp(:,a) >= 0.5 .and. .not. self%tjunk(rows)) < count(.not. self%tjunk(rows)) - &
+                    &count(pp(:,a) >= 0.5 .and. .not. self%tjunk(rows)), a=1,size(pp,2))]
+                if( any(minor) .and. .not. all(minor) )then
+                    mi   = pack([(i, i=1,size(pp,2))], minor)
+                    fmin = real(count(any(tp(:,mi), dim=2) .and. .not. self%tjunk(rows))) / real(max(1, count(.not. self%tjunk(rows))))
+                    do a = 1, size(pp,2)
+                        if( minor(a) ) cycle
+                        if( real(count(pp(:,a) >= 0.5 .and. .not. self%tjunk(rows))) / real(max(1, count(.not. self%tjunk(rows)))) &
+                            &+ fmin > 1. ) cycle
+                        tp(:,a) = .not. any(tp(:,mi), dim=2) .and. pp(:,a) > maxval(pp(:,mi), dim=2)
+                    end do
+                endif
+            endif
+        endif
+        allocate(lab(self%nrows), source=0)
+        do i = 1, size(rows)
+            best = 0
+            pb   = -1.
+            do a = 1, size(pp,2)
+                if( tp(i,a) .and. pp(i,a) > pb )then
+                    best = a
+                    pb   = pp(i,a)
+                endif
+            end do
+            lab(rows(i)) = best
+        end do
+        call self%tree_junk
+        where( self%tjunk ) lab = 0
+    end function fs_sets
+
+    subroutine tree_junk( self )
+        class(hetero_tree), intent(inout) :: self
+        type(string), allocatable :: lines(:), nds(:)
+        integer,      allocatable :: rows(:)
+        logical,      allocatable :: inleaf(:)
+        character(len=4096) :: line
+        integer :: il
+        if( allocated(self%tjunk) ) return
+        allocate(inleaf(self%nrows), source=.false.)
+        if( file_exists(string(self%root//'/'//LEAF_TABLE)) )then
+            call leaf_lines(lines, nds)
+            do il = 1, size(lines)
+                line = lines(il)%to_char()
+                if( word(line, 2) == 'junk' ) cycle
+                rows = read_ints(word(line, 8))
+                inleaf(rows) = .true.
+            end do
+        endif
+        allocate(self%tjunk(self%nrows), source=.false.)
+        rows = read_ints(self%ndir(1)//'/rows.txt')
+        self%tjunk(rows) = .not. inleaf(rows)
+    end subroutine tree_junk
+
+    subroutine fs_read_table( self )
+        class(hetero_tree), intent(inout) :: self
+        character(len=4096) :: line
+        character(len=:), allocatable :: f
+        integer :: funit, ios, n, j
+        if( allocated(self%fs) ) deallocate(self%fs)
+        f = self%root//'/'//SITE_TABLE//'.txt'
+        if( .not. file_exists(string(f)) )then
+            allocate(self%fs(0))
+            return
+        endif
+        n = nlines(string(f))
+        allocate(self%fs(n))
+        call fopen(funit, string(f), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//f, ios)
+        do j = 1, n
+            read(funit,'(A)') line
+            self%fs(j)%name   = word(line, 1)
+            self%fs(j)%home   = word(line, 2)
+            self%fs(j)%k      = str2int(word(line, 3))
+            self%fs(j)%st     = str2int(word(line, 4))
+            self%fs(j)%level  = word(line, 5)
+            self%fs(j)%target = word(line, 6)
+            self%fs(j)%repro = str2real(word(line, 7))
+            self%fs(j)%rho   = str2real(word(line, 8))
+            self%fs(j)%dice  = str2real(word(line, 9))
+            if( nwords(line) >= 10 ) self%fs(j)%ref = str2int(word(line, 10))
+        end do
+        call fclose(funit)
+        write(logfhandle,'(A)') '>>> HETERO_TREE per-site layer resumed from '//f//': '//int2str(n)//' sites'
+    end subroutine fs_read_table
+
+    subroutine fs_write_table( self )
+        class(hetero_tree), intent(in) :: self
+        character(len=64) :: nums
+        integer :: funit, ios, j
+        call fopen(funit, string(self%root//'/'//SITE_TABLE//'.txt.tmp'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//SITE_TABLE//'.txt', ios)
+        do j = 1, size(self%fs)
+            write(nums,'(3(1X,F7.4))') self%fs(j)%repro, self%fs(j)%rho, self%fs(j)%dice
+            write(funit,'(A)') self%fs(j)%name//' '//self%fs(j)%home//' '//int2str(self%fs(j)%k)//' '//&
+                &int2str(self%fs(j)%st)//' '//self%fs(j)%level//' '//self%fs(j)%target//trim(nums)//' '//int2str(self%fs(j)%ref)
+        end do
+        call fclose(funit)
+        call simple_rename(string(self%root//'/'//SITE_TABLE//'.txt.tmp'), string(self%root//'/'//SITE_TABLE//'.txt'))
+    end subroutine fs_write_table
 
     integer function step_status( self, i, istep )
         class(hetero_tree), intent(in) :: self
@@ -823,7 +1920,10 @@ contains
     subroutine kill( self )
         class(hetero_tree), intent(inout) :: self
         if( allocated(self%nodes) ) deallocate(self%nodes)
+        if( allocated(self%fs)    ) deallocate(self%fs)
+        if( allocated(self%tjunk) ) deallocate(self%tjunk)
         if( allocated(self%subd)  ) deallocate(self%subd)
+        self%l_fsread = .false.
         call self%qenv%kill
         call self%qsite%kill
         self%p => null()
@@ -1765,6 +2865,378 @@ contains
         call fclose(fu)
     end function count_poles
 
+    function site_mask( self, j ) result( f )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: f
+        f = self%root//'/node_'//self%fs(j)%home//'/sites/site_'//pad2(self%fs(j)%k)//'.mrc'
+    end function site_mask
+
+    subroutine site_poles( sd, nrows, rows, pp, tp )
+        character(len=*),     intent(in)  :: sd
+        integer,              intent(in)  :: nrows
+        integer, allocatable, intent(out) :: rows(:)
+        real,    allocatable, intent(out) :: pp(:,:)
+        logical, allocatable, intent(out) :: tp(:,:)
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:), it(:,:), top(:)
+        real,         allocatable :: acc(:,:), v(:)
+        logical,      allocatable :: inn(:)
+        integer :: np, nr, e, a, fu, io
+        if( file_exists(string(sd//'/poles.bin')) )then
+            open(newunit=fu, file=sd//'/poles.bin', access='stream', form='unformatted', status='old', action='read', iostat=io)
+            if( io == 0 )then
+                read(fu, iostat=io) np, nr
+                if( io == 0 )then
+                    allocate(rows(nr), pp(nr,np), it(nr,np))
+                    read(fu, iostat=io) rows, pp, it
+                endif
+                close(fu)
+                if( io == 0 )then
+                    tp = it > 0
+                    return
+                endif
+                if( allocated(rows) ) deallocate(rows, pp, it)
+            endif
+        endif
+        call pole_ends(sd, ends, pole, .false.)
+        np = maxval([0, pole])
+        allocate(acc(nrows,np), source=0.)
+        allocate(it(nrows,np), source=0)
+        allocate(inn(nrows), source=.false.)
+        do e = 1, size(ends)
+            v   = read_reals(sd//'/site_post_'//ends(e)%to_char()//'.txt')
+            top = read_ints(sd//'/site_top_'//ends(e)%to_char()//'.txt')
+            if( size(v) /= nrows .or. size(top) /= nrows ) THROW_HARD('site ranking files do not match the project: '//sd)
+            inn = inn .or. v >= 0.
+            acc(:,pole(e)) = acc(:,pole(e)) + v
+            where( top > 0 ) it(:,pole(e)) = 1
+        end do
+        do a = 1, np
+            acc(:,a) = acc(:,a) / real(count(pole == a))
+        end do
+        rows = pack([(e, e=1,nrows)], inn)
+        nr   = size(rows)
+        pp   = acc(rows,:)
+        it   = it(rows,:)
+        tp   = it > 0
+        open(newunit=fu, file=sd//'/poles.bin', access='stream', form='unformatted', status='replace', action='write', iostat=io)
+        if( io == 0 )then
+            write(fu) np, nr
+            write(fu) rows, pp, it
+            close(fu)
+        endif
+    end subroutine site_poles
+
+    subroutine pole_ends( sd, ends, pole, l_halves )
+        character(len=*),          intent(in)  :: sd
+        logical,                   intent(in)  :: l_halves
+        type(string), allocatable, intent(out) :: ends(:)
+        integer,      allocatable, intent(out) :: pole(:)
+        type(string), allocatable :: nm(:)
+        integer,      allocatable :: lab(:), pid(:)
+        real,         allocatable :: z(:,:)
+        character(len=4096) :: ln
+        integer :: fu, io, nw, w, np, a, b, i
+        allocate(ends(0), pole(0))
+        if( file_exists(string(sd//'/starts.txt')) )then
+            call fopen(fu, string(sd//'/starts.txt'), status='old', action='read', iostat=io)
+            if( io /= 0 ) return
+            np = 0
+            do
+                read(fu,'(A)',iostat=io) ln
+                if( io /= 0 ) exit
+                if( nwords(ln) < 2 ) cycle
+                np   = np + 1
+                ends = [ends, string(word(ln, 1))]
+                pole = [pole, np]
+            end do
+            call fclose(fu)
+            return
+        endif
+        if( l_halves )then
+            if( .not. file_exists(string(sd//'/site_halves.txt')) ) return
+            allocate(nm(0))
+            call fopen(fu, string(sd//'/site_halves.txt'), status='old', action='read', iostat=io)
+            if( io /= 0 ) return
+            do
+                read(fu,'(A)',iostat=io) ln
+                if( io /= 0 ) exit
+                if( ln(1:1) == '#' .or. index(ln, '|') == 0 ) cycle
+                if( any(word(ln, 1) == [character(len=8) :: 'merge', 'accept', 'quarter', 'twin', 'rest']) ) cycle
+                nm = [nm, string(word(ln, 1))]
+            end do
+            allocate(z(size(nm),2), source=-1.e6)
+            allocate(lab(size(nm)), source=[(i, i=1,size(nm))])
+            rewind(fu)
+            do
+                read(fu,'(A)',iostat=io) ln
+                if( io /= 0 ) exit
+                nw = nwords(ln)
+                if( word(ln, 1) == 'accept' )then
+                    do i = 1, size(nm)
+                        if( nm(i)%to_char() /= word(ln, 2) ) cycle
+                        z(i, merge(1, 2, word(ln, 3) == 'row')) = str2real(word(ln, nw - 1))
+                    end do
+                else if( word(ln, 1) == 'merge' .and. word(ln, nw) == 'yes' )then
+                    a = 0
+                    b = 0
+                    do i = 1, size(nm)
+                        if( nm(i)%to_char() == word(ln, 2) ) a = i
+                        if( nm(i)%to_char() == word(ln, 3) ) b = i
+                    end do
+                    if( a > 0 .and. b > 0 ) where( lab == lab(b) ) lab = lab(a)
+                endif
+            end do
+            call fclose(fu)
+            np = 0
+            allocate(pid(size(nm)), source=0)
+            do i = 1, size(nm)
+                if( lab(i) == 0 ) cycle
+                if( any(lab(1:i-1) == lab(i)) )then
+                    pid(i) = pid(findloc(lab(1:i-1), lab(i), dim=1))
+                else
+                    np     = np + 1
+                    pid(i) = np
+                endif
+                pole = [pole, pid(i)]
+                ends = [ends, nm(i)]
+            end do
+            return
+        endif
+        if( .not. file_exists(string(sd//'/site_poles.txt')) ) return
+        call fopen(fu, string(sd//'/site_poles.txt'), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        np = 0
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            nw = nwords(ln)
+            if( nw < 3 ) cycle
+            if( word(ln, 3) == 'rest' .and. nw == 3 ) cycle
+            np = np + 1
+            do w = 3, nw
+                ends = [ends, string(word(ln, w))]
+                pole = [pole, np]
+            end do
+        end do
+        call fclose(fu)
+    end subroutine pole_ends
+
+    integer function npoles_of( sd )
+        character(len=*), intent(in) :: sd
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:)
+        call pole_ends(sd, ends, pole, .false.)
+        npoles_of = maxval([0, pole])
+    end function npoles_of
+
+    function pole_z( sd, np ) result( z )
+        character(len=*), intent(in) :: sd
+        integer,          intent(in) :: np
+        real, allocatable :: z(:)
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:)
+        character(len=4096) :: ln
+        integer :: fu, io, e
+        real    :: v
+        allocate(z(np), source=huge(1.))
+        call pole_ends(sd, ends, pole, .false.)
+        if( file_exists(string(sd//'/site_halves.txt')) )then
+            call fopen(fu, string(sd//'/site_halves.txt'), status='old', action='read', iostat=io)
+            if( io == 0 )then
+                do
+                    read(fu,'(A)',iostat=io) ln
+                    if( io /= 0 ) exit
+                    if( word(ln, 1) /= 'accept' ) cycle
+                    v = str2real(word(ln, 6))
+                    do e = 1, size(ends)
+                        if( ends(e)%to_char() == word(ln, 2) .and. pole(e) <= np ) z(pole(e)) = min(z(pole(e)), v)
+                    end do
+                end do
+                call fclose(fu)
+            endif
+        endif
+        where( z == huge(1.) ) z = 0.
+    end function pole_z
+
+    subroutine pole_map( fe, fo, fout, hstem, mskdiam )
+        character(len=*), intent(in) :: fe, fo, fout, hstem
+        real,             intent(in) :: mskdiam
+        type(image) :: ve, vo
+        complex, allocatable :: cm(:,:,:)
+        integer :: ldim(3), ifoo, n, h, k, l, ky, lz
+        real    :: smpd, f, k1, k2
+        call simple_copy_file(string(fe), string(hstem//'_even.mrc'))
+        call simple_copy_file(string(fo), string(hstem//'_odd.mrc'))
+        call find_ldim_nptcls(string(fe), ldim, ifoo)
+        n    = ldim(1)
+        smpd = find_img_smpd(string(fe))
+        call ve%new(ldim, smpd)
+        call vo%new(ldim, smpd)
+        call ve%read(string(fe))
+        call vo%read(string(fo))
+        call ve%set_rmat(0.5 * (ve%get_rmat() + vo%get_rmat()), .false.)
+        call ve%fft
+        cm = ve%get_cmat()
+        k1 = 1. / (LPD + 1.)
+        k2 = 1. / (LPD - 0.5)
+        do l = 1, size(cm,3)
+            lz = l - 1 - merge(n, 0, l > n / 2)
+            do k = 1, size(cm,2)
+                ky = k - 1 - merge(n, 0, k > n / 2)
+                do h = 1, size(cm,1)
+                    f = sqrt(real((h-1)**2 + ky*ky + lz*lz)) / (real(n) * smpd)
+                    if( f >= k2 )then
+                        cm(h,k,l) = cmplx(0.,0.)
+                    else if( f > k1 )then
+                        cm(h,k,l) = cm(h,k,l) * (0.5 + 0.5 * cos(real(PI) * (f - k1) / (k2 - k1)))
+                    endif
+                end do
+            end do
+        end do
+        call ve%set_cmat(cm)
+        call ve%ifft
+        call ve%set_rmat(ve%get_rmat() * merge(1., 0., sphere(n, mskdiam / 2. / smpd)), .false.)
+        call ve%write(string(fout))
+        call ve%kill
+        call vo%kill
+    end subroutine pole_map
+
+    real function mask_dice( f1, f2 )
+        character(len=*), intent(in) :: f1, f2
+        type(image) :: v
+        real, allocatable :: m1(:,:,:), m2(:,:,:)
+        integer :: ldim(3), ifoo
+        mask_dice = 0.
+        if( .not. (file_exists(string(f1)) .and. file_exists(string(f2))) ) return
+        call find_ldim_nptcls(string(f1), ldim, ifoo)
+        call v%new(ldim, find_img_smpd(string(f1)))
+        call v%read(string(f1))
+        m1 = v%get_rmat()
+        call v%read(string(f2))
+        m2 = v%get_rmat()
+        call v%kill
+        if( any(shape(m1) /= shape(m2)) ) return
+        mask_dice = 2. * real(count(m1 > 0.5 .and. m2 > 0.5)) / real(max(1, count(m1 > 0.5) + count(m2 > 0.5)))
+    end function mask_dice
+
+    function junk_rows( nd ) result( jr )
+        character(len=*), intent(in) :: nd
+        integer, allocatable :: jr(:), buf(:)
+        character(len=256) :: ln
+        integer :: fu, io, r, fl, n
+        allocate(jr(0))
+        if( .not. file_exists(string(nd//'/site/site_junk.txt')) ) return
+        allocate(buf(nlines(string(nd//'/site/site_junk.txt'))))
+        call fopen(fu, string(nd//'/site/site_junk.txt'), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        n = 0
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            read(ln,*) r, fl
+            if( fl /= 1 ) cycle
+            n      = n + 1
+            buf(n) = r
+        end do
+        call fclose(fu)
+        jr = buf(1:n)
+    end function junk_rows
+
+    subroutine write_reals( fname, v )
+        character(len=*), intent(in) :: fname
+        real,             intent(in) :: v(:)
+        integer :: funit, ios, j
+        call fopen(funit, string(fname), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//fname, ios)
+        do j = 1, size(v)
+            write(funit,'(F8.5)') v(j)
+        end do
+        call fclose(funit)
+    end subroutine write_reals
+
+    function read_reals( fname ) result( v )
+        character(len=*), intent(in) :: fname
+        real, allocatable :: v(:)
+        integer :: funit, ios
+        if( .not. file_exists(string(fname)) )then
+            allocate(v(0))
+            return
+        endif
+        allocate(v(nlines(string(fname))))
+        call fopen(funit, string(fname), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//fname, ios)
+        read(funit,*) v
+        call fclose(funit)
+    end function read_reals
+
+    real function best_minz( sd )
+        character(len=*), intent(in) :: sd
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:)
+        real,         allocatable :: z(:,:)
+        character(len=4096) :: ln
+        integer :: fu, io, nw, i
+        best_minz = -1.e6
+        call pole_ends(sd, ends, pole, .true.)
+        if( size(ends) == 0 ) return
+        allocate(z(size(ends),2), source=-1.e6)
+        call fopen(fu, string(sd//'/site_halves.txt'), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( word(ln, 1) /= 'accept' ) cycle
+            nw = nwords(ln)
+            do i = 1, size(ends)
+                if( ends(i)%to_char() == word(ln, 2) ) z(i, merge(1, 2, word(ln, 3) == 'row')) = str2real(word(ln, nw - 1))
+            end do
+        end do
+        call fclose(fu)
+        best_minz = maxval(min(z(:,1), z(:,2)))
+    end function best_minz
+
+    real function curve_peak( fname )
+        character(len=*), intent(in) :: fname
+        character(len=256) :: ln
+        integer :: fu, io, nn
+        real    :: c
+        curve_peak = -1.
+        if( .not. file_exists(string(fname)) ) return
+        call fopen(fu, string(fname), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            read(ln,*) nn, c
+            curve_peak = max(curve_peak, c)
+        end do
+        call fclose(fu)
+    end function curve_peak
+
+    logical function is_anc( a, u )
+        character(len=*), intent(in) :: a, u
+        is_anc = len(a) < len(u)
+        if( is_anc ) is_anc = u(1:len(a)) == a
+    end function is_anc
+
+    function parent_of( id ) result( p )
+        character(len=*), intent(in) :: id
+        character(len=:), allocatable :: p
+        p = id(1:len(id)-1)
+    end function parent_of
+
+    function rstr( x ) result( s )
+        real, intent(in) :: x
+        character(len=:), allocatable :: s
+        character(len=16) :: t
+        write(t,'(F7.3)') x
+        s = trim(adjustl(t))
+    end function rstr
+
     function word( line, iw ) result( w )
         character(len=*), intent(in) :: line
         integer,          intent(in) :: iw
@@ -1795,6 +3267,11 @@ contains
         character(len=*), intent(in) :: s
         read(s,*) str2int
     end function str2int
+
+    real function str2real( s )
+        character(len=*), intent(in) :: s
+        read(s,*) str2real
+    end function str2real
 
     integer function nwords( line )
         character(len=*), intent(in) :: line

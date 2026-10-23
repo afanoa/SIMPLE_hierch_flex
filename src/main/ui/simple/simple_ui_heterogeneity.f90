@@ -540,7 +540,8 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &visibility=UI_VIS_ADVANCED, display_name='Site Ranking')
         call site_rank%add_input(UI_FILE, 'infile', 'file', 'Direction', &
         &'Text file with one coordinate per particle of the project (e.g. a flex latent direction), or with site_dirs &
-        &the flex_pca_coordinates.txt of a flex_pca run', 'e.g. z1.txt', .true., '', visibility=UI_VIS_STANDARD)
+        &the flex_pca_coordinates.txt of a flex_pca run; without it only the infile2 starts are ranked', 'e.g. z1.txt', &
+        &.false., '', visibility=UI_VIS_STANDARD)
         call site_rank%add_input(UI_PARM, 'site_dirs', 'str', 'Latent directions', &
         &'Comma-separated latent components of a flex_pca_coordinates.txt infile whose two tails are ranked', &
         &'e.g. 1,3', .false., '', visibility=UI_VIS_ADVANCED)
@@ -558,6 +559,15 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &units of a genuine particle, shells to 12 A); particles of a mixture component of the amplitudes at least 2 sd below &
         &the genuine one are seeded 0 (site_junk.txt, site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call site_rank%add_input(UI_PARM, 'site_size', 'binary', 'Size given rankings', &
+        &'The infile2 files hold rankings (one value per particle), not starts: no EM; each ranking''s hold-out curve gives its &
+        &N* and its equivalent pure members (hold-out amplitude x N over the amplitude at the smallest N, the maximum), with &
+        &the top sets of both over every particle (site_size.txt, site_top_*.txt, site_epm_*.txt)(yes|no){no}', '', .false., &
+        &'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call site_rank%add_input(UI_PARM, 'nsample', 'num', 'Fit particles', &
+        &'The EMs fit on this many particles of the project drawn at random, every particle is then scored once with the &
+        &converged maps, and each pole''s top N* is scaled to the whole set (0 = all particles){0}', '# particles{0}', &
+        &.false., 0., visibility=UI_VIS_ADVANCED)
         call site_rank%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
         &'Real-space mask with values in [0,1] confining the class deviation', 'e.g. site.mrc', &
         &.true., '', visibility=UI_VIS_STANDARD)
@@ -602,6 +612,12 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Every node first refines its focused flex states (stage A0), discovers the sites that vary between them and ranks &
         &the poles of the site carrying the largest share of the variance, instead of using pcg_mskfile(yes|no){yes}', '', &
         &.false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'site_layer', 'binary', 'Per-site layer', &
+        &'Every discovered site of every node is ranked as well (EMs fit on at most 100000 particles, every particle scored); &
+        &a site whose ranking agrees with an ancestor''s site (Spearman 0.5 on the node''s particles) joins it, the others pool &
+        &upward while the parent''s ranking agrees; per particle and kept site a pole label and posterior, a site table and &
+        &unsharpened pole maps (factorial/)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
         &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &

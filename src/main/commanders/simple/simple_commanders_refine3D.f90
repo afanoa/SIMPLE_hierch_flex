@@ -2196,11 +2196,12 @@ contains
 
     subroutine exec_site_rank( self, cline )
         use simple_state_mergeup,     only: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, &
-                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG
+                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG, mask_neff
         use simple_eo_partition,      only: ensure_field_halves
         use simple_srch_sort_loc,     only: hpsort
         use simple_string_utils,      only: list_of_ints2arr
         use simple_refine3D_strategy, only: PROB_MULTISTATE_MIN_POP
+        use simple_rnd,               only: ran3
         class(commander_site_rank), intent(inout) :: self
         class(cmdline),             intent(inout) :: cline
         character(len=2), parameter :: TAILS(2) = ['lo', 'hi']
@@ -2210,15 +2211,16 @@ contains
         type(state_mergeup)  :: site
         type(string), allocatable :: names(:)
         real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:), posth(:), curveh(:,:)
-        real,    allocatable :: craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:)
+        real,    allocatable :: craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:), cls2(:), hpk(:)
         integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsh(:,:), nsx(:), twin(:)
-        integer, allocatable :: gm(:)
-        logical, allocatable :: seed(:), allsel(:), hsel(:,:), qsel(:,:), ok(:), starts(:,:)
+        integer, allocatable :: gm(:), fidx(:), ntopx(:), epmx(:)
+        logical, allocatable :: seed(:), fit(:), hsel(:,:), qsel(:,:), ok(:), starts(:,:)
         complex, allocatable :: devs(:,:,:,:), dall(:,:,:,:,:,:), dq(:,:,:,:,:,:)
         character(len=:), allocatable :: tag, members
         character(len=2048) :: line
         real    :: smpd
-        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq
+        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq, nfit, ntop, band(2)
+        real    :: neff
         logical :: l_halves
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
@@ -2242,7 +2244,7 @@ contains
             dirs = list_of_ints2arr(trim(params%site_dirs))
             if( size(dirs) == 0 ) THROW_HARD('site_rank: no direction in site_dirs')
             call read_latent
-        else
+        else if( cline%defined('infile') )then
             allocate(dirs(1), source=0)
             allocate(z(nrows,1))
             call fopen(funit, params%infile, status='old', action='read', iostat=ios)
@@ -2251,14 +2253,38 @@ contains
                 read(funit,*) z(i,1)
             end do
             call fclose(funit)
+        else
+            allocate(dirs(0), z(nrows,0))
         endif
+        allocate(fit(n), source=.true.)
+        if( params%nsample > 0 .and. params%nsample < n )then
+            fidx = [(i, i=1,n)]
+            do i = 1, params%nsample
+                j       = min(n, i + int(ran3() * real(n - i + 1)))
+                h       = fidx(i)
+                fidx(i) = fidx(j)
+                fidx(j) = h
+            end do
+            fit = .false.
+            fit(fidx(1:params%nsample)) = .true.
+        endif
+        nfit = count(fit)
+        if( nfit < n ) write(logfhandle,'(A)') '>>> SITE_RANK the EMs fit on '//int2str(nfit)//' of the '//int2str(n)//&
+            &' particles, drawn at random; every particle is scored with the converged maps'
         eo    = [(build%spproj_field%get_eo(rows(i)), i=1,n)]
-        ntail = min(15000, n / 6)
+        if( params%site_size .eq. 'yes' )then
+            call size_rankings
+            call site%kill
+            call build%kill_general_tbox
+            call simple_end('**** SIMPLE_SITE_RANK NORMAL STOP ****')
+            return
+        endif
+        ntail = min(15000, nfit / 6)
         call starts_of
         ne = size(names)
-        allocate(posts(n,ne), nsh(ne,2), nsx(ne))
+        if( ne == 0 ) THROW_HARD('site_rank: no start; give infile (with site_dirs) or infile2')
+        allocate(posts(n,ne), nsh(ne,2), nsx(ne), ntopx(ne), cls2(ne), hpk(ne), epmx(ne))
         l_halves = params%pole_merge <= 0.
-        allocate(allsel(n), source=.true.)
         allocate(hsel(n,2), qsel(n,4))
         do i = 1, n
             hsel(i,1) = mod((rows(i) - 1) / 2, 2) == 0
@@ -2271,18 +2297,25 @@ contains
             tag  = names(ie)%to_char()
             seed = starts(:,ie)
             write(logfhandle,'(A)') '>>> SITE_RANK '//tag//' start: '//int2str(count(seed))//' of '//int2str(n)//' particles'
-            call site%site_em(seed, allsel, params%pcg_mskfile, post, nstar, curve, devs, [real ::])
+            call site%site_em(seed, fit, params%pcg_mskfile, post, nstar, curve, devs, [real ::], nfit < n)
             posts(:,ie) = post
             nsx(ie)     = nstar
+            ntop        = nint(real(nstar) * real(n) / real(nfit))
+            ntopx(ie)   = ntop
+            cls2(ie)    = sum(post) / real(n)
+            hpk(ie)     = maxval(curve(2,:))
+            epmx(ie)    = nint(maxval(curve(4,:)) * real(n) / real(nfit))
             if( l_halves )then
                 do h = 1, 2
-                    call site%site_em(seed .and. hsel(:,h), hsel(:,h), params%pcg_mskfile, posth, nsh(ie,h), curveh, devs, [real ::])
+                    call site%site_em(seed .and. hsel(:,h), hsel(:,h) .and. fit, params%pcg_mskfile, posth, nsh(ie,h), curveh, &
+                        &devs, [real ::], .false.)
                     if( .not. allocated(dall) ) allocate(dall(size(devs,1),size(devs,2),size(devs,3),2,ne,2))
                     dall(:,:,:,:,ie,h) = devs
                     write(logfhandle,'(A,I0,A,I0)') '>>> SITE_RANK '//tag//' half ', h, ' pole: N* ', nsh(ie,h)
                 end do
                 do h = 1, 4
-                    call site%site_em(seed .and. qsel(:,h), qsel(:,h), params%pcg_mskfile, posth, nstarq, curveh, devs, [real ::])
+                    call site%site_em(seed .and. qsel(:,h), qsel(:,h) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
+                        &devs, [real ::], .false.)
                     if( .not. allocated(dq) ) allocate(dq(size(devs,1),size(devs,2),size(devs,3),2,ne,4))
                     dq(:,:,:,:,ie,h) = devs
                 end do
@@ -2293,18 +2326,23 @@ contains
                 ordh = [(i, i=1,size(sel))]
                 key  = -post(sel)
                 call hpsort(key, ordh)
-                top(rows(sel(ordh(1:min(nstar/2, size(sel)))))) = 1
+                top(rows(sel(ordh(1:min(ntop/2, size(sel)))))) = 1
             end do
             call write_rows('site_post_'//tag//'.txt', post)
             call write_ints('site_top_'//tag//'.txt', top)
             call fopen(funit, string('site_curve_'//tag//'.txt'), status='replace', action='write', iostat=ios)
             call fileiochk('site_rank: cannot write site_curve_'//tag//'.txt', ios)
-            write(funit,'(A)') '# N holdout_corr'
+            write(funit,'(A)') '# N holdout_corr holdout_amplitude equivalent_pure_members'
             do i = 1, size(curve,2)
-                write(funit,'(I0,1X,F8.4)') nint(curve(1,i)), curve(2,i)
+                write(funit,'(I0,1X,F8.4,1X,ES12.5,1X,F10.1)') nint(curve(1,i)), curve(2,i), curve(3,i), curve(4,i)
             end do
             call fclose(funit)
-            write(logfhandle,'(A,A,A,I0,A,F7.1)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ', site class weight ', sum(post)
+            if( nfit < n )then
+                write(logfhandle,'(A,A,A,I0,A,I0,A,F6.3)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ' of the fit, ', ntop, &
+                    &' over the node; site class share ', cls2(ie)
+            else
+                write(logfhandle,'(A,A,A,I0,A,F7.1)') '>>> SITE_RANK ', tag, ' pole: N* ', nstar, ', site class weight ', sum(post)
+            endif
             deallocate(top)
         end do
         call merge_poles(posts, merge(2., params%pole_merge, l_halves), PROB_MULTISTATE_MIN_POP + 1, sp, grp, seeds)
@@ -2351,11 +2389,21 @@ contains
             write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' dropped (technical): '//&
                 &'its pole drew fewer than '//int2str(PROB_MULTISTATE_MIN_POP + 1)//' seeds, the fewest refine3D refines as a state'
         end do
+        band = site%holdout_band()
+        neff = mask_neff(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop, params%msk_crop, band(1), band(2))
+        call fopen(funit, string('site_neff.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_rank: cannot write site_neff.txt', ios)
+        write(funit,'(A)') '# box_crop smpd_crop msk_crop hold-out shells, effective independent coefficients of the masked band'
+        write(funit,'(I0,2(1X,F9.5),2(1X,I0),1X,F12.3)') params%box_crop, params%smpd_crop, params%msk_crop, band, neff
+        call fclose(funit)
         call fopen(funit, string('site_starts.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('site_rank: cannot write site_starts.txt', ios)
-        write(funit,'(A)') '# start, seed particles, N*, pole it reached (0 = rejected or dropped)'
+        write(funit,'(A)') '# start, seed particles, N*, pole it reached (0 = rejected or dropped), N* over the node, site class '//&
+            &'share, hold-out peak and its SE ((1 - r^2) / sqrt(n_eff - 3), n_eff in site_neff.txt), equivalent pure members '//&
+            &'over the node'
         do i = 1, ne
-            write(funit,'(A,3(1X,I0))') names(i)%to_char(), count(starts(:,i)), nsx(i), grp(i)
+            write(funit,'(A,4(1X,I0),3(1X,F7.4),1X,I0)') names(i)%to_char(), count(starts(:,i)), nsx(i), grp(i), ntopx(i), &
+                &cls2(i), hpk(i), (1. - hpk(i)**2) / sqrt(max(neff - 3., 1.)), epmx(i)
         end do
         call fclose(funit)
         call fopen(funit, string('site_spearman.txt'), status='replace', action='write', iostat=ios)
@@ -2437,11 +2485,13 @@ contains
             p2(:,1:m) = posts
             p2(:,m+1) = rscore
             do h = 1, 2
-                call site%site_em(hsel(:,h), hsel(:,h), params%pcg_mskfile, posth, s2(m+1,h), curveh, devs, rscore)
+                call site%site_em(hsel(:,h) .and. fit, hsel(:,h) .and. fit, params%pcg_mskfile, posth, s2(m+1,h), curveh, devs, &
+                    &rscore, .false.)
                 d2(:,:,:,:,m+1,h) = devs
             end do
             do k = 1, 4
-                call site%site_em(qsel(:,k), qsel(:,k), params%pcg_mskfile, posth, nstarq, curveh, devs, rscore)
+                call site%site_em(qsel(:,k) .and. fit, qsel(:,k) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, devs, &
+                    &rscore, .false.)
                 q2(:,:,:,:,m+1,k) = devs
             end do
             nm2 = [names, string('rest')]
@@ -2512,6 +2562,75 @@ contains
             write(logfhandle,'(A)') '>>> SITE_RANK halves '//what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
         end subroutine emit_margin
 
+        subroutine size_rankings
+            type(string), allocatable :: fn(:), ff(:)
+            real,         allocatable :: v(:), sc(:)
+            character(len=4096) :: ln
+            integer :: fu, io, k0, j0, fu2
+            if( .not. cline%defined('infile2') ) THROW_HARD('site_rank: site_size needs the rankings in infile2')
+            allocate(fn(0), ff(0))
+            call fopen(fu, params%infile2, status='old', action='read', iostat=io)
+            call fileiochk('site_rank: cannot read '//params%infile2%to_char(), io)
+            do
+                read(fu,'(A)',iostat=io) ln
+                if( io /= 0 ) exit
+                ln = adjustl(ln)
+                if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+                j0 = index(trim(ln), ' ')
+                if( j0 == 0 ) THROW_HARD('site_rank: a ranking needs a name and a file: '//trim(ln))
+                fn = [fn, string(ln(1:j0-1))]
+                ff = [ff, string(trim(adjustl(ln(j0+1:))))]
+            end do
+            call fclose(fu)
+            call fopen(fu2, string('site_size.txt'), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write site_size.txt', io)
+            write(fu2,'(A)') '# ranking, N* (hold-out correlation peak) over the fit and over the node, equivalent pure members '//&
+                &'(hold-out amplitude x N / amplitude at the smallest N, its maximum) over the fit and over the node, hold-out peak'
+            allocate(v(nrows))
+            do k0 = 1, size(fn)
+                call fopen(fu, ff(k0), status='old', action='read', iostat=io)
+                call fileiochk('site_rank: cannot read '//ff(k0)%to_char(), io)
+                read(fu,*) v
+                call fclose(fu)
+                sc  = max(v(rows), 0.)
+                tag = fn(k0)%to_char()
+                write(logfhandle,'(A)') '>>> SITE_RANK sizing the ranking '//tag
+                call site%site_em(fit, fit, params%pcg_mskfile, post, nstar, curve, devs, sc, .false.)
+                call write_top('site_top_'//tag//'.txt', nint(real(nstar) * real(n) / real(nfit)), sc)
+                call write_top('site_epm_'//tag//'.txt', nint(maxval(curve(4,:)) * real(n) / real(nfit)), sc)
+                call fopen(funit, string('site_curve_'//tag//'.txt'), status='replace', action='write', iostat=ios)
+                call fileiochk('site_rank: cannot write site_curve_'//tag//'.txt', ios)
+                write(funit,'(A)') '# N holdout_corr holdout_amplitude equivalent_pure_members'
+                do i = 1, size(curve,2)
+                    write(funit,'(I0,1X,F8.4,1X,ES12.5,1X,F10.1)') nint(curve(1,i)), curve(2,i), curve(3,i), curve(4,i)
+                end do
+                call fclose(funit)
+                write(fu2,'(A,4(1X,I0),1X,F7.4)') tag, nstar, nint(real(nstar) * real(n) / real(nfit)), nint(maxval(curve(4,:))), &
+                    &nint(maxval(curve(4,:)) * real(n) / real(nfit)), maxval(curve(2,:))
+                write(logfhandle,'(A,A,A,I0,A,I0,A)') '>>> SITE_RANK ', tag, ': N* ', nint(real(nstar) * real(n) / real(nfit)), &
+                    &', equivalent pure members ', nint(maxval(curve(4,:)) * real(n) / real(nfit)), ' over the node'
+            end do
+            call fclose(fu2)
+        end subroutine size_rankings
+
+        subroutine write_top( fname, nt, sc )
+            character(len=*), intent(in) :: fname
+            integer,          intent(in) :: nt
+            real,             intent(in) :: sc(:)
+            integer, allocatable :: tp(:), s2(:), o2(:)
+            real,    allocatable :: k2(:)
+            integer :: hh, ii
+            allocate(tp(nrows), source=0)
+            do hh = 0, 1
+                s2 = pack([(ii, ii=1,n)], eo == hh)
+                o2 = [(ii, ii=1,size(s2))]
+                k2 = -sc(s2)
+                call hpsort(k2, o2)
+                tp(rows(s2(o2(1:min(max(nt,0)/2, size(s2)))))) = 1
+            end do
+            call write_ints(fname, tp)
+        end subroutine write_top
+
         subroutine starts_of
             type(string), allocatable :: fn(:), ff(:)
             real,         allocatable :: v(:)
@@ -2536,9 +2655,10 @@ contains
             nd2 = 2 * size(dirs)
             allocate(names(nd2 + size(fn)))
             allocate(starts(n, nd2 + size(fn)), source=.false.)
+            sel = pack([(i, i=1,n)], fit)
             do idir = 1, size(dirs)
-                ord = [(i, i=1,n)]
-                key = z(rows,idir)
+                ord = [(i, i=1,nfit)]
+                key = z(rows(sel),idir)
                 call hpsort(key, ord)
                 do itail = 1, 2
                     k0  = 2 * (idir - 1) + itail
@@ -2546,9 +2666,9 @@ contains
                     if( dirs(idir) > 0 ) tag = 'z'//int2str(dirs(idir))//tag
                     names(k0) = tag
                     if( itail == 1 )then
-                        starts(ord(1:ntail),k0) = .true.
+                        starts(sel(ord(1:ntail)),k0) = .true.
                     else
-                        starts(ord(n-ntail+1:n),k0) = .true.
+                        starts(sel(ord(nfit-ntail+1:nfit)),k0) = .true.
                     endif
                 end do
             end do
@@ -2560,7 +2680,7 @@ contains
                     read(fu,*) v(j0)
                 end do
                 call fclose(fu)
-                starts(:,nd2+k0) = v(rows) > 0.
+                starts(:,nd2+k0) = v(rows) > 0. .and. fit
                 names(nd2+k0)    = fn(k0)
                 deallocate(v)
             end do

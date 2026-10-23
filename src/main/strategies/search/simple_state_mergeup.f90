@@ -18,7 +18,7 @@ use simple_stat,          only: avg_ranks
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
-public :: HALVES_KSIG, halves_floor, halves_cand
+public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff
 private
 #include "simple_local_flags.inc"
 
@@ -63,6 +63,7 @@ type :: state_mergeup
     procedure :: site_em
     procedure :: junk_screen
     procedure :: get_rows
+    procedure :: holdout_band
     procedure :: kill
     procedure, private :: consensus
     procedure, private :: screen
@@ -78,6 +79,7 @@ type :: state_mergeup
     procedure, private :: pair_stat
     procedure, private :: shell_fsc
     procedure, private :: shell_corr
+    procedure, private :: shell_dot
     procedure          :: half_rel
     procedure          :: half_corr
 end type state_mergeup
@@ -325,6 +327,47 @@ contains
         integer, allocatable :: rows(:)
         rows = self%rows
     end function get_rows
+
+    function holdout_band( self ) result( b )
+        class(state_mergeup), intent(in) :: self
+        integer :: b(2)
+        b = [self%kb + RB_MARGIN, self%khi]
+    end function holdout_band
+
+    real function mask_neff( mfile, smpd, box_crop, smpd_crop, msk_crop, shlo, shhi )
+        class(string), intent(in) :: mfile
+        real,          intent(in) :: smpd, smpd_crop, msk_crop
+        integer,       intent(in) :: box_crop, shlo, shhi
+        type(image) :: vol, sph
+        real, allocatable :: m(:,:,:), ones(:,:,:)
+        real(dp) :: s2, s4
+        integer  :: h, k, l, hh, kk, ll, sh, nyq, nband
+        call vol%read_and_crop(mfile, smpd, box_crop, smpd_crop)
+        m = min(max(vol%get_rmat(), 0.), 1.)
+        call vol%kill
+        allocate(ones(box_crop,box_crop,box_crop), source=1.)
+        call sph%new([box_crop,box_crop,box_crop], smpd_crop, wthreads=.false.)
+        call sph%set_rmat(ones, .false.)
+        call sph%mask3D_soft(msk_crop, backgr=0.)
+        m = m * sph%get_rmat()
+        call sph%kill
+        s2    = sum(real(m,dp)**2)
+        s4    = sum(real(m,dp)**4)
+        nyq   = box_crop / 2
+        nband = 0
+        do l = 1, box_crop
+            ll = l - 1 - merge(box_crop, 0, l > nyq)
+            do k = 1, box_crop
+                kk = k - 1 - merge(box_crop, 0, k > nyq)
+                do h = 1, box_crop
+                    hh = h - 1 - merge(box_crop, 0, h > nyq)
+                    sh = min(nint(sqrt(real(hh*hh + kk*kk + ll*ll))), nyq)
+                    if( sh >= shlo .and. sh <= shhi ) nband = nband + 1
+                end do
+            end do
+        end do
+        mask_neff = real(0.5_dp * real(nband,dp) * s2 * s2 / max(s4, 1.e-30_dp) / real(box_crop,dp)**3)
+    end function mask_neff
 
     subroutine run( self, tree, labels, units )
         class(state_mergeup), intent(inout) :: self
@@ -1202,7 +1245,7 @@ contains
 
     end subroutine cross_em
 
-    subroutine site_em( self, seed, sel, mfile, post, nstar, curve, devs, score )
+    subroutine site_em( self, seed, sel, mfile, post, nstar, curve, devs, score, l_all )
         use simple_srch_sort_loc, only: hpsort
         class(state_mergeup), intent(inout) :: self
         logical,              intent(in)    :: seed(:), sel(:)
@@ -1211,11 +1254,13 @@ contains
         real,    allocatable, intent(out)   :: post(:), curve(:,:)
         integer,              intent(out)   :: nstar
         complex, allocatable, intent(out)   :: devs(:,:,:,:)
+        logical,              intent(in)    :: l_all
         type(image)          :: vol
         complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:), da(:,:,:), db(:,:,:)
         real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:), fw2(:), key(:)
         real(dp),allocatable :: epsb(:), epsf(:)
         integer, allocatable :: ia(:), ib(:), oa(:), ob(:), fhk(:,:)
+        real(dp) :: bta(self%nshem), btb(self%nshem), s2a(self%nshem), s2b(self%nshem), pra(2), prb(2)
         real    :: f(0:self%nyq), cbest, chga, chgb
         integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2
         call vol%read_and_crop(mfile, self%p%smpd, self%box, self%p%smpd_crop)
@@ -1278,8 +1323,8 @@ contains
                 rf(:,:,:,g,1) = mp(:,:,:,3,1) + masked(shell_weighted(mp(:,:,:,g,1) - mp(:,:,:,3,1), f))
                 rf(:,:,:,g,2) = mp(:,:,:,3,2) + masked(shell_weighted(mp(:,:,:,g,2) - mp(:,:,:,3,2), f))
             end do
-            call nn_estep(ia, wa, rf(:,:,:,:,2), it, chga)
-            call nn_estep(ib, wb, rf(:,:,:,:,1), it, chgb)
+            call nn_estep(ia, wa, rf(:,:,:,:,2), it, chga, bta, s2a, pra)
+            call nn_estep(ib, wb, rf(:,:,:,:,1), it, chgb, btb, s2b, prb)
             ! the assignments stall for a few iterations before a growing class takes off
             if( it >= SITE_ITS_MIN .and. max(chga, chgb) < SITE_CONV ) exit
         end do
@@ -1288,6 +1333,12 @@ contains
         allocate(post(self%n), source=0.)
         post(ia) = wa(:,2)
         post(ib) = wb(:,2)
+        if( l_all .and. size(score) == 0 )then
+            call nn_score(pack([(i, i=1,self%n)], self%eo == 0 .and. .not. sel), rf(:,:,:,:,2), bta, s2a, pra)
+            call nn_score(pack([(i, i=1,self%n)], self%eo == 1 .and. .not. sel), rf(:,:,:,:,1), btb, s2b, prb)
+            write(logfhandle,'(A)') '  scored '//int2str(count(.not. sel))//' particles outside the '//int2str(count(sel))//&
+                &'-particle fit with the converged maps'
+        endif
         deallocate(mp, rf)
         oa  = [(i, i=1,size(ia))]
         key = -post(ia)
@@ -1300,7 +1351,7 @@ contains
         call nn_map(ia, [(1., i=1,size(ia))], fhk, fw2, epsf, tm(:,:,:,1))
         call nn_map(ib, [(1., i=1,size(ib))], fhk, fw2, epsf, tm(:,:,:,2))
         ngrid = max(1, count(SITE_GRID <= int(0.7 * real(count(sel)))))
-        allocate(curve(2,ngrid), source=0.)
+        allocate(curve(4,ngrid), source=0.)
         cbest = -huge(cbest)
         nstar = SITE_GRID(1)
         do ig = 1, ngrid
@@ -1311,6 +1362,7 @@ contains
             db = masked(tm(:,:,:,4) - tm(:,:,:,2))
             curve(1,ig) = real(SITE_GRID(ig))
             curve(2,ig) = self%shell_corr(da, db, self%kb + RB_MARGIN, self%khi)
+            curve(3,ig) = real(sqrt(max(self%shell_dot(da, db, self%kb + RB_MARGIN, self%khi), 0._dp)))
             write(logfhandle,'(A)') '  N '//int2str(SITE_GRID(ig))//': hold-out cross-half correlation of the site deviation '//&
                 &fmtr(real(curve(2,ig),dp),3)
             if( curve(2,ig) > cbest )then
@@ -1320,8 +1372,14 @@ contains
                 devs(:,:,:,2) = db
             endif
         end do
+        if( curve(3,1) > 0. )then
+            curve(4,:) = curve(3,:) * curve(1,:) / curve(3,1)
+        else
+            curve(4,:) = real(nstar)
+        endif
         write(logfhandle,'(A)') '  N* '//int2str(nstar)//' (hold-out shells '//int2str(self%kb + RB_MARGIN)//'..'//&
-            &int2str(self%khi)//', correlation '//fmtr(real(cbest,dp),3)//')'
+            &int2str(self%khi)//', correlation '//fmtr(real(cbest,dp),3)//'), equivalent pure members '//&
+            &int2str(nint(maxval(curve(4,:))))
         deallocate(tm, rot)
 
     contains
@@ -1420,19 +1478,17 @@ contains
             end do
         end subroutine nn_map
 
-        subroutine nn_estep( pidx, w, refs, iter, chg )
-            integer, intent(in)    :: pidx(:), iter
-            real,    intent(inout) :: w(:,:)
-            complex, intent(in)    :: refs(:,:,:,:)
-            real,    intent(out)   :: chg
+        subroutine nn_estep( pidx, w, refs, iter, chg, beta, sig2, pr )
+            integer,  intent(in)    :: pidx(:), iter
+            real,     intent(inout) :: w(:,:)
+            complex,  intent(in)    :: refs(:,:,:,:)
+            real,     intent(out)   :: chg
+            real(dp), intent(out)   :: beta(:), sig2(:), pr(2)
             real, allocatable :: aa(:,:,:), bb(:,:,:), wn(:,:)
             integer, allocatable :: mpc(:)
-            real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem), beta(self%nshem), sig2(self%nshem)
-            real(dp) :: pr(2), s(2), smax
-            complex  :: pv, dv
-            integer  :: ii, gg, j, c1(3), c2(3), sh
-            logical  :: cnj
-            allocate(aa(self%nshem,2,size(pidx)), bb(self%nshem,2,size(pidx)), source=0.)
+            real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem)
+            integer  :: ii, gg
+            call nn_terms(pidx, refs, aa, bb)
             mpc = maxloc(w, dim=2)
             do gg = 1, 2
                 pr(gg) = log(max(real(sum(w(:,gg)),dp) / real(size(pidx),dp), real(SITE_PFLOOR,dp)))
@@ -1441,8 +1497,44 @@ contains
             sb = 0._dp
             sf = 0._dp
             sc = 0._dp
-            !$omp parallel do default(shared) private(ii,gg,j,c1,c2,cnj,sh,pv,dv) schedule(static) &
-            !$omp& reduction(+:sa,sb,sf,sc) proc_bind(close)
+            !$omp parallel do default(shared) private(ii) schedule(static) reduction(+:sa,sb,sf,sc) proc_bind(close)
+            do ii = 1, size(pidx)
+                sa = sa + real(aa(:,mpc(ii),ii),dp)
+                sb = sb + real(bb(:,mpc(ii),ii),dp)
+                sf = sf + real(self%f2s(:,pidx(ii)),dp)
+                sc = sc + real(self%cw,dp)
+            end do
+            !$omp end parallel do
+            beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
+            sig2 = max((sf - 2._dp*beta*sa + beta*beta*sb) / max(sc, 1._dp), 1.e-12_dp)
+            wn   = nn_post(aa, bb, beta, sig2, pr)
+            chg  = real(count((wn(:,2) > 0.5) .neqv. (w(:,2) > 0.5))) / real(max(1, size(pidx)))
+            write(logfhandle,'(A)') '  iteration '//int2str(iter)//': argmax changed '//fmtr(real(chg,dp),3)//&
+                &', site class weight '//fmtr(real(sum(wn(:,2)),dp)/real(size(pidx),dp),3)//&
+                &', model scale at shells 2 / '//int2str(self%kb)//' '//fmtr(beta(1),2)//' / '//fmtr(beta(self%nshem),2)
+            w = wn
+        end subroutine nn_estep
+
+        subroutine nn_score( pidx, refs, beta, sig2, pr )
+            integer,  intent(in) :: pidx(:)
+            complex,  intent(in) :: refs(:,:,:,:)
+            real(dp), intent(in) :: beta(:), sig2(:), pr(2)
+            real, allocatable :: aa(:,:,:), bb(:,:,:), wn(:,:)
+            if( size(pidx) == 0 ) return
+            call nn_terms(pidx, refs, aa, bb)
+            wn         = nn_post(aa, bb, beta, sig2, pr)
+            post(pidx) = wn(:,2)
+        end subroutine nn_score
+
+        subroutine nn_terms( pidx, refs, aa, bb )
+            integer,           intent(in)  :: pidx(:)
+            complex,           intent(in)  :: refs(:,:,:,:)
+            real, allocatable, intent(out) :: aa(:,:,:), bb(:,:,:)
+            complex  :: pv, dv
+            integer  :: ii, gg, j, c1(3), c2(3), sh
+            logical  :: cnj
+            allocate(aa(self%nshem,2,size(pidx)), bb(self%nshem,2,size(pidx)), source=0.)
+            !$omp parallel do default(shared) private(ii,gg,j,c1,c2,cnj,sh,pv,dv) schedule(static) proc_bind(close)
             do ii = 1, size(pidx)
                 do j = 1, self%nem
                     call cell_of(pidx(ii), self%emhk(1,j), self%emhk(2,j), c1, c2, cnj)
@@ -1457,17 +1549,19 @@ contains
                             &self%fpls(pidx(ii))%ctfsq_plane(self%emhk(1,j),self%emhk(2,j)) * abs(pv)**2
                     end do
                 end do
-                sa = sa + real(aa(:,mpc(ii),ii),dp)
-                sb = sb + real(bb(:,mpc(ii),ii),dp)
-                sf = sf + real(self%f2s(:,pidx(ii)),dp)
-                sc = sc + real(self%cw,dp)
             end do
             !$omp end parallel do
-            beta = min(max(sa / max(sb, 1.e-30_dp), 0._dp), 2._dp)
-            sig2 = max((sf - 2._dp*beta*sa + beta*beta*sb) / max(sc, 1._dp), 1.e-12_dp)
-            allocate(wn(size(pidx),2))
+        end subroutine nn_terms
+
+        function nn_post( aa, bb, beta, sig2, pr ) result( wn )
+            real,     intent(in) :: aa(:,:,:), bb(:,:,:)
+            real(dp), intent(in) :: beta(:), sig2(:), pr(2)
+            real, allocatable :: wn(:,:)
+            real(dp) :: s(2), smax
+            integer  :: ii, gg
+            allocate(wn(size(aa,3),2))
             !$omp parallel do default(shared) private(ii,gg,s,smax) schedule(static) proc_bind(close)
-            do ii = 1, size(pidx)
+            do ii = 1, size(aa,3)
                 do gg = 1, 2
                     s(gg) = 0.5_dp * sum((2._dp*beta*real(aa(:,gg,ii),dp) - beta*beta*real(bb(:,gg,ii),dp)) / sig2) + pr(gg)
                 end do
@@ -1476,12 +1570,7 @@ contains
                 wn(ii,:) = wn(ii,:) / sum(wn(ii,:))
             end do
             !$omp end parallel do
-            chg = real(count((wn(:,2) > 0.5) .neqv. (w(:,2) > 0.5))) / real(max(1, size(pidx)))
-            write(logfhandle,'(A)') '  iteration '//int2str(iter)//': argmax changed '//fmtr(real(chg,dp),3)//&
-                &', site class weight '//fmtr(real(sum(wn(:,2)),dp)/real(size(pidx),dp),3)//&
-                &', model scale at shells 2 / '//int2str(self%kb)//' '//fmtr(beta(1),2)//' / '//fmtr(beta(self%nshem),2)
-            w = wn
-        end subroutine nn_estep
+        end function nn_post
 
         function shell_weighted( cm, fs ) result( cmo )
             complex, intent(in)  :: cm(:,:,:)
@@ -2416,6 +2505,24 @@ contains
         complex,              intent(in) :: a(:,:,:,:), b(:,:,:,:)
         half_corr = self%shell_corr(a(:,:,:,1) + a(:,:,:,2), b(:,:,:,1) + b(:,:,:,2), self%kb + RB_MARGIN, self%khi)
     end function half_corr
+
+    real(dp) function shell_dot( self, x, y, shlo, shhi )
+        class(state_mergeup), intent(in) :: self
+        complex,              intent(in) :: x(:,:,:), y(:,:,:)
+        integer,              intent(in) :: shlo, shhi
+        integer :: h, k, l, sh
+        shell_dot = 0._dp
+        do l = 1, self%box
+            do k = 1, self%box
+                do h = 1, self%nh
+                    sh = self%fsh(h,k,l)
+                    if( sh < shlo .or. sh > shhi ) cycle
+                    shell_dot = shell_dot + self%fw(h,k,l) * (real(real(x(h,k,l)),dp)*real(real(y(h,k,l)),dp) + &
+                        &real(aimag(x(h,k,l)),dp)*real(aimag(y(h,k,l)),dp))
+                end do
+            end do
+        end do
+    end function shell_dot
 
     real function shell_corr( self, x, y, shlo, shhi )
         class(state_mergeup), intent(in) :: self
