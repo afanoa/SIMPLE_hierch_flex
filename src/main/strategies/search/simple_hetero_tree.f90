@@ -419,7 +419,11 @@ contains
                 if( ks < 2 )then
                     write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': fewer than two seed states (accepted '//&
                         &'poles and the rest), the node is refined as one state and becomes a leaf'
-                    if( ks < 1 ) seeds = merge(1, 0, project_states(d//'/'//NODE_PROJ) > 0)
+                    if( ks < 1 )then
+                        seeds = merge(1, 0, project_states(d//'/'//NODE_PROJ) > 0)
+                        jk    = junk_rows(d)
+                        if( size(jk) > 0 ) seeds(jk) = 0
+                    endif
                     ks    = 1
                 endif
                 if( any([(count(seeds == j) == 0, j=1,ks)]) )then
@@ -1985,7 +1989,7 @@ contains
                     call add_child([(any(mem == lab(j)), j=1,size(lab))], 'states '//joined(mem)//' ('//int2str(n)//&
                         &' particles)')
                 else
-                    call add_leaf(self, i, mem, .false.)
+                    call add_leaf(self, i, mem, .false., ng == 1)
                 endif
             end do
         endif
@@ -2054,10 +2058,7 @@ contains
             call fclose(funit)
         endif
         call write_ints('hetero_tree_labels.txt', labels)
-        rows = read_ints(self%ndir(1)//'/rows.txt')
-        write(logfhandle,'(A)') '>>> HETERO_TREE leaf rows: '//int2str(count(labels > 0))//' particles in leaves, '//&
-            &int2str(ndup)//' in two leaves, '//int2str(count(labels(rows) == 0))//' of the root''s in none, '//&
-            &int2str(count(labels > 0) - count(labels(rows) > 0))//' outside the root'
+        call unplaced_rows(self, read_ints(self%ndir(1)//'/rows.txt'), labels, ndup)
         write(logfhandle,'(A)') '>>> HETERO_TREE '//int2str(nl)//' leaves ('//int2str(nl - nn)//' junk) over '//&
             &int2str(count(labels > 0))//' particles: hetero_tree_labels.txt, '//LEAF_TABLE
         if( nn >= 2 )then
@@ -2070,6 +2071,51 @@ contains
             call simple_chdir(string(self%root))
         endif
     end subroutine finish
+
+    subroutine unplaced_rows( self, root, labels, ndup )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: root(:), labels(:), ndup
+        integer, allocatable :: seed(:), nr(:), sv(:), jk(:), miss(:)
+        logical, allocatable :: junk(:)
+        character(len=:), allocatable :: nd
+        integer :: i, k, nj, nu, no, fu, io
+        allocate(seed(self%nrows), source=-1)
+        allocate(junk(self%nrows), source=.false.)
+        do i = 1, size(self%nodes)
+            nd = self%ndir(i)
+            if( .not. file_exists(string(nd//'/seeds/seeds.txt')) ) cycle
+            nr = read_ints(nd//'/rows.txt')
+            sv = read_ints(nd//'/seeds/seeds.txt')
+            if( local_rows(nd) )then
+                seed(nr) = sv
+            else
+                seed(nr) = sv(nr)
+            endif
+            jk = junk_rows(nd)
+            if( size(jk) == 0 ) cycle
+            if( local_rows(nd) ) jk = nr(jk)
+            junk(jk) = .true.
+        end do
+        miss = pack(root, labels(root) == 0)
+        nj   = count(junk(miss))
+        nu   = count(.not. junk(miss) .and. seed(miss) == 0)
+        no   = size(miss) - nj - nu
+        write(logfhandle,'(A)') '>>> HETERO_TREE leaf rows: '//int2str(count(labels > 0))//' particles in leaves, '//&
+            &int2str(ndup)//' in two leaves, '//int2str(count(labels > 0) - count(labels(root) > 0))//' outside the root; '//&
+            &int2str(size(miss))//' of the root''s in none: '//int2str(nj)//' junk, '//int2str(nu)//' unseeded, '//&
+            &int2str(no)//' other'
+        if( nu + no > 0 ) write(logfhandle,'(A)') '>>> HETERO_TREE WARNING: '//int2str(nu + no)//' particles are in no leaf '//&
+            &'and not junk; rows and causes in hetero_tree_unplaced.txt'
+        if( size(miss) == 0 ) return
+        call fopen(fu, string('hetero_tree_unplaced.txt'), status='replace', action='write', iostat=io)
+        call fileiochk('hetero_tree: cannot write hetero_tree_unplaced.txt', io)
+        write(fu,'(A)') '# input-project row, cause at the deepest node holding it (junk, unseeded, other)'
+        do k = 1, size(miss)
+            write(fu,'(I0,1X,A)') miss(k), trim(merge('junk    ', merge('unseeded', 'other   ', seed(miss(k)) == 0), &
+                &junk(miss(k))))
+        end do
+        call fclose(fu)
+    end subroutine unplaced_rows
 
     subroutine read_table( self )
         class(hetero_tree), intent(inout) :: self
@@ -2313,7 +2359,59 @@ contains
         do j = 1, size(pres)
             where( st == pres(j) ) lab = grp(j)
         end do
+        call nearest_group(nd//'/fflex/flex_pca_coordinates.txt', lab)
     end function two_groups
+
+    ! every coordinate row still at 0 joins the nearer group centre in the flex latent, per axis scaled by the pooled spread
+    subroutine nearest_group( fname, lab )
+        character(len=*), intent(in)    :: fname
+        integer,          intent(inout) :: lab(:)
+        real(dp), allocatable :: z(:,:), mu(:,:), sd(:), d(:)
+        integer,  allocatable :: pinds(:), g(:)
+        character(len=8192) :: line
+        real    :: e(3), u(1)
+        integer :: funit, ios, n, q, k, i, a
+        if( .not. file_exists(string(fname)) ) return
+        call fopen(funit, string(fname), status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        n = 0
+        q = 0
+        do
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
+            if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
+            n = n + 1
+            if( q == 0 ) q = nwords(line) - 5
+        end do
+        rewind(funit)
+        allocate(pinds(n))
+        allocate(z(n,max(q,1)), source=0._dp)
+        k = 0
+        do while( k < n )
+            read(funit,'(A)') line
+            if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
+            k = k + 1
+            read(line,*) pinds(k), e(1), e(2), e(3), u(1), z(k,1:q)
+        end do
+        call fclose(funit)
+        g = lab(pinds)
+        if( q < 1 .or. count(g == 1) < 2 .or. count(g == 2) < 2 .or. count(g == 0) == 0 ) return
+        allocate(mu(q,2), sd(q), d(2))
+        do a = 1, 2
+            mu(:,a) = [(sum(z(:,k), mask=g == a) / real(count(g == a), dp), k=1,q)]
+        end do
+        do k = 1, q
+            sd(k) = sqrt(max((sum((z(:,k) - mu(k,1))**2, mask=g == 1) + sum((z(:,k) - mu(k,2))**2, mask=g == 2)) / &
+                &real(count(g > 0) - 2, dp), 1.e-12_dp))
+        end do
+        do i = 1, n
+            if( g(i) /= 0 ) cycle
+            d = [(sum(((z(i,:) - mu(:,a)) / sd)**2), a=1,2)]
+            lab(pinds(i)) = minloc(d, dim=1)
+        end do
+        write(logfhandle,'(A)') '>>> HETERO_TREE '//fname(1:index(fname, '/fflex/')-1)//': the two-group fallback seeds its '//&
+            &int2str(count(g == 0))//' rows flex left unassigned by the nearer group centre'
+    end subroutine nearest_group
 
     function with_maps( dir, pres ) result( kept )
         character(len=*), intent(in) :: dir
@@ -3006,13 +3104,15 @@ contains
         call vol%kill
     end function dist_px
 
-    subroutine add_leaf( self, i, mem, l_junk )
+    subroutine add_leaf( self, i, mem, l_junk, l_rest )
         class(hetero_tree), intent(inout) :: self
         integer,            intent(in)    :: i, mem(:)
         logical,            intent(in)    :: l_junk
+        logical, optional,  intent(in)    :: l_rest
         character(len=11), parameter :: SFX(3) = [character(len=11) :: '', '_even_unfil', '_odd_unfil']
         type(image)          :: vol
-        integer, allocatable :: rows(:), lab(:), sel(:)
+        logical, allocatable :: inn(:)
+        integer, allocatable :: rows(:), lab(:), sel(:), jk(:)
         real,    allocatable :: acc(:,:,:)
         character(len=:), allocatable :: d, name, b, fn, lrows
         real    :: wsum, smpd
@@ -3021,6 +3121,15 @@ contains
         rows = read_ints(d//'/rows.txt')
         lab  = project_states(d//'/stageB/b.simple')
         sel  = pack([(j, j=1,size(lab))], [(any(mem == lab(j)), j=1,size(lab))])
+        if( present(l_rest) )then
+            if( l_rest )then
+                allocate(inn(size(lab)), source=local_rows(d))
+                if( .not. local_rows(d) ) inn(rows) = .true.
+                jk = junk_rows(d)
+                if( size(jk) > 0 ) inn(jk) = .false.
+                sel = pack([(j, j=1,size(lab))], [(any(mem == lab(j)) .or. (lab(j) == 0 .and. inn(j)), j=1,size(lab))])
+            endif
+        endif
         n    = size(sel)
         if( size(mem) == 1 )then
             name = self%nodes(i)%id//'_s'//int2str(mem(1))
