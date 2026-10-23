@@ -411,11 +411,11 @@ contains
             type(string)    :: fname
             type(image)     :: obs
             complex, allocatable :: y_batch(:,:,:)
-            real,    allocatable :: inv_sig2(:)
+            real,    allocatable :: inv_sig2(:), con(:), pw(:)
             integer :: lims2(2,2), R, batchlims(2), batchsz, ih
             integer :: i, ii, iptcl, ibatch
             real    :: shift(2), crop_factor
-            logical :: l_records
+            logical :: l_records, l_con
 
             call pcgop%new(params%box_crop, params%smpd_crop, PCG_LAMBDA)
             fname = refine3D_pcg_raw_accum_fname(state_here, params%part, params%numlen, &
@@ -442,6 +442,7 @@ contains
             call selection%new(size(pinds), .true.)
             call orientation%new(.false.)
             crop_factor = real(params%box_crop) / real(params%box)
+            allocate(con(size(pinds)), source=1.)
             do i = 1, size(pinds)
                 iptcl = pinds(i)
                 call build%spproj_field%get_ori(iptcl, orientation)
@@ -451,17 +452,25 @@ contains
                 call orientation%set_ctfvars(ctfparms)
                 call orientation%set_shift(shift)
                 call selection%set_ori(i, orientation)
+                if( build%spproj_field%isthere(iptcl, 'contrast') ) con(i) = build%spproj_field%get(iptcl, 'contrast')
             enddo
+            l_con = any(con /= 1.)
+            if( l_weighted )then
+                pw = half_w
+            else
+                allocate(pw(size(pinds)), source=1.)
+            endif
+            if( l_con ) pw = pw * max(con, 0.)**2
             ! the state weight acts as an inverse noise scale: it multiplies the B term and |T|^2 alike
             if( allocated(inv_sig2) )then
-                if( l_weighted )then
-                    call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2, weights=half_w)
+                if( l_weighted .or. l_con )then
+                    call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2, weights=pw)
                 else
                     call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2)
                 endif
             else
-                if( l_weighted )then
-                    call pcgop%prep_particles(selection, use_ctf=.true., weights=half_w)
+                if( l_weighted .or. l_con )then
+                    call pcgop%prep_particles(selection, use_ctf=.true., weights=pw)
                 else
                     call pcgop%prep_particles(selection, use_ctf=.true.)
                 endif
@@ -485,6 +494,7 @@ contains
                     endif
                     call obs%fft
                     y_batch(:,:,ii) = pcgop%extract_native_plane(obs)
+                    if( l_con .and. con(batchlims(1)+ii-1) > 0. ) y_batch(:,:,ii) = y_batch(:,:,ii) / con(batchlims(1)+ii-1)
                 enddo
                 if( L_BENCH_GLOB ) rt_prep = rt_prep + toc(t_prep)
                 call pcgop%accumulate_batch(y_batch, batchsz, batchlims(1))

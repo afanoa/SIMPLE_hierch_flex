@@ -235,7 +235,7 @@ contains
                 if( DEBUG ) t_read = t_read + toc(t_local)
                 ! preprocess images into padded objects
                 if( DEBUG ) t_local = tic()
-                call prep_imgs4rec(params, build, sz, build%imgbatch(:sz), pinds(lims(1):lims(2)), fpls(:sz))
+                call prep_imgs4rec(params, build, sz, build%imgbatch(:sz), pinds(lims(1):lims(2)), fpls(:sz), contrast=.true.)
                 if( DEBUG ) t_prep = t_prep + toc(t_local)
             end subroutine prep_batch
 

@@ -91,7 +91,7 @@ contains
                     if( L_BENCH_GLOB ) t = tic()
                     call prep_imgs4rec(params, build, batchsz, build%imgbatch(:batchsz), &
                         &grouped_pinds(batchlims(1):batchlims(2)), fpls(:batchsz), &
-                        &crop_imgs=crop_imgs, records=l_records)
+                        &crop_imgs=crop_imgs, records=l_records, contrast=.true.)
                     if( L_BENCH_GLOB )then
                         rt_prep = rt_prep + toc(t)
                         t       = tic()
@@ -438,7 +438,7 @@ contains
     !! the forward transfer; whiten, whitening by the sigma2 spectra (default with the Euclidean objective).
     !! records: the cropped observations come from the pass's records (take_records accepted pinds), ptcl_imgs unread.
     subroutine prep_imgs4rec( params, build, nptcls, ptcl_imgs, pinds, fplanes, crop_imgs, kfromto, &
-            &observation_model, whiten, records )
+            &observation_model, whiten, records, contrast )
         use simple_image, only: image
         class(parameters), intent(in)    :: params
         class(builder),    intent(inout) :: build
@@ -448,10 +448,10 @@ contains
         type(fplane_type), intent(inout) :: fplanes(nptcls)
         type(image), allocatable, optional, intent(inout) :: crop_imgs(:)
         integer,                  optional, intent(in)    :: kfromto(2)
-        logical,                  optional, intent(in)    :: observation_model, whiten, records
+        logical,                  optional, intent(in)    :: observation_model, whiten, records, contrast
         type(fplane_grid) :: grid
         integer :: i, ithr, kfromto_here(2), box_pd
-        logical :: l_crop, l_band, l_obs, l_whiten, l_records
+        logical :: l_crop, l_band, l_obs, l_whiten, l_records, l_con
         l_crop = present(crop_imgs)
         if( l_crop ) l_crop = allocated(crop_imgs)
         l_records = .false.
@@ -460,6 +460,8 @@ contains
         l_band = present(kfromto)
         l_obs  = .false.
         if( present(observation_model) ) l_obs = observation_model
+        l_con  = .false.
+        if( present(contrast) ) l_con = contrast
         l_whiten = params%cc_objfun == OBJFUN_EUCLID
         if( present(whiten) ) l_whiten = whiten
         if( l_whiten .and. .not. allocated(build%esig%sigma2_noise) )then
@@ -503,10 +505,10 @@ contains
             endif
             if( l_whiten )then
                 call gen_rec_plane(params, build, pinds(i), build%img_pad_heap(ithr), l_crop, kfromto_here, &
-                    &build%esig%fplane, l_whiten, l_obs, l_band, fplanes(i))
+                    &build%esig%fplane, l_whiten, l_obs, l_band, fplanes(i), contrast=l_con)
             else
                 call gen_rec_plane(params, build, pinds(i), build%img_pad_heap(ithr), l_crop, kfromto_here, &
-                    &grid, l_whiten, l_obs, l_band, fplanes(i))
+                    &grid, l_whiten, l_obs, l_band, fplanes(i), contrast=l_con)
             endif
         end do
         !$omp end parallel do
@@ -519,7 +521,7 @@ contains
     !! forward transfer; with cap its Nyquist is capped at the band kfromto(2). grid is the plane grid of
     !! pad_img's box, with the spectra attached when whiten (euclid_sigma2%prep_fplane_grid).
     subroutine gen_rec_plane( params, build, iptcl, pad_img, cropped, kfromto, grid, whiten, observation_model, &
-            &cap, fplane )
+            &cap, fplane, contrast )
         use simple_image,         only: image
         use simple_euclid_sigma2, only: sigma2_half
         class(parameters), intent(in)    :: params
@@ -529,8 +531,9 @@ contains
         class(image),      intent(inout) :: pad_img
         logical,           intent(in)    :: cropped, whiten, observation_model, cap
         type(fplane_type), intent(inout) :: fplane
+        logical, optional, intent(in)    :: contrast
         type(ctfparams) :: ctfparms
-        real    :: shift(2), crop_factor
+        real    :: shift(2), crop_factor, a
         integer :: ih
         ctfparms = build%spproj%get_ctfparams(params%oritype, iptcl)
         shift    = build%spproj_field%get_2Dshift(iptcl)
@@ -551,6 +554,16 @@ contains
         endif
         ! the plane claims no frequency beyond the band (padded units)
         if( cap .and. fplane%nyq > 0 ) fplane%nyq = min(fplane%nyq, max(OSMPL_PAD_FAC, OSMPL_PAD_FAC*kfromto(2)))
+        if( .not. present(contrast) ) return
+        if( .not. contrast ) return
+        if( .not. build%spproj_field%isthere(iptcl, 'contrast') ) return
+        a = build%spproj_field%get(iptcl, 'contrast')
+        if( observation_model )then
+            fplane%transfer_plane = a * fplane%transfer_plane
+        else
+            fplane%cmplx_plane = a * fplane%cmplx_plane
+        endif
+        fplane%ctfsq_plane = a * a * fplane%ctfsq_plane
     end subroutine gen_rec_plane
 
 end module simple_matcher_3Drec

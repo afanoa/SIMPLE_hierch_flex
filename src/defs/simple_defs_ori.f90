@@ -56,17 +56,17 @@ enum, bind(c)
     enumerator :: I_CORR_CART           = 51 ! score of the last Cartesian pass (cc or exp(-L); C14, O8)
     enumerator :: I_POSE_CONT_IMPROVED  = 52 ! 1 when the last Cartesian pass improved the pose (O8)
     enumerator :: I_CFAR                = 53 ! conical FSC area ratio of the state's latest half-map pair
+    enumerator :: I_CONTRAST            = 54
 end enum
 
-! A particle carries the named slots 1-53 in memory (ori%pparms).
-! On disk its record is N_PTCL_RECORD_REALS wide: slots 54-64 are zero padding reserved
+! A particle carries the named slots in memory (ori%pparms); its N_PTCL_RECORD_REALS-wide record pads with zeros, reserved
 ! for later fields, so adding a field does not change the project file's record width,
 ! while resident particles pay only for the named slots. Projects written by earlier
 ! releases (narrower records) still read, with zeros in the missing slots
 ! (simple_binoris). A spare slot has no flag and is never "there".
-integer, parameter :: N_PTCL_ORIPARAMS      = 53
+integer, parameter :: N_PTCL_ORIPARAMS      = 54
 integer, parameter :: N_PTCL_RECORD_REALS   = 64
-integer, parameter :: I_LAST_NAMED_ORIPARAM = I_CFAR
+integer, parameter :: I_LAST_NAMED_ORIPARAM = I_CONTRAST
 
 contains
 
@@ -122,6 +122,8 @@ contains
                 get_oriparam_ind = I_RES05
             case('cfar')
                 get_oriparam_ind = I_CFAR
+            case('contrast')
+                get_oriparam_ind = I_CONTRAST
             case('state')
                 get_oriparam_ind = I_STATE
             case('stkind')
@@ -289,6 +291,8 @@ contains
                 flag = 'res05'
             case(I_CFAR)
                 flag = 'cfar'
+            case(I_CONTRAST)
+                flag = 'contrast'
             case DEFAULT
                 flag = 'unknown'
         end select
@@ -350,6 +354,8 @@ contains
             case(I_RES05)
                 oriparam_isthere = abs(val) > TINY
             case(I_CFAR)
+                oriparam_isthere = abs(val) > TINY
+            case(I_CONTRAST)
                 oriparam_isthere = abs(val) > TINY
             case(I_CORR_CART)
                 oriparam_isthere = abs(val) > TINY

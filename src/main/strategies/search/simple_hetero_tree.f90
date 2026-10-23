@@ -407,6 +407,7 @@ contains
                     if( ks < 1 ) seeds = merge(1, 0, project_states(d//'/'//NODE_PROJ) > 0)
                     ks    = 1
                 endif
+                call write_contrast(d//'/'//NODE_PROJ, sd//'/site_contrast.txt')
                 call simple_mkdir(string(d//'/seeds'))
                 call write_ints(d//'/seeds/seeds.txt', seeds)
                 call write_states(d//'/'//NODE_PROJ, d//'/seeds/s.simple', seeds)
@@ -3079,6 +3080,34 @@ contains
         end subroutine set_seg
 
     end subroutine write_states
+
+    subroutine write_contrast( proj, cfile )
+        character(len=*), intent(in) :: proj, cfile
+        type(sp_project), target :: spproj
+        character(len=256) :: ln
+        integer, allocatable :: r(:)
+        real,    allocatable :: v(:)
+        integer :: fu, io, n, j
+        if( .not. file_exists(string(cfile)) ) return
+        allocate(r(nlines(string(cfile))), v(nlines(string(cfile))))
+        call fopen(fu, string(cfile), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        n = 0
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            n = n + 1
+            read(ln,*) r(n), v(n)
+        end do
+        call fclose(fu)
+        call spproj%read_segment('ptcl3D', string(proj))
+        do j = 1, n
+            call spproj%os_ptcl3D%set(r(j), 'contrast', v(j))
+        end do
+        call spproj%write_segment_inside('ptcl3D', string(proj))
+        call spproj%kill
+    end subroutine write_contrast
 
     function present_labels( lab ) result( pres )
         integer, intent(in)  :: lab(:)

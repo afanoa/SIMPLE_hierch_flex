@@ -1619,7 +1619,7 @@ contains
         real(dp) :: sa(self%kj), sb(self%kj), sr(self%kj), sc(self%kj), beta(self%kj), s2(self%kj), a(self%kj,1), b(self%kj,1)
         real(dp) :: tq(NQ_CON), lgq(NQ_CON), den, r, et, et2, ea
         real     :: cw(self%kj)
-        integer  :: e, i, ii, j, its
+        integer  :: e, i, ii, j, its, funit, ios
         rot = self%sym_rots()
         do e = 1, 2
             hx(e)%v = pack([(i, i=1,self%n)], self%eo == e - 1)
@@ -1697,6 +1697,13 @@ contains
             &fmtr(self%cfit(3),3)//' ('//int2str(self%nfit)//' EM iterations); contrast / se 5 / 50 / 95 % '//&
             &fmtr(real(quantr(snr,0.05),dp),1)//' / '//fmtr(real(quantr(snr,0.5),dp),1)//' / '//&
             &fmtr(real(quantr(snr,0.95),dp),1)//'; '//int2str(count(self%cpj >= 0.5))//' at zero contrast (posterior >= 0.5)'
+        call fopen(funit, string('site_contrast.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('fit_contrast: cannot write site_contrast.txt', ios)
+        write(funit,'(A)') '# project row, posterior-mean contrast'
+        do i = 1, self%n
+            write(funit,'(I0,1X,ES12.5)') self%rows(i), max(self%con(i), 1.e-6)
+        end do
+        call fclose(funit)
 
     contains
 

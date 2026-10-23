@@ -15,8 +15,9 @@ contains
         real(sp)        :: spaFreqSq_mat(self%pftsz,self%kfromto(1):self%interpklim)
         real(sp)        :: ang_mat(self%pftsz,self%kfromto(1):self%interpklim), hinv,kinv
         integer         :: i,irot,k,iptcl,ithr,ppfromto(2),ctfmatind
-        logical         :: present_pfromto
+        logical         :: present_pfromto, l_con
         present_pfromto = present(pfromto)
+        l_con           = trim(oritype) == 'ptcl3D'
         ppfromto = self%pfromto
         if( present_pfromto ) ppfromto = pfromto
         if(.not. self%with_ctf ) return
@@ -46,6 +47,10 @@ contains
                 call tfuns(ithr)%init(ctfparms(ithr)%dfx, ctfparms(ithr)%dfy, ctfparms(ithr)%angast)
                 self%ctfmats(:,:,self%pinds(ctfmatind)) = &
                     &abs(tfuns(ithr)%eval_canonical(spaFreqSq_mat(:,:), ang_mat(:,:), ctfparms(ithr)%phshift))
+                if( l_con )then
+                    if( spproj%os_ptcl3D%isthere(iptcl, 'contrast') ) self%ctfmats(:,:,self%pinds(ctfmatind)) = &
+                        &spproj%os_ptcl3D%get(iptcl, 'contrast') * self%ctfmats(:,:,self%pinds(ctfmatind))
+                endif
             endif
         end do
         !$omp end parallel do
