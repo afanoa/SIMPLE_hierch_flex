@@ -1753,10 +1753,10 @@ contains
         complex,  allocatable :: mp(:,:,:,:,:), rf(:,:,:,:)
         real,     allocatable :: rot(:,:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:), res(:), rz(:), wg(:)
         real(dp), allocatable :: epsv(:)
-        integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:)
+        integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:), asg(:)
         logical,  allocatable :: ljunk(:), lj(:), lres(:)
         character(len=:), allocatable :: line
-        real(dp) :: mu(3), s2(3), pw(3), gap(3), xm
+        real(dp) :: mu(3), s2(3), pw(3), gap(3), xm, tc(3), lgc(3)
         real     :: f(0:self%nyq), mv, med, sdr
         integer  :: nk, i, g, e, c, cg, h, k, l, funit, rep, ios, nf
         nk = maxval([0, seeds])
@@ -1805,10 +1805,12 @@ contains
             end do
             call score(hx(e)%v, cnt(:,3-e) > 0, e)
         end do
-        deallocate(mp, rf, rot)
+        deallocate(mp, rf)
         x = pack(amp, best > 0)
         v = pack(var, best > 0)
         allocate(ljunk(self%n), source=.false.)
+        allocate(asg(self%n), source=0)
+        allocate(lj(3), source=.false.)
         if( size(x) > 0 )then
             xm = sum(real(x,dp)) / real(size(x),dp)
             mu = real([quantr(x, 0.02), quantr(x, 0.5), quantr(x, 0.5)], dp)
@@ -1821,6 +1823,15 @@ contains
                 gap(c) = (mu(cg) - mu(c)) / sqrt(0.5_dp * (s2(cg) + s2(c)) + real(mv,dp))
             end do
             lj = [(c /= cg .and. pw(c) >= JUNK_MINW .and. gap(c) >= JUNK_GAP, c=1,3)]
+            do i = 1, self%n
+                if( best(i) == 0 ) cycle
+                tc     = s2 + real(var(i),dp)
+                lgc    = log(max(pw, 1.e-300_dp)) - 0.5_dp * (real(amp(i),dp) - mu)**2 / tc - 0.5_dp * log(tc)
+                asg(i) = maxloc(lgc, dim=1)
+            end do
+            do c = 1, 3
+                if( lj(c) ) lj(c) = identity(c)
+            end do
             if( any(lj) )then
                 do i = 1, self%n
                     if( best(i) > 0 ) post(i) = jpost(amp(i), var(i))
@@ -1849,7 +1860,7 @@ contains
                 end do
             endif
             call say('junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//int2str(nint(JUNK_GAP))//&
-                &' sd below the genuine one):'//line)
+                &' sd below the genuine one, a different structure by the identity test):'//line)
         endif
         do e = 1, 2
             idx = pack(hx(e)%v, best(hx(e)%v) > 0)
@@ -1881,11 +1892,14 @@ contains
         call fopen(funit, string('site_junk.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('junk_screen: cannot write site_junk.txt', ios)
         write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior, '//&
-            &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight'
+            &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight, '//&
+            &'amplitude component (1 lowest), confirmed junk component'
         do i = 1, self%n
-            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4)') self%rows(i), &
-                &merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), self%con(i), self%cpj(i), &
-                &rz(i), wg(i)
+            c = 0
+            if( asg(i) > 0 ) c = count(mu < mu(asg(i))) + 1
+            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,2(1X,I0))') &
+                &self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), &
+                &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lj(max(asg(i),1)))
         end do
         call fclose(funit)
         where( ljunk ) seeds = 0
@@ -1996,6 +2010,102 @@ contains
             r     = exp(lg - maxval(lg))
             jpost = real(sum(r, mask=lj) / sum(r))
         end function jpost
+
+        logical function identity( c )
+            integer, intent(in) :: c
+            type(ivec)           :: pool(2), offs(2), lmem(2), lcnt(2)
+            complex, allocatable :: ml(:,:,:,:), mg(:,:,:,:), ml0(:,:,:,:), mg0(:,:,:,:)
+            integer, allocatable :: skey(:), sc(:), st(:), lo(:), go(:)
+            real     :: rd, rn(NSHUF), rm, rs, zc
+            integer  :: i, e, it, kmax, rk
+            sc = pack([(i, i=1,self%n)], best > 0)
+            st = self%strata(sc)
+            allocate(skey(self%n), source=0)
+            skey(sc) = max(lab(sc), 0) * 3 * NVIEW + st
+            kmax     = maxval(skey) + 1
+            do e = 1, 2
+                lmem(e)%v = pack(hx(e)%v, asg(hx(e)%v) == c)
+                call sorted_pool(pack(hx(e)%v, asg(hx(e)%v) == cg), skey, kmax, pool(e)%v, offs(e)%v)
+                allocate(lcnt(e)%v(0:kmax-1), source=0)
+                do i = 1, size(lmem(e)%v)
+                    lcnt(e)%v(skey(lmem(e)%v(i))) = lcnt(e)%v(skey(lmem(e)%v(i))) + 1
+                end do
+            end do
+            rk       = count(mu < mu(c)) + 1
+            identity = .false.
+            if( any([(size(lmem(e)%v) < MINSEL_JUNK, e=1,2)]) )then
+                call say('component '//int2str(rk)//' ('//fmtr(mu(c),2)//'): '//int2str(size(lmem(1)%v))//' / '//&
+                    &int2str(size(lmem(2)%v))//' members per half, too few for the identity test: kept')
+                return
+            endif
+            allocate(ml(self%nh,self%box,self%box,2), mg(self%nh,self%box,self%box,2))
+            do it = 0, NSHUF
+                do e = 1, 2
+                    call stratified_draw(lcnt(e)%v, pool(e)%v, offs(e)%v, it > 0, lo, go)
+                    if( it == 0 ) lo = lmem(e)%v
+                    call self%band_wiener(rot, lo, epsv, ml(:,:,:,e))
+                    call self%band_wiener(rot, go, epsv, mg(:,:,:,e))
+                end do
+                if( it == 0 )then
+                    rd  = rdiff(ml, mg)
+                    ml0 = ml
+                    mg0 = mg
+                else
+                    rn(it) = rdiff(ml, mg)
+                endif
+            end do
+            rm = sum(rn) / real(NSHUF)
+            rs = sqrt(sum((rn - rm)**2) / real(NSHUF - 1))
+            zc = (rd - rm) / max(rs, 1.e-12)
+            identity = zc >= HALVES_KSIG
+            call say('component '//int2str(rk)//' ('//fmtr(mu(c),2)//'): '//int2str(size(lmem(1)%v) + size(lmem(2)%v))//&
+                &' members, cross-half correlation of its difference from the matched genuine map '//fmtr(real(rd,dp),4)//&
+                &', null '//fmtr(real(rm,dp),4)//' +- '//fmtr(real(rs,dp),4)//' (z '//fmtr(real(zc,dp),1)//'), its map vs '//&
+                &'the genuine one '//fmtr(0.5_dp*real(self%shell_corr(ml0(:,:,:,1), mg0(:,:,:,2), 2, self%kj) + &
+                &self%shell_corr(ml0(:,:,:,2), mg0(:,:,:,1), 2, self%kj),dp),3)//' -> '//&
+                &trim(merge('junk (a different structure)', 'genuine, faint              ', identity)))
+            if( .not. identity ) return
+            do e = 1, 2
+                call self%wimgs(1)%set_ft(.true.)
+                call self%wimgs(1)%set_cmat(ml0(:,:,:,e))
+                call self%wimgs(1)%ifft
+                call self%wimgs(1)%write(string('junk_c'//int2str(rk)//'_'//trim(merge('even','odd ',e == 1))//'.mrc'), &
+                    &del_if_exists=.true.)
+            end do
+        end function identity
+
+        real function rdiff( ml, mg )
+            complex, intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
+            complex, allocatable :: d1(:,:,:), d2(:,:,:)
+            real(dp) :: num(0:self%nyq), den(0:self%nyq), al(0:self%nyq)
+            integer  :: h, k, l, sh
+            num = 0._dp
+            den = 0._dp
+            do l = 1, self%box
+                do k = 1, self%box
+                    do h = 1, self%nh
+                        sh = self%fsh(h,k,l)
+                        if( sh < 2 .or. sh > self%kj ) cycle
+                        num(sh) = num(sh) + self%fw(h,k,l) * real(ml(h,k,l,1)*conjg(mg(h,k,l,2)) + &
+                            &ml(h,k,l,2)*conjg(mg(h,k,l,1)), dp)
+                        den(sh) = den(sh) + self%fw(h,k,l) * real(mg(h,k,l,1)*conjg(mg(h,k,l,2)) + &
+                            &mg(h,k,l,2)*conjg(mg(h,k,l,1)), dp)
+                    end do
+                end do
+            end do
+            al = 0._dp
+            where( den > 0._dp ) al = max(num / den, 0._dp)
+            allocate(d1(self%nh,self%box,self%box), d2(self%nh,self%box,self%box))
+            do l = 1, self%box
+                do k = 1, self%box
+                    do h = 1, self%nh
+                        d1(h,k,l) = ml(h,k,l,1) - real(al(self%fsh(h,k,l))) * mg(h,k,l,1)
+                        d2(h,k,l) = ml(h,k,l,2) - real(al(self%fsh(h,k,l))) * mg(h,k,l,2)
+                    end do
+                end do
+            end do
+            rdiff = self%shell_corr(d1, d2, 2, self%kj)
+        end function rdiff
 
     end subroutine junk_screen
 
@@ -2814,6 +2924,51 @@ contains
             ea  = exp(p(2) + 0.5_dp * p(3) * p(3))
         endif
     end subroutine zl_post
+
+    subroutine sorted_pool( members, skey, kmax, srt, off )
+        integer,              intent(in)  :: members(:), skey(:), kmax
+        integer, allocatable, intent(out) :: srt(:), off(:)
+        integer, allocatable :: fill(:)
+        integer :: j, k
+        allocate(off(0:kmax), source=0)
+        do j = 1, size(members)
+            off(skey(members(j))+1) = off(skey(members(j))+1) + 1
+        end do
+        do k = 1, kmax
+            off(k) = off(k) + off(k-1)
+        end do
+        allocate(fill(0:kmax-1))
+        fill = off(0:kmax-1)
+        allocate(srt(size(members)))
+        do j = 1, size(members)
+            fill(skey(members(j))) = fill(skey(members(j))) + 1
+            srt(fill(skey(members(j)))) = members(j)
+        end do
+    end subroutine sorted_pool
+
+    subroutine stratified_draw( lcnt, pool, off, l_null, lout, gout )
+        integer,              intent(in)  :: lcnt(0:), pool(:), off(0:)
+        logical,              intent(in)  :: l_null
+        integer, allocatable, intent(out) :: lout(:), gout(:)
+        integer, allocatable :: seg(:)
+        integer :: k, m
+        allocate(lout(0), gout(0))
+        do k = 0, size(lcnt) - 1
+            if( lcnt(k) == 0 ) cycle
+            seg = pool(off(k)+1:off(k+1))
+            if( size(seg) == 0 ) cycle
+            if( l_null )then
+                m = min(lcnt(k), size(seg) / 2)
+                call rnd_subset(seg, min(2 * m, size(seg)))
+                lout = [lout, seg(1:m)]
+                gout = [gout, seg(m+1:2*m)]
+            else
+                m = min(lcnt(k), size(seg))
+                call rnd_subset(seg, m)
+                gout = [gout, seg(1:m)]
+            endif
+        end do
+    end subroutine stratified_draw
 
     subroutine rnd_subset( sel, m )
         use simple_rnd, only: partial_shuffle
