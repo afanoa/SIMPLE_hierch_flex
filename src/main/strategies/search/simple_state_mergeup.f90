@@ -2016,7 +2016,7 @@ contains
             type(ivec)           :: pool(2), offs(2), lmem(2), lcnt(2)
             complex, allocatable :: ml(:,:,:,:), mg(:,:,:,:), ml0(:,:,:,:), mg0(:,:,:,:)
             integer, allocatable :: skey(:), sc(:), st(:), lo(:), go(:)
-            real     :: rd, rn(NSHUF), rm, rs, zc
+            real     :: rd, rn(NSHUF), rm, rs, zc, uc
             integer  :: i, e, it, kmax, rk
             sc = pack([(i, i=1,self%n)], best > 0)
             st = self%strata(sc)
@@ -2047,7 +2047,7 @@ contains
                     call self%band_wiener(rot, go, epsv, mg(:,:,:,e))
                 end do
                 if( it == 0 )then
-                    rd  = rdiff(ml, mg)
+                    rd  = rdiff(ml, mg, uc)
                     ml0 = ml
                     mg0 = mg
                 else
@@ -2060,7 +2060,8 @@ contains
             identity = zc >= HALVES_KSIG
             call say('component '//int2str(rk)//' ('//fmtr(mu(c),2)//'): '//int2str(size(lmem(1)%v) + size(lmem(2)%v))//&
                 &' members, cross-half correlation of its difference from the matched genuine map '//fmtr(real(rd,dp),4)//&
-                &', null '//fmtr(real(rm,dp),4)//' +- '//fmtr(real(rs,dp),4)//' (z '//fmtr(real(zc,dp),1)//'), its map vs '//&
+                &', null '//fmtr(real(rm,dp),4)//' +- '//fmtr(real(rs,dp),4)//' (z '//fmtr(real(zc,dp),1)//'), U '//&
+                &fmtr(real(uc,dp),4)//' (its reproducible difference over its own, in the mask), its map vs '//&
                 &'the genuine one '//fmtr(0.5_dp*real(self%shell_corr(ml0(:,:,:,1), mg0(:,:,:,2), 2, self%kj) + &
                 &self%shell_corr(ml0(:,:,:,2), mg0(:,:,:,1), 2, self%kj),dp),3)//' -> '//&
                 &trim(merge('a different structure (identity test, not applied)', &
@@ -2075,8 +2076,9 @@ contains
             end do
         end function identity
 
-        real function rdiff( ml, mg )
-            complex, intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
+        real function rdiff( ml, mg, u )
+            complex,        intent(in)  :: ml(:,:,:,:), mg(:,:,:,:)
+            real, optional, intent(out) :: u
             complex, allocatable :: d1(:,:,:), d2(:,:,:)
             real(dp) :: num(0:self%nyq), den(0:self%nyq), al(0:self%nyq)
             integer  :: h, k, l, sh
@@ -2106,7 +2108,29 @@ contains
                 end do
             end do
             rdiff = self%shell_corr(d1, d2, 2, self%kj)
+            if( present(u) ) u = real(env_dot(d1, d2) / max(env_dot(ml(:,:,:,1), ml(:,:,:,2)), 1.e-30_dp))
         end function rdiff
+
+        real(dp) function env_dot( x, y )
+            complex, intent(in)  :: x(:,:,:), y(:,:,:)
+            complex, allocatable :: t(:,:,:)
+            real,    allocatable :: xr(:,:,:)
+            real,    pointer     :: rmat(:,:,:)
+            t = x
+            where( self%fsh < 2 .or. self%fsh > self%kj ) t = cmplx(0.,0.)
+            call self%wimgs(1)%set_ft(.true.)
+            call self%wimgs(1)%set_cmat(t)
+            call self%wimgs(1)%ifft
+            call self%wimgs(1)%get_rmat_ptr(rmat)
+            xr = rmat(:self%box,:self%box,:self%box) * self%msk3
+            t  = y
+            where( self%fsh < 2 .or. self%fsh > self%kj ) t = cmplx(0.,0.)
+            call self%wimgs(1)%set_ft(.true.)
+            call self%wimgs(1)%set_cmat(t)
+            call self%wimgs(1)%ifft
+            call self%wimgs(1)%get_rmat_ptr(rmat)
+            env_dot = sum(real(xr,dp) * real(rmat(:self%box,:self%box,:self%box),dp))
+        end function env_dot
 
     end subroutine junk_screen
 
