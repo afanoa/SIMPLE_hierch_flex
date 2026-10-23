@@ -385,7 +385,7 @@ contains
                 call cl%set('projfile',    's.simple')
                 call cl%set('mskdiam',     self%p%mskdiam)
                 call cl%set('pcg_mskfile', mask)
-                call cl%set('nthr',        self%p%nthr)
+                call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
                 call self%submit(i, S_SPLIT, cl)
             case(S_SPLIT)
                 call self%decide(i)

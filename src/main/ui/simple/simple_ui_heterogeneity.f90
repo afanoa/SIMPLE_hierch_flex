@@ -582,7 +582,8 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &particles no pole claims, and the cross-half &
         &split test of the refined states (state_split). Supported groups of at least minpop particles become child nodes below maxdepth, &
         &the others are leaves. The node steps run as queue jobs, nodepar nodes at a time, with one part per 20000 &
-        &particles of the node (at least 4, at most nparts) and the site ranking on 32 threads; rerun with mkdir=no in the &
+        &particles of the node (at least 4, at most nparts), the site ranking on 32 threads and the split test on one thread per &
+        &20000 particles (at least nthr, at most 32); rerun with mkdir=no in the &
         &run directory to resume. Writes hetero_tree_labels.txt, hetero_tree_leaves.txt and the tree of the leaves',&
         &'simple_exec',&
         &.true.,&

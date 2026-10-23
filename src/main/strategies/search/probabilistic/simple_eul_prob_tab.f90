@@ -63,6 +63,8 @@ type :: eul_prob_tab
     integer                     :: nstates         !< states number
     integer                     :: nrefs           !< reference number
     type(prob_fill_profile)     :: fill_profile    !< accumulated cost record of fill_tab_range (bench file)
+    real,           allocatable :: athres_inpl(:)
+    integer,        allocatable :: nsmpl_projs(:)
     contains
     ! CONSTRUCTOR
     procedure :: new => new_global
@@ -73,6 +75,7 @@ type :: eul_prob_tab
     procedure, private :: initialize_storage
     ! PARTITION-WISE PROCEDURES (used only by partition-wise eul_prob_tab objects)
     procedure :: fill_tab_range
+    procedure :: state_thresholds
     procedure :: write_tab
     procedure :: begin_write
     procedure :: write_rows
@@ -239,7 +242,7 @@ contains
         real,                      allocatable :: post_wx(:,:)       !< per thread: its posterior, sorted
         integer,                   allocatable :: post_indsx(:,:)    !< per thread: its reference order
         logical :: l_post
-        integer :: i, si, iptcl, n, projs_ns, ithr, inds_sorted(self%b_ptr%pftc%get_nrots(),nthr_glob), istate
+        integer :: i, si, iptcl, projs_ns, ithr, inds_sorted(self%b_ptr%pftc%get_nrots(),nthr_glob), istate
         integer :: inpl_refs(self%nrefs,nthr_glob)
         real    :: lims(2,2), lims_init(2,2), inpl_athres(self%p_ptr%nstates)
         real    :: dists_inpl_sorted(self%b_ptr%pftc%get_nrots(),nthr_glob), dists_refs(self%nrefs,nthr_glob)
@@ -264,12 +267,12 @@ contains
         l_grid          = self%p_ptr%nstates > 1
         seed_builds     = 0_int64
         call seed_rnd
+        call self%state_thresholds
         projs_ns = 0
         do si = 1, self%nstates
             istate = self%ssinds(si)
-            call calc_num2sample(self%b_ptr%spproj_field, self%p_ptr%nspace, 'dist', n, self%p_ptr%prob_athres, state=istate)
-            projs_ns            = max(projs_ns, n)
-            inpl_athres(istate) = calc_athres(self%b_ptr%spproj_field, 'dist_inpl', self%p_ptr%prob_athres, state=istate)
+            projs_ns            = max(projs_ns, self%nsmpl_projs(istate))
+            inpl_athres(istate) = self%athres_inpl(istate)
         enddo
         if( allocated(locn) ) deallocate(locn)
         allocate(locn(projs_ns,nthr_glob), source=0)
@@ -1486,6 +1489,20 @@ contains
         deallocate(assgn_glob, pind2glob, pinds_glob)
     end subroutine read_assignment
 
+    subroutine state_thresholds( self )
+        class(eul_prob_tab), intent(inout) :: self
+        integer :: si, istate
+        if( allocated(self%athres_inpl) ) return
+        allocate(self%athres_inpl(self%p_ptr%nstates), source=self%p_ptr%prob_athres)
+        allocate(self%nsmpl_projs(self%p_ptr%nstates), source=0)
+        do si = 1, self%nstates
+            istate = self%ssinds(si)
+            call calc_num2sample(self%b_ptr%spproj_field, self%p_ptr%nspace, 'dist', self%nsmpl_projs(istate), &
+                &self%p_ptr%prob_athres, state=istate)
+            self%athres_inpl(istate) = calc_athres(self%b_ptr%spproj_field, 'dist_inpl', self%p_ptr%prob_athres, state=istate)
+        enddo
+    end subroutine state_thresholds
+
     ! DESTRUCTOR
 
     subroutine kill( self )
@@ -1513,6 +1530,8 @@ contains
         if( allocated(self%ssinds)       ) deallocate(self%ssinds)
         if( allocated(self%state_to_active_rank) ) deallocate(self%state_to_active_rank)
         if( allocated(self%state_exists) ) deallocate(self%state_exists)
+        if( allocated(self%athres_inpl)  ) deallocate(self%athres_inpl)
+        if( allocated(self%nsmpl_projs)  ) deallocate(self%nsmpl_projs)
         self%seed_nrots = 0
         self%fill_profile = prob_fill_profile()
         self%b_ptr => null()

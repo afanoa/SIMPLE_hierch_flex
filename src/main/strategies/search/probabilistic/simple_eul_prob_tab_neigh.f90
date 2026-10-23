@@ -185,9 +185,10 @@ contains
             &corrs_inpl(nrots,nthr_glob), inds_sorted(nrots,nthr_glob))
         max_refs_to_refine = max(1, self%p_ptr%npeaks_inpl)
         call eval_work%init_eval_stoch_ws(self, max_refs_to_refine)
+        call self%state_thresholds
         do si = 1, self%nstates
             istate = self%ssinds(si)
-            inpl_athres(istate) = calc_athres(self%b_ptr%spproj_field, 'dist_inpl', self%p_ptr%prob_athres, state=istate)
+            inpl_athres(istate) = self%athres_inpl(istate)
         enddo
         allocate(direct_srch_order(nfull_refs,nthr_glob), direct_rts(nthr_glob))
         do ithr = 1,nthr_glob
@@ -409,9 +410,10 @@ contains
         allocate(dists_inpl(nrots,nthr_glob), dists_inpl_sorted(nrots,nthr_glob), inds_sorted(nrots,nthr_glob))
         max_refs_to_refine = max(1, self%p_ptr%npeaks_inpl)
         call eval_work%init_eval_subspace_ws(self, nsubs, max_refs_to_refine)
+        call self%state_thresholds
         do si = 1, self%nstates
             istate = self%ssinds(si)
-            inpl_athres(istate) = calc_athres(self%b_ptr%spproj_field, 'dist_inpl', self%p_ptr%prob_athres, state=istate)
+            inpl_athres(istate) = self%athres_inpl(istate)
         enddo
         call coarse_ws%alloc_coarse_ws(npeak_target, npooled_capacity, self%p_ptr%nstates, nthr_glob)
         t_region = omp_get_wtime()
@@ -1057,8 +1059,8 @@ contains
                 sh_seed = 0.
                 if( l_seed_fallback_shift ) sh_seed = o_prev%get_2Dshift()
                 if( self%p_ptr%l_prob_inpl )then
-                    inpl_athres_state = calc_athres(self%b_ptr%spproj_field, 'dist_inpl',&
-                        &self%p_ptr%prob_athres, state=fallback_state)
+                    call self%state_thresholds
+                    inpl_athres_state = self%athres_inpl(fallback_state)
                     call self%b_ptr%pftc%gen_likelihood_val(fallback_ref_full, self%pinds(iptcl_loc),&
                         &sh_seed, likelihood_nsample(self%b_ptr%pftc%get_nrots(), inpl_athres_state),&
                         &dist, corr_loc, irot_loc, dists_inpl_sorted, inds_sorted)
