@@ -1893,7 +1893,7 @@ contains
         integer,            intent(in)    :: i
         integer, allocatable :: rows(:), lab(:), ch(:), junk(:), states(:), to(:), pop(:), mem(:)
         type(tnode), allocatable :: tmp(:)
-        character(len=:), allocatable :: d, name
+        character(len=:), allocatable :: d, name, comp
         logical :: l_split
         integer :: s, g, ng, n, fg, big, j
         d      = self%ndir(i)
@@ -1903,52 +1903,75 @@ contains
         junk   = read_ints(d//'/split/split_junk.txt')
         if( size(ch) /= size(lab) ) THROW_HARD('split children do not match the node; decide')
         states = present_labels(lab)
-        allocate(to(size(states)), source=0)
         allocate(pop(max(1,maxval([0,ch]))), source=0)
         do g = 1, size(pop)
             pop(g) = count(ch == g)
         end do
-        do j = 1, size(states)
-            s = states(j)
-            if( any(junk == s) )then
-                to(j) = -1
-                cycle
-            endif
-            if( count(lab == s .and. ch > 0) > 0 ) to(j) = mode_of(pack(ch, lab == s .and. ch > 0))
-        end do
-        big = 1
-        if( any(to > 0) ) big = maxloc(pop, dim=1, mask=[(any(to == g), g=1,size(pop))])
-        where( to == 0 ) to = big
-        ng      = count([(any(to == g), g=1,size(pop))])
-        l_split = ng >= 2
-        fg      = 0
-        do g = 1, size(pop)
-            if( .not. any(to == g) ) cycle
-            mem = pack(states, to == g)
-            n   = count([(any(mem == lab(j)), j=1,size(lab))])
-            if( l_split .and. n >= self%p%minpop .and. self%nodes(i)%depth < self%p%maxdepth )then
-                fg   = fg + 1
-                name = self%nodes(i)%id//int2str(fg)
-                allocate(tmp(size(self%nodes) + 1))
-                tmp(1:size(self%nodes)) = self%nodes
-                tmp(size(tmp))%id    = name
-                tmp(size(tmp))%depth = self%nodes(i)%depth + 1
-                tmp(size(tmp))%step  = S_QUEUED
-                tmp(size(tmp))%pproj = d//'/stageB/b.simple'
-                tmp(size(tmp))%prows = '-'
-                call move_alloc(tmp, self%nodes)
-                call simple_mkdir(string(self%ndir(size(self%nodes))))
-                call write_ints(self%ndir(size(self%nodes))//'/rows.txt', pack([(j, j=1,size(lab))], &
-                    &[(any(mem == lab(j)), j=1,size(lab))]))
-                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': states '//joined(mem)//' ('//&
-                    &int2str(n)//' particles) -> node '//name
-            else
-                call add_leaf(self, i, mem, .false.)
-            endif
-        end do
+        fg = 0
+        if( count(pop > 0) >= 2 .and. all(pack(pop, pop > 0) >= self%p%minpop) .and. &
+            &self%nodes(i)%depth < self%p%maxdepth )then
+            do g = 1, size(pop)
+                if( pop(g) == 0 ) cycle
+                comp = ''
+                do j = 1, size(states)
+                    n = count(ch == g .and. lab == states(j))
+                    if( n > 0 ) comp = comp//' '//int2str(states(j))//':'//int2str(n)
+                end do
+                call add_child([(ch(j) == g, j=1,size(lab))], 'split group '//int2str(g)//' ('//int2str(pop(g))//&
+                    &' particles; stage-B states'//comp//')')
+            end do
+        else
+            allocate(to(size(states)), source=0)
+            do j = 1, size(states)
+                s = states(j)
+                if( any(junk == s) )then
+                    to(j) = -1
+                    cycle
+                endif
+                if( count(lab == s .and. ch > 0) > 0 ) to(j) = mode_of(pack(ch, lab == s .and. ch > 0))
+            end do
+            big = 1
+            if( any(to > 0) ) big = maxloc(pop, dim=1, mask=[(any(to == g), g=1,size(pop))])
+            where( to == 0 ) to = big
+            ng      = count([(any(to == g), g=1,size(pop))])
+            l_split = ng >= 2
+            do g = 1, size(pop)
+                if( .not. any(to == g) ) cycle
+                mem = pack(states, to == g)
+                n   = count([(any(mem == lab(j)), j=1,size(lab))])
+                if( l_split .and. n >= self%p%minpop .and. self%nodes(i)%depth < self%p%maxdepth )then
+                    call add_child([(any(mem == lab(j)), j=1,size(lab))], 'states '//joined(mem)//' ('//int2str(n)//&
+                        &' particles)')
+                else
+                    call add_leaf(self, i, mem, .false.)
+                endif
+            end do
+        endif
         do j = 1, size(junk)
             if( count(lab == junk(j)) > 0 ) call add_leaf(self, i, [junk(j)], .true.)
         end do
+
+    contains
+
+        subroutine add_child( sel, what )
+            logical,          intent(in) :: sel(:)
+            character(len=*), intent(in) :: what
+            integer :: jj
+            fg   = fg + 1
+            name = self%nodes(i)%id//int2str(fg)
+            allocate(tmp(size(self%nodes) + 1))
+            tmp(1:size(self%nodes)) = self%nodes
+            tmp(size(tmp))%id    = name
+            tmp(size(tmp))%depth = self%nodes(i)%depth + 1
+            tmp(size(tmp))%step  = S_QUEUED
+            tmp(size(tmp))%pproj = d//'/stageB/b.simple'
+            tmp(size(tmp))%prows = '-'
+            call move_alloc(tmp, self%nodes)
+            call simple_mkdir(string(self%ndir(size(self%nodes))))
+            call write_ints(self%ndir(size(self%nodes))//'/rows.txt', pack([(jj, jj=1,size(sel))], sel))
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//what//' -> node '//name
+        end subroutine add_child
+
     end subroutine decide
 
     subroutine finish( self, nn )
