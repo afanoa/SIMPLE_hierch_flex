@@ -328,9 +328,7 @@ contains
                     if( self%file_bindings(i)%not_allowed == file_descr ) raise_exception = .true.
                 endif
                 if( raise_exception )then
-                    write(logfhandle,*) 'This format: ', file_descr, ' is not allowed for this file: ', self%file_bindings(i)%var%to_char()
-                    write(logfhandle,*) 'flag:', trim(self%file_bindings(i)%key)
-                    stop
+                    THROW_HARD('format '//file_descr//' is not allowed for '//trim(self%file_bindings(i)%key)//' = '//self%file_bindings(i)%var%to_char())
                 endif
                 select case(file_descr)
                     case('I')
