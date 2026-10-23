@@ -6,7 +6,7 @@ use simple_error,           only: simple_exception
 use simple_string,          only: string
 use simple_string_utils,    only: int2str
 use simple_fileio,          only: fopen, fclose, fileiochk, nlines, read_exit_code, simple_copy_file
-use simple_syslib,          only: file_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath
+use simple_syslib,          only: file_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file
 use simple_imghead,         only: find_ldim_nptcls, find_img_smpd
 use simple_rnd,             only: seed_rnd_fixed, ran3
 use simple_linalg,          only: eigh, jacobi
@@ -41,6 +41,7 @@ character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean',
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
 character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE = 'hetero_tree_leaves.txt'
 character(len=*), parameter :: STEP_EXIT = 'hetero_step.exit', NODE_PROJ = 'n.simple'
+character(len=*), parameter :: NR_PROJ = 'node_rows.simple', NR_ROWS = 'node_rows.txt', NR_NAME = 'node_rows_proj.txt'
 integer,  parameter :: SITE_NFIT = 100000, F_FAIL = -1, F_RUN = 1, F_TEST = 2, F_UP = 3, F_LEVEL = 4, F_COPY = 5, F_NOPOLE = 6, &
                      & F_DUP = 7, F_KEEP = 8, F_MAPS = 9, F_DONE = 10, F_REC = 11, F_REF = 12, F_READY = 13, F_PREC = 14, &
                      & F_PREF = 15, F_SIZE = 16
@@ -207,6 +208,7 @@ contains
                     call self%write_table
                     cycle
                 endif
+                call expand_proj(self%ndir(i)//'/'//trim(STEP_DIRS(self%nodes(i)%step)))
                 call self%advance(i)
                 if( self%nodes(i)%step <= S_SPLIT ) nact = nact + 1
                 call self%write_table
@@ -572,6 +574,12 @@ contains
         class(hetero_tree), intent(inout) :: self
         integer,            intent(in)    :: i, istep
         class(cmdline),     intent(inout) :: cl
+        type(string) :: pf
+        if( self%p%node_rows .eq. 'yes' .and. any(istep == [S_MEAN, S_CHEAP, S_STA0, S_RECB0, S_SEEDS, S_STAGEA, S_RECB, &
+            &S_STAGEB]) )then
+            pf = cl%get_carg('projfile')
+            call compact_proj(self%ndir(i)//'/'//trim(STEP_DIRS(istep)), pf%to_char())
+        endif
         call self%submit_in(self%ndir(i)//'/'//trim(STEP_DIRS(istep)), cl)
         self%nodes(i)%step = istep
         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//trim(STEP_DIRS(istep))//' submitted'
@@ -3135,6 +3143,69 @@ contains
         end subroutine set_seg
 
     end subroutine write_states
+
+    ! node_rows=yes: the step's project keeps only its rows with state > 0 until expand_proj; NR_ROWS (the master size, then
+    ! each kept row's master row) stays beside the step's per-row diagnostics
+    subroutine compact_proj( sd, pf )
+        character(len=*), intent(in) :: sd, pf
+        type(sp_project)     :: spproj
+        logical, allocatable :: sel(:)
+        integer :: fu, io, j
+        call simple_copy_file(string(sd//'/'//pf), string(sd//'/'//NR_PROJ))
+        call spproj%read_segment('ptcl3D', string(sd//'/'//pf))
+        call spproj%read_segment('ptcl2D', string(sd//'/'//pf))
+        sel = spproj%os_ptcl3D%get_all_asint('state') > 0
+        if( spproj%os_ptcl2D%get_noris() /= size(sel) ) THROW_HARD('ptcl2D and ptcl3D differ in size: '//sd//'/'//pf//'; compact_proj')
+        call write_ints(sd//'/'//NR_ROWS, [size(sel), pack([(j, j=1,size(sel))], sel)])
+        call spproj%os_ptcl3D%compress(sel)
+        call spproj%os_ptcl2D%compress(sel)
+        call spproj%write_segment_inside('ptcl3D', string(sd//'/'//pf))
+        call spproj%write_segment_inside('ptcl2D', string(sd//'/'//pf))
+        call spproj%kill
+        call fopen(fu, string(sd//'/'//NR_NAME), status='replace', action='write', iostat=io)
+        call fileiochk('hetero_tree: cannot write '//sd//'/'//NR_NAME, io)
+        write(fu,'(A)') pf
+        call fclose(fu)
+    end subroutine compact_proj
+
+    subroutine expand_proj( sd )
+        character(len=*), intent(in) :: sd
+        integer, allocatable :: rows(:)
+        character(len=:), allocatable :: pf
+        if( .not. file_exists(string(sd//'/'//NR_PROJ)) ) return
+        pf = first_line(sd//'/'//NR_NAME, '')
+        if( len(pf) == 0 ) THROW_HARD('no step project named in '//sd//'/'//NR_NAME//'; expand_proj')
+        pf   = sd//'/'//pf
+        rows = read_ints(sd//'/'//NR_ROWS)
+        call expand_seg('ptcl3D')
+        call expand_seg('ptcl2D')
+        call del_file(sd//'/'//NR_PROJ)
+
+    contains
+
+        subroutine expand_seg( oritype )
+            character(len=*), intent(in) :: oritype
+            type(sp_project), target :: full, cpt
+            class(oris),     pointer :: fo, co
+            integer :: j
+            call cpt%read_segment(oritype, string(pf))
+            call cpt%ptr2oritype(oritype, co)
+            if( co%get_noris() /= rows(1) )then
+                if( co%get_noris() /= size(rows) - 1 ) THROW_HARD('rows of '//pf//' match neither its cut nor its master; expand_proj')
+                call full%read_segment(oritype, string(sd//'/'//NR_PROJ))
+                call full%ptr2oritype(oritype, fo)
+                do j = 1, size(rows) - 1
+                    call fo%transfer_ori(rows(j + 1), co, j)
+                end do
+                call full%write_segment_inside(oritype, string(pf))
+                nullify(fo)
+                call full%kill
+            endif
+            nullify(co)
+            call cpt%kill
+        end subroutine expand_seg
+
+    end subroutine expand_proj
 
     subroutine write_contrast( proj, cfile )
         character(len=*), intent(in) :: proj, cfile

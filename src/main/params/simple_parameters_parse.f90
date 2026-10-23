@@ -83,6 +83,7 @@ contains
         call reg%add_char('pcg_focus', self%pcg_focus)
         call reg%add_char('site_disc', self%site_disc)
         call reg%add_char('site_layer', self%site_layer)
+        call reg%add_char('node_rows', self%node_rows)
         call reg%add_char('site_size', self%site_size)
         call reg%add_char('oneflex', self%oneflex)
         call reg%add_char('pcg_solvent_check', self%pcg_solvent_check)

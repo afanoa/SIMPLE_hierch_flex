@@ -646,6 +646,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'In-plane peaks per state shift-refined in each node''s first multi-state refinement (stA0), whose maps only feed site &
         &discovery; 0 keeps refine3D''s default{2}', 'peaks{2}', .false., 2., visibility=UI_VIS_ADVANCED, &
         &preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'node_rows', 'binary', 'Step projects cut to the node''s particles', &
+        &'Each refine3D and reconstruct3D step of a node runs on a project holding only its particles; the results return to &
+        &the full project when the step ends(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call hetero_tree%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
         call hetero_tree%add_input(UI_COMP, nparts, group='compute', visibility=UI_VIS_STANDARD)
