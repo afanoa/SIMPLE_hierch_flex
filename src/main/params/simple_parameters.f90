@@ -57,6 +57,7 @@ type :: parameters
     character(len=3)          :: site_disc='no'
     character(len=3)          :: site_layer='yes'
     character(len=3)          :: site_size='no'
+    character(len=3)          :: oneflex='no'
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
     character(len=3)          :: pcg_solvent_check='no' !< PCG solvent prior: re-solve the strength grid for real and print it beside the closed-form estimate (validation only)(yes|no){no}
     character(len=3)          :: eo_stage='yes'       !< Whether the last stage of solve2D uses a resolution limit determined with e/o pairs(yes|no){yes}
@@ -400,6 +401,7 @@ type :: parameters
     integer :: ncls_fine=0         !< # fine clusters
     integer :: nclust=20           !< # class-average groups of balance=cavg sampling and cls_expansion{20}
     integer :: nodepar=2
+    integer :: sta0_npeaks=0
     integer :: nptcls_coarse=0     !< # coarse particles
     integer :: nptcls_fine=0       !< # fine particles
     integer :: nsubcls_min=3       !< minimum subclasses per parent class for class splitting

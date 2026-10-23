@@ -72,15 +72,17 @@ type :: hetero_tree
     character(len=:), allocatable :: root, sitemask
     real    :: smpd = 0.
     integer :: box = 0, nrows = 0, npcur = 0
-    logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false.
+    logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false., l_oneflex = .false.
   contains
     procedure :: new
     procedure :: run
     procedure :: kill
     procedure, private :: start
+    procedure, private :: prev_step
     procedure, private :: advance
     procedure, private :: submit
     procedure, private :: submit_in
+    procedure, private :: submit_fflex
     procedure, private :: set_parts
     procedure, private :: final
     procedure, private :: plain
@@ -134,6 +136,7 @@ contains
         call self%kill
         self%p         => params
         self%l_subtree = l_rows
+        self%l_oneflex = params%oneflex .eq. 'yes'
         call simple_getcwd(cwd)
         self%root     = cwd%to_char()
         self%sitemask = ''
@@ -231,8 +234,11 @@ contains
         character(len=:), allocatable :: d
         integer :: k
         if( istep > S_MEAN )then
-            call self%advance(i, istep - 1)
-            return
+            k = self%prev_step(i, istep)
+            if( k >= S_MEAN )then
+                call self%advance(i, k)
+                return
+            endif
         endif
         d = self%ndir(i)
         if( .not. file_exists(string(d//'/'//NODE_PROJ)) ) call node_project(self, i)
@@ -241,6 +247,11 @@ contains
         call self%set_parts(size(rows))
         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' (depth '//int2str(self%nodes(i)%depth)//'): '//&
             &int2str(size(rows))//' particles, '//int2str(k)//' flex states, '//int2str(self%npcur)//' parts per step'
+        if( self%l_oneflex .and. self%nodes(i)%depth > 0 )then
+            call oneflex_inputs(self, i)
+            call self%submit_fflex(i, d//'/pmean.mrc')
+            return
+        endif
         call simple_mkdir(string(d//'/mean'))
         call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/mean/m.simple'))
         call cl%set('prg',      'reconstruct3D')
@@ -286,7 +297,7 @@ contains
                         w(j)     = real(count(st == pres(j)), dp)
                     end do
                     call falloff_mask(self, evens, odds, w, mask)
-                    call fflex_step
+                    call self%submit_fflex(i, d//'/mean/recvol_state01.mrc')
                 else
                     call cheap_children(self, i, ch)
                     call simple_mkdir(string(d//'/cheap'))
@@ -309,7 +320,7 @@ contains
                 end do
                 if( size(evens) < 4 ) THROW_HARD('fewer than four cheap children maps for the node mask')
                 call falloff_mask(self, evens, odds, w, mask)
-                call fflex_step
+                call self%submit_fflex(i, d//'/mean/recvol_state01.mrc')
             case(S_FFLEX)
                 if( self%p%site_disc .ne. 'yes' )then
                     call site_step(sitemask)
@@ -331,6 +342,7 @@ contains
                     call cl%set('vol'//int2str(j), d//'/fflex/recvol_state'//pad2(pres(j))//'.mrc')
                 end do
                 call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
+                if( self%p%sta0_npeaks > 0 ) call cl%set('npeaks_inpl', self%p%sta0_npeaks)
                 call self%submit(i, S_STA0, cl)
             case(S_STA0)
                 ks = maxval(project_states(d//'/stA0/r.simple'))
@@ -488,15 +500,39 @@ contains
             write(s,'(F5.2)') x
         end function rfmt2
 
-        subroutine fflex_step
-            call simple_mkdir(string(d//'/fflex'))
-            call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/fflex/f.simple'))
-            call flex_keys(self, cl, d//'/mean/recvol_state01.mrc', k)
-            call cl%set('pcg_mskfile', mask)
-            call self%submit(i, S_FFLEX, cl)
-        end subroutine fflex_step
-
     end subroutine advance
+
+    integer function prev_step( self, i, istep )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: i, istep
+        prev_step = istep - 1
+        select case(istep)
+            case(S_FFLEX)
+                if( self%l_oneflex .and. self%nodes(i)%depth > 0 )then
+                    prev_step = S_QUEUED
+                else if( self%nodes(i)%depth == 0 .and. .not. self%l_subtree )then
+                    prev_step = S_FLEX
+                endif
+            case(S_SITE)
+                if( self%p%site_disc .ne. 'yes' ) prev_step = S_FFLEX
+        end select
+    end function prev_step
+
+    subroutine submit_fflex( self, i, vmean )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        character(len=*),   intent(in)    :: vmean
+        type(cmdline)        :: cl
+        integer, allocatable :: rows(:)
+        character(len=:), allocatable :: d
+        d    = self%ndir(i)
+        rows = read_ints(d//'/rows.txt')
+        call simple_mkdir(string(d//'/fflex'))
+        call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/fflex/f.simple'))
+        call flex_keys(self, cl, vmean, min(KMAX, max(2, size(rows) / max(1, self%p%kfloor))))
+        call cl%set('pcg_mskfile', d//'/mask.mrc')
+        call self%submit(i, S_FFLEX, cl)
+    end subroutine submit_fflex
 
     subroutine submit( self, i, istep, cl )
         class(hetero_tree), intent(inout) :: self
@@ -2111,6 +2147,69 @@ contains
         endif
         call write_states(self%nodes(i)%pproj, self%ndir(i)//'/'//NODE_PROJ, st)
     end subroutine node_project
+
+    subroutine oneflex_inputs( self, i )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        type(string), allocatable :: evens(:), odds(:)
+        type(image)           :: vol
+        integer,  allocatable :: rows(:), lab(:), pres(:)
+        real(dp), allocatable :: w(:)
+        real,     allocatable :: acc(:,:,:)
+        character(len=:), allocatable :: d, pd, fn
+        integer :: j, ldim(3), ifoo
+        real    :: smpd, wsum
+        d    = self%ndir(i)
+        pd   = parent_dir(self%nodes(i)%pproj)
+        rows = read_ints(d//'/rows.txt')
+        allocate(evens(0), odds(0), w(0))
+        if( file_exists(string(pd//'/recB0/b.simple')) )then
+            lab  = project_states(pd//'/recB0/b.simple')
+            pres = present_labels(lab(rows))
+            do j = 1, size(pres)
+                if( .not. file_exists(string(pd//'/recB0/'//hv(pres(j), 'even'))) ) cycle
+                evens = [evens, string(pd//'/recB0/'//hv(pres(j), 'even'))]
+                odds  = [odds,  string(pd//'/recB0/'//hv(pres(j), 'odd'))]
+                w     = [w, real(count(lab(rows) == pres(j)), dp)]
+            end do
+        endif
+        if( size(evens) >= 2 )then
+            call falloff_mask(self, evens, odds, w, d//'/mask.mrc')
+        else
+            call simple_copy_file(string(pd//'/mask.mrc'), string(d//'/mask.mrc'))
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': its parent''s mask is its focus mask'
+        endif
+        lab  = project_states(self%nodes(i)%pproj)
+        pres = present_labels(lab(rows))
+        wsum = 0.
+        do j = 1, size(pres)
+            fn = pd//'/recB/recvol_state'//pad2(pres(j))//'.mrc'
+            call find_ldim_nptcls(string(fn), ldim, ifoo)
+            smpd = find_img_smpd(string(fn))
+            call vol%new(ldim, smpd)
+            call vol%read(string(fn))
+            if( j == 1 )then
+                acc = real(count(lab(rows) == pres(j))) * vol%get_rmat()
+            else
+                acc = acc + real(count(lab(rows) == pres(j))) * vol%get_rmat()
+            endif
+            wsum = wsum + real(count(lab(rows) == pres(j)))
+            call vol%kill
+        end do
+        call vol%new(ldim, smpd)
+        call vol%set_rmat(acc / max(wsum, 1.), .false.)
+        call vol%write(string(d//'/pmean.mrc'))
+        call vol%kill
+        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': flex mean from the parent''s maps of states '//&
+            &joined(pres)//', mask from '//int2str(size(evens))//' parent state maps'
+    end subroutine oneflex_inputs
+
+    function parent_dir( pproj ) result( pd )
+        character(len=*), intent(in) :: pproj
+        character(len=:), allocatable :: pd
+        pd = pproj(1:index(pproj, '/', back=.true.)-1)
+        pd = pd(1:index(pd, '/', back=.true.)-1)
+    end function parent_dir
 
     subroutine cheap_children( self, i, child )
         class(hetero_tree),   intent(inout) :: self
