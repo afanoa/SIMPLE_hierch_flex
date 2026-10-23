@@ -1757,7 +1757,7 @@ contains
         real,     allocatable :: rot(:,:,:,:), fs(:,:), amp(:), var(:), post(:), x(:), v(:), key(:), res(:), rz(:), wg(:)
         real(dp), allocatable :: epsv(:)
         integer,  allocatable :: lab(:), best(:), cnt(:,:), ord(:), idx(:), asg(:)
-        logical,  allocatable :: ljunk(:), lj(:), lres(:), lid(:), lsm(:)
+        logical,  allocatable :: ljunk(:), lj(:), lres(:), lid(:), lsm(:), lamp(:)
         character(len=:), allocatable :: line
         real(dp) :: mu(3), s2(3), pw(3), gap(3), xm, tc(3), lgc(3)
         real     :: f(0:self%nyq), mv, med, sdr
@@ -1811,7 +1811,7 @@ contains
         deallocate(mp, rf)
         x = pack(amp, best > 0)
         v = pack(var, best > 0)
-        allocate(ljunk(self%n), source=.false.)
+        allocate(ljunk(self%n), lamp(self%n), source=.false.)
         allocate(asg(self%n), source=0)
         allocate(lj(3), lid(3), lsm(3), source=.false.)
         if( size(x) > 0 )then
@@ -1840,7 +1840,7 @@ contains
                     if( best(i) > 0 ) post(i) = jpost(amp(i), var(i))
                 end do
             endif
-            ljunk = best > 0 .and. post >= 0.5
+            lamp = best > 0 .and. post >= 0.5
             key = real(mu)
             ord = [1, 2, 3]
             call hpsort(key, ord)
@@ -1862,9 +1862,11 @@ contains
                     if( lj(ord(c)) ) line = line//' '//fmtr(mu(ord(c)),2)
                 end do
             endif
-            call say('junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//int2str(nint(JUNK_GAP))//&
-                &' sd below the genuine one):'//line)
+            call say('amplitude-rule junk components (weight >= '//fmtr(real(JUNK_MINW,dp),3)//', >= '//&
+                &int2str(nint(JUNK_GAP))//' sd below the genuine one):'//line//'; '//int2str(count(lamp))//&
+                &' particles (not applied)')
         endif
+        ljunk = self%cpj >= 0.5
         do e = 1, 2
             idx = pack(hx(e)%v, best(hx(e)%v) > 0)
             if( size(idx) == 0 ) cycle
@@ -1880,7 +1882,8 @@ contains
             &' with a residual '//int2str(nint(HALVES_KSIG))//' robust sd above their half''s median, '//&
             &int2str(count(wg < 0.5))//' with a genuine weight under 0.5')
         nf = count(ljunk)
-        call say(int2str(nf)//' of '//int2str(self%n)//' particles flagged junk ('//fmtr(real(nf,dp)/real(self%n,dp),4)//&
+        call say(int2str(nf)//' of '//int2str(self%n)//' particles flagged junk at zero contrast (posterior >= 0.5; '//&
+            &fmtr(real(nf,dp)/real(self%n,dp),4)//&
             &'; half 1 '//fmtr(real(count(ljunk(hx(1)%v)),dp)/real(max(1,size(hx(1)%v)),dp),4)//', half 2 '//&
             &fmtr(real(count(ljunk(hx(2)%v)),dp)/real(max(1,size(hx(2)%v)),dp),4)//'): label 0 at this node and below')
         if( count(best == 0) > 0 ) call say(int2str(count(best == 0))//' particles not scored (no state in the other half)')
@@ -1894,17 +1897,17 @@ contains
         call fclose(rep)
         call fopen(funit, string('site_junk.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('junk_screen: cannot write site_junk.txt', ios)
-        write(funit,'(A)') '# project row, junk (1) or not (0), amplitude, noise variance, best state, junk posterior, '//&
-            &'contrast, contrast se, posterior-mean contrast, zero-contrast posterior, residual z, genuine weight, '//&
-            &'amplitude component (1 lowest), different structure by the identity test (not applied), '//&
-            &'different structure after the fitted smear (not applied)'
+        write(funit,'(A)') '# project row, junk (1) or not (0) at zero contrast, amplitude, noise variance, best state, '//&
+            &'amplitude-rule junk posterior (not applied), contrast, contrast se, posterior-mean contrast, zero-contrast '//&
+            &'posterior, residual z, genuine weight, amplitude component (1 lowest), different structure by the identity test '//&
+            &'(not applied), different structure after the fitted smear (not applied), amplitude-rule junk (not applied)'
         do i = 1, self%n
             c = 0
             if( asg(i) > 0 ) c = count(mu < mu(asg(i))) + 1
-            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,3(1X,I0))') &
+            write(funit,'(I0,1X,I0,1X,F9.4,1X,ES11.4,1X,I0,1X,F7.4,3(1X,ES11.4),1X,F7.4,1X,ES11.4,1X,F7.4,4(1X,I0))') &
                 &self%rows(i), merge(1, 0, ljunk(i)), amp(i), var(i), best(i), post(i), self%cam(i), self%cse(i), &
                 &self%con(i), self%cpj(i), rz(i), wg(i), c, merge(1, 0, c > 0 .and. lid(max(asg(i),1))), &
-                &merge(1, 0, c > 0 .and. lsm(max(asg(i),1)))
+                &merge(1, 0, c > 0 .and. lsm(max(asg(i),1))), merge(1, 0, lamp(i))
         end do
         call fclose(funit)
         where( ljunk ) seeds = 0

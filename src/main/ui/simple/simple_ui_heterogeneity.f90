@@ -555,9 +555,9 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &Spearman value instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., &
         &0., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
         call site_rank%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
-        &'Every particle is scored at its pose against every seed state''s reference from the other half (its amplitude in &
-        &units of a genuine particle, shells to 12 A); particles of a mixture component of the amplitudes at least 2 sd below &
-        &the genuine one are seeded 0 (site_junk.txt, site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', &
+        &'Every particle''s contrast against the other half''s mean map (shells to 12 A, its own noise level) is fitted as a &
+        &zero-contrast junk atom against a log-normal genuine contrast; particles whose zero-contrast posterior is at least &
+        &one half are seeded 0 (site_junk.txt, site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call site_rank%add_input(UI_PARM, 'site_size', 'binary', 'Size given rankings', &
         &'The infile2 files hold rankings (one value per particle), not starts: no EM; each ranking''s hold-out curve gives its &
@@ -623,7 +623,7 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &
         &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen at every node', &
-        &'At every node''s seeding, particles that no seed state explains get label 0 at that node and below &
+        &'At every node''s seeding, particles at zero contrast get label 0 at that node and below &
         &(site/site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
