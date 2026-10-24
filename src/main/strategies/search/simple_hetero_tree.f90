@@ -22,6 +22,7 @@ use simple_tree_wiener,     only: tree_wiener_maps
 use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
 use simple_stat,            only: avg_ranks
 use simple_state_mergeup,   only: mask_neff
+use simple_refine3D_strategy, only: PROB_MULTISTATE_MIN_POP
 implicit none
 
 public :: hetero_tree, discover_sites
@@ -577,6 +578,14 @@ contains
                 endif
                 st   = project_states(d//'/fflex/f.simple')
                 pres = present_labels(st)
+                ! refine3D's multi-state startup needs more than PROB_MULTISTATE_MIN_POP particles per state; the rows stay in the node
+                do j = 1, size(pres)
+                    if( count(st == pres(j)) > PROB_MULTISTATE_MIN_POP .or. count(st > 0 .and. st /= pres(j)) == 0 ) cycle
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': flex state '//int2str(pres(j))//' ('//&
+                        &int2str(count(st == pres(j)))//' particles) is under refine3D''s minimum, unassigned for stA0'
+                    where( st == pres(j) ) st = 0
+                end do
+                pres = present_labels(st)
                 ks   = size(pres)
                 allocate(ch(size(st)), source=0)
                 do j = 1, ks
@@ -643,7 +652,7 @@ contains
                     ch = two_groups(d)
                     jk = junk_rows(d)
                     if( size(jk) > 0 .and. size(ch) > 0 ) ch(jk) = 0
-                    if( count(ch == 1) > 0 .and. count(ch == 2) > 0 )then
+                    if( count(ch == 1) > PROB_MULTISTATE_MIN_POP .and. count(ch == 2) > PROB_MULTISTATE_MIN_POP )then
                         seeds = ch
                         ks    = 2
                         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the two '//&
@@ -690,7 +699,10 @@ contains
                 call refine_keys(self, cl, LPA, ITA, NSPA, BOXA, mask)
                 call self%submit(i, S_STAGEA, cl)
             case(S_STAGEA)
-                ch = compact(project_states(d//'/stageA/r.simple'))
+                st = project_states(d//'/stageA/r.simple')
+                ch = compact(fold_small(st))
+                if( maxval(ch) < maxval(compact(st)) ) write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//&
+                    &': stage-A states under refine3D''s minimum fold into the largest, '//int2str(maxval(ch))//' remain'
                 ks = maxval(ch)
                 call simple_mkdir(string(d//'/recB'))
                 call write_states(d//'/stageA/r.simple', d//'/recB/b.simple', ch)
@@ -700,7 +712,7 @@ contains
                 call common_keys(self, cl)
                 call self%submit(i, S_RECB, cl)
             case(S_RECB)
-                ch = compact(project_states(d//'/stageA/r.simple'))
+                ch = compact(fold_small(project_states(d//'/stageA/r.simple')))
                 ks = maxval(ch)
                 call simple_mkdir(string(d//'/stageB'))
                 call write_states(d//'/stageA/r.simple', d//'/stageB/b.simple', ch)
@@ -2686,6 +2698,19 @@ contains
             where( st == pres(j) ) ch = j
         end do
     end function compact
+
+    function fold_small( st ) result( fs )
+        integer, intent(in)  :: st(:)
+        integer, allocatable :: fs(:), pres(:)
+        integer :: j, big
+        fs   = st
+        pres = present_labels(st)
+        if( size(pres) < 2 ) return
+        big  = pres(maxloc([(count(st == pres(j)), j=1,size(pres))], dim=1))
+        do j = 1, size(pres)
+            if( count(st == pres(j)) <= PROB_MULTISTATE_MIN_POP ) where( st == pres(j) ) fs = big
+        end do
+    end function fold_small
 
     subroutine node_project( self, i )
         class(hetero_tree), intent(inout) :: self
