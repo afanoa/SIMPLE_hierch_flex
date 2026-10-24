@@ -58,6 +58,7 @@ type :: parameters
     character(len=3)          :: site_layer='yes'
     character(len=3)          :: node_rows='yes'
     character(len=3)          :: node_proj='no'
+    character(len=3)          :: node_seed='no'
     character(len=3)          :: site_size='no'
     character(len=3)          :: oneflex='yes'
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
@@ -210,6 +211,7 @@ type :: parameters
     type(string)              :: infile2              !< file with inputs(.txt)
     type(string)              :: pindfile             !< distributed worker: particle rows written by the master (flex_pca, reconstruct3D)
     type(string)              :: rowmap
+    type(string)              :: subtree_node
     type(string)              :: keys
     type(string)              :: last_prev_dir        !< last previous execution directory
     type(string)              :: mic_new_root         !< new root for relocated micrograph data
@@ -379,7 +381,8 @@ type :: parameters
     integer :: istart=0
     integer :: job_memory_per_task2D=JOB_MEMORY_PER_TASK_DEFAULT
     integer :: kfloor=5000
-    integer :: flex_min_neff=0     !< hetero_tree: flex's min_neff in its fflex step (0: flex's own)
+    integer :: flex_min_neff=0
+    integer :: subtree_max=0
     integer :: kfromto(2)
     integer :: ldim(3)=0
     integer :: maxdepth=4

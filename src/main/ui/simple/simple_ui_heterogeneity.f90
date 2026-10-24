@@ -666,6 +666,17 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Every node''s project and its steps'' projects hold only the node''s particles, mapped to the input project''s rows &
         &by the node''s rows.txt; the leaves map back to them. Needs site_layer=no(yes|no){no}', '', .false., 'no', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'node_seed', 'binary', 'Per-node random numbers', &
+        &'The controller''s random draws (the cheap children''s direction bins) are seeded per node, so a node''s result does &
+        &not depend on the order the nodes run in(yes|no){no}', '', .false., 'no', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'subtree_max', 'num', 'Subtree job size', &
+        &'A child node of at most this many particles runs its whole subtree as one job on one node, its steps local; &
+        &implies node_seed=yes and needs site_layer=no. 0 runs every node''s steps from the controller{0}', 'particles{0}', &
+        &.false., 0., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'subtree_node', 'str', 'Subtree job root', &
+        &'Set by the controller for a subtree job: the node it runs the subtree of', 'node id', .false., '', &
+        &visibility=UI_VIS_ADVANCED)
         call hetero_tree%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call hetero_tree%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
         call hetero_tree%add_input(UI_COMP, nparts, group='compute', visibility=UI_VIS_STANDARD)

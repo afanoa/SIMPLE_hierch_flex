@@ -16,6 +16,10 @@ particle poses:
 - [`classify3D_refs`](classify3d_refs.md) classifies particles against a complete
   external reference set, then reconstructs data-derived state maps before
   continuing refinement.
+- `hetero_tree` grows a tree of discrete states: every node runs flex_pca, site
+  ranking, two refinement stages and a cross-half split test, and its children
+  are the groups the test keeps. It has no algorithm chapter yet; its
+  distribution options are below.
 - `ptcl3D_state_consensus` is a metadata utility in the same category: it
   combines the per-particle state assignments from a file table of projects
   (for example several `refine3D_states` runs) into one consensus `ptcl3D`
@@ -72,3 +76,14 @@ the independence required for per-state FSCs.
 The common bandwidth and balanced assignment keep the competing maps on equal
 statistical footing; the workflow-specific initialization determines whether
 that competition begins from a same-lineage scaffold or external references.
+
+## hetero_tree distribution
+
+Every node's steps go through the queue system: `nparts` parts per distributed
+step, `nodepar` nodes at a time. With `subtree_max > 0` (opt-in, default 0) a
+child node of at most that many particles runs its whole subtree as one job on
+one node, its steps local. On an idle queue this costs 2.1-2.5x the worker
+core-h of the normal tree for no wall gain (CAHRA 30k: 164 vs 80 core-h, 189 vs
+180 min; IgM 100k: 48 vs 19 core-h, 77 vs 76 min), because the subtree job holds
+its 48 cores through its serial phases. It pays off only on a contended queue,
+where one queue wait replaces one per step; keep it for busy-cluster runs.

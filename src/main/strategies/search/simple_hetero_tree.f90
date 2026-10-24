@@ -37,6 +37,8 @@ real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, 
 real,     parameter :: ATHR = 0.01, LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
+integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48
+real(dp), parameter :: SLOW_FACT = 3._dp, SLOW_FIRST = 14400._dp
 character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stA0', &
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
 character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE = 'hetero_tree_leaves.txt'
@@ -54,7 +56,9 @@ character(len=8), parameter :: FST_NAMES(F_FAIL:F_SIZE) = [character(len=8) :: '
 
 type :: tnode
     character(len=:), allocatable :: id, pproj, prows
-    integer :: depth = 0, step = S_QUEUED
+    integer  :: depth = 0, step = S_QUEUED, sseen = -1, nr = 0
+    real(dp) :: tseen = -1._dp
+    logical  :: lslow = .false.
 end type tnode
 
 type :: fsite
@@ -75,12 +79,19 @@ type :: hetero_tree
     real    :: smpd = 0.
     integer :: box = 0, nrows = 0, npcur = 0
     logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false., l_oneflex = .false.
-    logical :: l_nodeproj = .false.
+    logical :: l_nodeproj = .false., l_nodeseed = .false.
+    character(len=:), allocatable :: subroot, ntab, ltab
+    type(qsys_env) :: qsub
+    type(cmdline), allocatable :: cl0
+    real(dp) :: srate(S_SPLIT) = 0._dp
   contains
     procedure :: new
     procedure :: run
     procedure :: kill
     procedure, private :: start
+    procedure, private :: submit_subtree
+    procedure, private :: merge_subtree
+    procedure, private :: watch
     procedure, private :: prev_step
     procedure, private :: advance
     procedure, private :: submit
@@ -128,10 +139,11 @@ end type hetero_tree
 
 contains
 
-    subroutine new( self, params, l_rows )
+    subroutine new( self, params, l_rows, cline )
         class(hetero_tree),        intent(inout) :: self
         class(parameters), target, intent(inout) :: params
         logical,                   intent(in)    :: l_rows
+        class(cmdline), optional,  intent(in)    :: cline
         type(sp_project)     :: spproj
         type(string)         :: cwd, absproj
         integer, allocatable :: states(:), rows(:), sel(:)
@@ -139,6 +151,21 @@ contains
         call self%kill
         self%p         => params
         self%l_subtree = l_rows
+        self%subroot   = ''
+        if( params%subtree_node%strlen() > 0 ) self%subroot = params%subtree_node%to_char()
+        self%l_nodeseed = params%node_seed .eq. 'yes' .or. params%subtree_max > 0 .or. len(self%subroot) > 0
+        if( len(self%subroot) > 0 ) call simple_chdir(string('../..'))
+        self%ntab = NODE_TABLE
+        self%ltab = LEAF_TABLE
+        if( len(self%subroot) > 0 )then
+            self%ntab = 'node_'//self%subroot//'/subtree/subtree_nodes.txt'
+            self%ltab = 'node_'//self%subroot//'/subtree/subtree_leaves.txt'
+        else if( params%subtree_max > 0 )then
+            if( params%site_layer .eq. 'yes' ) THROW_HARD('subtree_max > 0 needs site_layer=no')
+            if( .not. present(cline) ) THROW_HARD('subtree jobs need the command line; new')
+            allocate(self%cl0)
+            self%cl0 = cline
+        endif
         self%l_oneflex = params%oneflex .eq. 'yes'
         self%l_nodeproj = params%node_proj .eq. 'yes' .and. params%site_layer .ne. 'yes'
         if( params%node_proj .eq. 'yes' .and. .not. self%l_nodeproj ) write(logfhandle,'(A)') '>>> HETERO_TREE node_proj=yes '//&
@@ -157,9 +184,14 @@ contains
         states     = spproj%os_ptcl3D%get_all_asint('state')
         self%nrows = size(states)
         call spproj%kill
-        if( file_exists(string(NODE_TABLE)) )then
+        if( file_exists(string(self%ntab)) )then
             call self%read_table
-            write(logfhandle,'(A)') '>>> HETERO_TREE resumed from '//NODE_TABLE//': '//int2str(size(self%nodes))//' nodes'
+            write(logfhandle,'(A)') '>>> HETERO_TREE resumed from '//self%ntab//': '//int2str(size(self%nodes))//' nodes'
+        else if( len(self%subroot) > 0 )then
+            call subtree_root_node
+            call self%write_table
+            write(logfhandle,'(A)') '>>> HETERO_TREE subtree job of node '//self%subroot//', depth '//&
+                &int2str(self%nodes(1)%depth)
         else
             if( l_rows )then
                 sel = read_ints(params%infile%to_char())
@@ -181,22 +213,57 @@ contains
             call self%write_table
             write(logfhandle,'(A)') '>>> HETERO_TREE root node: '//int2str(size(rows))//' particles of '//int2str(self%nrows)
         endif
-        call self%qenv%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr)
-        call self%qsite%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=max(params%nthr, SITE_NTHR))
+        if( len(self%subroot) > 0 )then
+            call self%qenv%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr, qsys_name=string('local'))
+            call self%qsite%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=max(params%nthr, SITE_NTHR), &
+                &qsys_name=string('local'))
+        else
+            call self%qenv%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr)
+            call self%qsite%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=max(params%nthr, SITE_NTHR))
+        endif
+
+    contains
+
+        subroutine subtree_root_node
+            character(len=4096) :: line
+            integer :: funit, ios, il
+            call fopen(funit, string(NODE_TABLE), status='old', action='read', iostat=ios)
+            call fileiochk('hetero_tree: cannot read '//NODE_TABLE, ios)
+            do il = 1, nlines(string(NODE_TABLE))
+                read(funit,'(A)') line
+                if( word(line, 1) /= self%subroot ) cycle
+                allocate(self%nodes(1))
+                self%nodes(1)%id    = self%subroot
+                self%nodes(1)%depth = str2int(word(line, 2))
+                self%nodes(1)%step  = S_QUEUED
+                self%nodes(1)%pproj = word(line, 4)
+                self%nodes(1)%prows = word(line, 5)
+                exit
+            end do
+            call fclose(funit)
+            if( .not. allocated(self%nodes) ) THROW_HARD('node '//self%subroot//' is not in '//NODE_TABLE)
+        end subroutine subtree_root_node
+
     end subroutine new
 
     subroutine run( self )
         class(hetero_tree), intent(inout) :: self
         integer(kind=8) :: t0, t1, rate
-        integer :: i, nact, code
+        integer :: i, nact, code, nsub
         call seed_rnd_fixed(RND_SEED)
         do
             nact = 0
+            nsub = 0
             i    = 0
             do while( i < size(self%nodes) )
                 i = i + 1
+                if( self%nodes(i)%step == S_SUBTREE )then
+                    if( .not. self%merge_subtree(i) ) nsub = nsub + 1
+                    cycle
+                endif
                 if( self%nodes(i)%step < S_MEAN .or. self%nodes(i)%step > S_SPLIT ) cycle
                 code = self%step_status(i, self%nodes(i)%step)
+                call self%watch(i, code)
                 if( code == -1 )then
                     nact = nact + 1
                     cycle
@@ -224,8 +291,16 @@ contains
                 call self%write_table
             end do
             do i = 1, size(self%nodes)
-                if( nact >= max(1, self%p%nodepar) ) exit
                 if( self%nodes(i)%step /= S_QUEUED ) cycle
+                if( self%p%subtree_max > 0 .and. len(self%subroot) == 0 .and. self%nodes(i)%depth > 0 )then
+                    if( nlines(string(self%ndir(i)//'/rows.txt')) <= self%p%subtree_max )then
+                        call self%submit_subtree(i)
+                        nsub = nsub + 1
+                        call self%write_table
+                        cycle
+                    endif
+                endif
+                if( nact >= max(1, self%p%nodepar) ) cycle
                 call system_clock(t0, rate)
                 call self%start(i, S_MEAN)
                 call system_clock(t1)
@@ -235,7 +310,7 @@ contains
                 call self%write_table
             end do
             if( self%p%site_layer .eq. 'yes' ) call self%fs_sync
-            if( nact == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED) )then
+            if( nact == 0 .and. nsub == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED) )then
                 if( self%final() ) exit
             endif
             call sleep(POLL_SECS)
@@ -257,7 +332,10 @@ contains
             endif
         endif
         d = self%ndir(i)
-        if( .not. file_exists(string(d//'/'//NODE_PROJ)) ) call node_project(self, i)
+        if( .not. file_exists(string(d//'/'//NODE_PROJ)) )then
+            call node_project(self, i)
+            if( len(self%subroot) > 0 ) call stamp_local(d//'/'//NODE_PROJ)
+        endif
         rows = read_ints(d//'/rows.txt')
         k    = min(KMAX, max(2, size(rows) / max(1, self%p%kfloor)))
         call self%set_parts(size(rows))
@@ -276,6 +354,160 @@ contains
         call common_keys(self, cl)
         call self%submit(i, S_MEAN, cl)
     end subroutine start
+
+    subroutine submit_subtree( self, i )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        type(cmdline) :: cl
+        type(string)  :: absproj
+        character(len=:), allocatable :: sd
+        integer :: nr, np, nc
+        sd = self%ndir(i)//'/subtree'
+        call simple_mkdir(string(sd))
+        if( .not. self%qsub%exists() ) call self%qsub%new(self%p, 1, exec_bin=string('simple_exec'), qsys_nthr=SUB_NTHR)
+        nr = nlines(string(self%ndir(i)//'/rows.txt'))
+        np = min(self%p%nparts, max(NPARTS_MIN, ceiling(real(nr) / real(PTCLS_PER_PART))))
+        nc = min(SUB_NTHR, max(self%p%nthr, max(1, self%p%nodepar) * np * self%p%nthr))
+        cl = self%cl0
+        absproj = simple_abspath(self%p%projfile)
+        call cl%set('projfile',     absproj%to_char())
+        call cl%set('subtree_node', self%nodes(i)%id)
+        call cl%set('mkdir',        'no')
+        call cl%delete('infile')
+        if( len(self%sitemask) > 0 ) call cl%set('pcg_mskfile', self%sitemask)
+        call simple_chdir(string(sd))
+        CWD_GLOB = sd
+        call self%qsub%qdescr%set('job_memory_per_task', int2str(max(64000, 8000 + nint(0.1 * real(nr)))))
+        call self%qsub%qdescr%set('job_cpus_per_task',   int2str(nc))
+        call self%qsub%exec_simple_prg_in_queue_async(cl, string('./subtree.sh'), string('subtree.log'), &
+            &exit_code_fname=string(STEP_EXIT))
+        call simple_chdir(string(self%root))
+        CWD_GLOB = self%root
+        if( .not. allocated(self%subd) ) allocate(self%subd(0))
+        self%subd = [self%subd, string(sd)]
+        self%nodes(i)%step = S_SUBTREE
+        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' (depth '//int2str(self%nodes(i)%depth)//', '//&
+            &int2str(nr)//' particles): subtree job submitted ('//int2str(nc)//' cores)'
+    end subroutine submit_subtree
+
+    ! a finished subtree job's nodes and leaves join the tree (merged.txt: its leaves were appended)
+    logical function merge_subtree( self, i )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        type(tnode), allocatable :: tmp(:)
+        character(len=4096) :: line
+        character(len=:), allocatable :: sd, id
+        integer :: code, funit, fout, ios, il, nleaf, nnew, jj
+        merge_subtree = .false.
+        sd   = self%ndir(i)//'/subtree'
+        code = self%dir_status(sd)
+        if( code == -1 ) return
+        if( code == -2 )then
+            call self%submit_subtree(i)
+            return
+        endif
+        merge_subtree = .true.
+        if( code /= 0 )then
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': subtree job FAILED (exit code '//&
+                &int2str(code)//'), node stopped'
+            self%nodes(i)%step = S_FAILED
+            call self%write_table
+            return
+        endif
+        nleaf = 0
+        if( .not. file_exists(string(sd//'/merged.txt')) )then
+            if( file_exists(string(sd//'/subtree_leaves.txt')) )then
+                call fopen(funit, string(sd//'/subtree_leaves.txt'), status='old', action='read', iostat=ios)
+                call fileiochk('hetero_tree: cannot read '//sd//'/subtree_leaves.txt', ios)
+                call fopen(fout, string(self%root//'/'//LEAF_TABLE), status='unknown', position='append', action='write', &
+                    &iostat=ios)
+                call fileiochk('hetero_tree: cannot append to '//LEAF_TABLE, ios)
+                do il = 1, nlines(string(sd//'/subtree_leaves.txt'))
+                    read(funit,'(A)') line
+                    write(fout,'(A)') trim(line)
+                    nleaf = nleaf + 1
+                end do
+                call fclose(fout)
+                call fclose(funit)
+            endif
+            call write_ints(sd//'/merged.txt', [nleaf])
+        endif
+        nnew = 0
+        call fopen(funit, string(sd//'/subtree_nodes.txt'), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//sd//'/subtree_nodes.txt', ios)
+        do il = 1, nlines(string(sd//'/subtree_nodes.txt'))
+            read(funit,'(A)') line
+            id = word(line, 1)
+            if( id == self%nodes(i)%id )then
+                self%nodes(i)%step = str2int(word(line, 3))
+                cycle
+            endif
+            if( any([(self%nodes(jj)%id == id, jj=1,size(self%nodes))]) ) cycle
+            allocate(tmp(size(self%nodes) + 1))
+            tmp(1:size(self%nodes)) = self%nodes
+            tmp(size(tmp))%id    = id
+            tmp(size(tmp))%depth = str2int(word(line, 2))
+            tmp(size(tmp))%step  = str2int(word(line, 3))
+            tmp(size(tmp))%pproj = word(line, 4)
+            tmp(size(tmp))%prows = word(line, 5)
+            call move_alloc(tmp, self%nodes)
+            nnew = nnew + 1
+        end do
+        call fclose(funit)
+        call self%write_table
+        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': subtree job done, '//int2str(nnew)//&
+            &' descendant nodes and its leaves joined the tree'
+    end function merge_subtree
+
+    ! report-only: a step running over SLOW_FACT times this run's slowest rate of its kind (SLOW_FIRST s without one)
+    subroutine watch( self, i, code )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i, code
+        integer(kind=8) :: cnt, rate
+        character(len=4096) :: rec(3)
+        character(len=:), allocatable :: sd
+        real(dp) :: now, el, lim
+        integer  :: s, funit, ios, j
+        s = self%nodes(i)%step
+        if( self%nodes(i)%sseen /= s )then
+            self%nodes(i)%sseen = s
+            self%nodes(i)%tseen = -1._dp
+            self%nodes(i)%lslow = .false.
+            self%nodes(i)%nr    = max(1, nlines(string(self%ndir(i)//'/rows.txt')))
+        endif
+        sd = self%ndir(i)//'/'//trim(STEP_DIRS(s))
+        if( s == S_SITE ) sd = seed_dir(self%ndir(i))
+        call system_clock(cnt, rate)
+        now = real(cnt,dp) / real(max(rate, 1_8),dp)
+        if( self%nodes(i)%tseen < 0._dp )then
+            if( code /= -1 .or. .not. file_exists(string(sd//'/'//STEP_EXIT//JOB_INFO_EXT)) ) return
+            self%nodes(i)%tseen = now
+        endif
+        el = now - self%nodes(i)%tseen
+        if( code == 0 ) self%srate(s) = max(self%srate(s), el / real(self%nodes(i)%nr,dp))
+        if( code /= -1 .or. self%nodes(i)%lslow ) return
+        lim = SLOW_FIRST
+        if( self%srate(s) > 0._dp ) lim = SLOW_FACT * self%srate(s) * real(self%nodes(i)%nr,dp)
+        if( el <= lim ) return
+        self%nodes(i)%lslow = .true.
+        rec = '?'
+        call fopen(funit, string(sd//'/'//STEP_EXIT//JOB_INFO_EXT), status='old', action='read', iostat=ios)
+        if( ios == 0 )then
+            do j = 1, 3
+                read(funit,'(A)',iostat=ios) rec(j)
+                if( ios /= 0 ) exit
+            end do
+            call fclose(funit)
+        endif
+        call fopen(funit, string(sd//'/hetero_step.slow'), status='replace', action='write', iostat=ios)
+        if( ios == 0 )then
+            write(funit,'(A)') 'running '//int2str(nint(el))//' s, limit '//int2str(nint(lim))//' s, job '//trim(rec(3))//&
+                &' on '//trim(rec(2))
+            call fclose(funit)
+        endif
+        write(logfhandle,'(A)') '>>> HETERO_TREE WARNING node '//self%nodes(i)%id//': step '//trim(STEP_DIRS(s))//' running '//&
+            &int2str(nint(el))//' s, over its limit '//int2str(nint(lim))//' s ('//trim(rec(3))//' on '//trim(rec(2))//')'
+    end subroutine watch
 
     subroutine advance( self, i, done_step )
         class(hetero_tree), intent(inout) :: self
@@ -668,6 +900,14 @@ contains
         logical :: l_fac
         final = .false.
         if( .not. self%plain() ) return
+        if( len(self%subroot) > 0 )then
+            if( .not. self%l_lsdone )then
+                if( .not. self%landscape() ) return
+                self%l_lsdone = .true.
+            endif
+            final = .true.
+            return
+        endif
         l_fac = self%factorial()
         if( .not. self%l_lsdone )then
             if( .not. self%landscape() ) return
@@ -752,8 +992,8 @@ contains
         character(len=:), allocatable :: pd
         integer :: nl, il, inode, nrun, nleaf
         plain = .true.
-        if( .not. file_exists(string(LEAF_TABLE)) ) return
-        call leaf_lines(lines, nds)
+        if( .not. file_exists(string(self%ltab)) ) return
+        call leaf_lines(lines, nds, self%ltab)
         nl   = size(lines)
         nrun = 0
         do inode = 1, size(nds)
@@ -2126,10 +2366,10 @@ contains
         class(hetero_tree), intent(inout) :: self
         character(len=4096) :: line
         integer :: funit, ios, n, i
-        n = nlines(string(NODE_TABLE))
+        n = nlines(string(self%ntab))
         allocate(self%nodes(n))
-        call fopen(funit, string(NODE_TABLE), status='old', action='read', iostat=ios)
-        call fileiochk('hetero_tree: cannot read '//NODE_TABLE, ios)
+        call fopen(funit, string(self%ntab), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//self%ntab, ios)
         do i = 1, n
             read(funit,'(A)') line
             self%nodes(i)%id    = word(line, 1)
@@ -2144,14 +2384,14 @@ contains
     subroutine write_table( self )
         class(hetero_tree), intent(in) :: self
         integer :: funit, ios, i
-        call fopen(funit, string(NODE_TABLE//'.tmp'), status='replace', action='write', iostat=ios)
-        call fileiochk('hetero_tree: cannot write '//NODE_TABLE, ios)
+        call fopen(funit, string(self%ntab//'.tmp'), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//self%ntab, ios)
         do i = 1, size(self%nodes)
             write(funit,'(A)') self%nodes(i)%id//' '//int2str(self%nodes(i)%depth)//' '//int2str(self%nodes(i)%step)//&
                 &' '//self%nodes(i)%pproj//' '//self%nodes(i)%prows
         end do
         call fclose(funit)
-        call simple_rename(string(NODE_TABLE//'.tmp'), string(NODE_TABLE))
+        call simple_rename(string(self%ntab//'.tmp'), string(self%ntab))
     end subroutine write_table
 
     function ndir( self, i ) result( d )
@@ -2167,9 +2407,11 @@ contains
         if( allocated(self%fs)    ) deallocate(self%fs)
         if( allocated(self%tjunk) ) deallocate(self%tjunk)
         if( allocated(self%subd)  ) deallocate(self%subd)
+        if( allocated(self%cl0)   ) deallocate(self%cl0)
         self%l_fsread = .false.
         call self%qenv%kill
         call self%qsite%kill
+        call self%qsub%kill
         self%p => null()
     end subroutine kill
 
@@ -2235,15 +2477,18 @@ contains
         call fclose(funit)
     end subroutine leaf_masks
 
-    subroutine leaf_lines( lines, nds )
-        type(string), allocatable, intent(out) :: lines(:), nds(:)
+    subroutine leaf_lines( lines, nds, tab )
+        type(string), allocatable,  intent(out) :: lines(:), nds(:)
+        character(len=*), optional, intent(in)  :: tab
         character(len=4096) :: line
-        character(len=:), allocatable :: lrows
+        character(len=:), allocatable :: lrows, t
         integer :: funit, ios, nl, il
-        nl = nlines(string(LEAF_TABLE))
+        t = LEAF_TABLE
+        if( present(tab) ) t = tab
+        nl = nlines(string(t))
         allocate(lines(nl), nds(nl))
-        call fopen(funit, string(LEAF_TABLE), status='old', action='read', iostat=ios)
-        call fileiochk('hetero_tree: cannot read '//LEAF_TABLE, ios)
+        call fopen(funit, string(t), status='old', action='read', iostat=ios)
+        call fileiochk('hetero_tree: cannot read '//t, ios)
         do il = 1, nl
             read(funit,'(A)') line
             lines(il) = trim(line)
@@ -2541,6 +2786,7 @@ contains
         character(len=:), allocatable :: fname
         real    :: e(3), u(3), ev(1)
         integer :: n, q, nb, it, j, b, funit, ios, k, nsel, r, np, t
+        if( self%l_nodeseed ) call seed_rnd_fixed(RND_SEED + id_seed(self%nodes(i)%id))
         fname = self%ndir(i)//'/flex/flex_pca_coordinates.txt'
         call fopen(funit, string(fname), status='old', action='read', iostat=ios)
         call fileiochk('hetero_tree: cannot read '//fname, ios)
@@ -3172,8 +3418,8 @@ contains
         lrows = d//'/leaf_'//name//'_rows.txt'
         if( local_rows(d) ) sel = rows(sel)
         call write_ints(lrows, sel)
-        call fopen(funit, string(self%root//'/'//LEAF_TABLE), status='unknown', position='append', action='write', iostat=ios)
-        call fileiochk('hetero_tree: cannot append to '//LEAF_TABLE, ios)
+        call fopen(funit, string(self%root//'/'//self%ltab), status='unknown', position='append', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot append to '//self%ltab, ios)
         write(funit,'(A)') name//' '//merge('junk','leaf',l_junk)//' '//int2str(n)//' '//joined(mem, '+')//' '//b//'.mrc '//&
             &b//'_even_unfil.mrc '//b//'_odd_unfil.mrc '//lrows
         call fclose(funit)
@@ -3515,6 +3761,26 @@ contains
         end do
         call fclose(funit)
     end function read_ints
+
+    subroutine stamp_local( fname )
+        character(len=*), intent(in) :: fname
+        type(sp_project) :: sp
+        call sp%read_segment('compenv', string(fname))
+        if( sp%compenv%get_noris() > 0 )then
+            call sp%compenv%set(1, 'qsys_name', 'local')
+            call sp%write_segment_inside('compenv', string(fname))
+        endif
+        call sp%kill
+    end subroutine stamp_local
+
+    integer function id_seed( id )
+        character(len=*), intent(in) :: id
+        integer :: k
+        id_seed = 0
+        do k = 1, len(id)
+            id_seed = mod(31 * id_seed + ichar(id(k:k)), 1000003)
+        end do
+    end function id_seed
 
     subroutine write_ints( fname, v )
         character(len=*), intent(in) :: fname

@@ -2975,7 +2975,7 @@ contains
         if( .not. cline%defined('site_disc')) call cline%set('site_disc', 'yes')
         call cline%set('oritype', 'ptcl3D')
         call params%new(cline)
-        call tree%new(params, cline%defined('infile'))
+        call tree%new(params, cline%defined('infile'), cline)
         call tree%run
         call tree%kill
         call simple_end('**** SIMPLE_HETERO_TREE NORMAL STOP ****')
