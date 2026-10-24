@@ -664,8 +664,8 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'node_proj', 'binary', 'Node projects hold only the node''s particles', &
         &'Every node''s project and its steps'' projects hold only the node''s particles, mapped to the input project''s rows &
-        &by the node''s rows.txt; the leaves map back to them. Needs site_layer=no(yes|no){no}', '', .false., 'no', &
-        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        &by the node''s rows.txt; the leaves map back to them. Needs site_layer=no, where it is on unless set to no(yes|no){yes}', &
+        &'', .false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'node_seed', 'binary', 'Per-node random numbers', &
         &'The controller''s random draws (the cheap children''s direction bins) are seeded per node, so a node''s result does &
         &not depend on the order the nodes run in(yes|no){no}', '', .false., 'no', visibility=UI_VIS_ADVANCED, &
