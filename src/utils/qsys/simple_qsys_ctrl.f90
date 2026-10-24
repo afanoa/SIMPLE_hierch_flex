@@ -467,6 +467,8 @@ contains
         ! the part records itself, and its exit status, so that the master sees a part that fails
         ! or vanishes (update_queue)
         call write_job_record(funit, self%jobs_exit_code_fnames(ipart))
+        ! the part runs its own thread count, never one inherited from the submitting shell
+        if( job_descr%isthere('nthr') ) write(funit,'(a)') 'export OMP_NUM_THREADS='//int2str(nint(str2real(job_descr%get('nthr'))))
         ! compose the command line
         job_str = job_descr%chash2str()
         write(funit,'(a)',advance='no') self%exec_binary%to_char()//' '//job_str%to_char()
@@ -520,6 +522,7 @@ contains
         ! an asynchronous job first records its pid, host and scheduler job id next to its exit-status
         ! file, so that it can be cancelled (simple_qsys_job_record: cancel_queued_job)
         if( present(exit_code_fname) ) call write_job_record(funit, exit_code_fname)
+        if( job_descr%isthere('nthr') ) write(funit,'(a)') 'export OMP_NUM_THREADS='//int2str(nint(str2real(job_descr%get('nthr'))))
         ! compose the command line
         job_str = job_descr%chash2str()
         write(funit,'(a)',advance='no') exec_bin%to_char()//' '//job_str%to_char()

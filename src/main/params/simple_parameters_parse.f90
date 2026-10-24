@@ -384,6 +384,7 @@ contains
         call reg%add_int('minits', self%minits)
         call reg%add_int('minpop', self%minpop)
         call reg%add_int('kfloor', self%kfloor)
+        call reg%add_int('flex_min_neff', self%flex_min_neff)
         call reg%add_int('maxdepth', self%maxdepth)
         call reg%add_int('nodepar', self%nodepar)
         call reg%add_int('sta0_npeaks', self%sta0_npeaks)

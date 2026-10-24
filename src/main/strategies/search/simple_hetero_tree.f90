@@ -588,6 +588,7 @@ contains
         call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/fflex/f.simple'))
         call flex_keys(self, cl, vmean, min(KMAX, max(2, size(rows) / max(1, self%p%kfloor))))
         call cl%set('pcg_mskfile', d//'/mask.mrc')
+        if( self%p%flex_min_neff > 0 ) call cl%set('min_neff', self%p%flex_min_neff)
         if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
         call self%submit(i, S_FFLEX, cl)
     end subroutine submit_fflex
@@ -3183,9 +3184,16 @@ contains
     subroutine common_keys( self, cl )
         class(hetero_tree), intent(in)    :: self
         class(cmdline),     intent(inout) :: cl
+        integer :: np
         call cl%set('pgrp',    trim(self%p%pgrp))
         call cl%set('mskdiam', self%p%mskdiam)
-        call cl%set('nparts',  merge(self%npcur, self%p%nparts, self%npcur > 0))
+        np = merge(self%npcur, self%p%nparts, self%npcur > 0)
+        ! refine3D and reconstruct3D take any nparts as distributed: one part runs shared-memory without it
+        if( np > 1 )then
+            call cl%set('nparts', np)
+        else
+            call cl%delete('nparts')
+        endif
         call cl%set('nthr',    self%p%nthr)
     end subroutine common_keys
 

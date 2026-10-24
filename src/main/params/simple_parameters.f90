@@ -379,6 +379,7 @@ type :: parameters
     integer :: istart=0
     integer :: job_memory_per_task2D=JOB_MEMORY_PER_TASK_DEFAULT
     integer :: kfloor=5000
+    integer :: flex_min_neff=0     !< hetero_tree: flex's min_neff in its fflex step (0: flex's own)
     integer :: kfromto(2)
     integer :: ldim(3)=0
     integer :: maxdepth=4

@@ -613,6 +613,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call hetero_tree%add_input(UI_PARM, 'kfloor', 'num', 'Particles per flex state', &
         &'flex_pca states per node, which build its focus mask: the node particles divided by kfloor, between 2 and 8{5000}', &
         &'particles{5000}', .false., 5000., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'flex_min_neff', 'num', 'Flex state occupancy floor', &
+        &'Minimum effective particles of a flex_pca state in the focused (fflex) step; a state below it is dropped and its &
+        &rows feed no map. 0 keeps flex_pca''s own floor, 2000{0}', 'particles{0}', .false., 0., visibility=UI_VIS_ADVANCED, &
+        &preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'site_dirs', 'str', 'Pole directions', &
         &'Comma-separated components of every node''s focused flex latent whose two tails start its site ranking{1,3}', &
         &'e.g. 1,3', .false., '1,3', visibility=UI_VIS_ADVANCED)
