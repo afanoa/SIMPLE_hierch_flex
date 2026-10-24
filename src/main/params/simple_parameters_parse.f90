@@ -288,6 +288,7 @@ contains
         call reg%add_file('infile', self%infile,'T','B')
         call reg%add_file('infile2', self%infile2,'T')
         call reg%add_file('pindfile', self%pindfile,'T')
+        call reg%add_file('rowmap', self%rowmap,'T')
         call reg%add_file('oritab', self%oritab,'T', 'O')
         call reg%add_file('oritab2', self%oritab2,'T', 'O')
         call reg%add_file('outfile', self%outfile,'T', 'O', 'B')

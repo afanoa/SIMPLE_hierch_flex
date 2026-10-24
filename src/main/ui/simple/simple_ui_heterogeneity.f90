@@ -203,6 +203,10 @@ contains
         &(state maps and basis); spherical mskdiam support when absent', &
         &'e.g. automask3D_state01.mrc', .false., '', group="mask", visibility=UI_VIS_ADVANCED, &
         &activation=ui_activation_equals_any('rec_backend', [character(len=3) :: 'pcg']))
+        call flex_pca%add_input(UI_FILE, 'rowmap', 'file', 'Input-project rows', &
+        &'One input-project row per project row when the project is a cut of it (a hetero_tree node): the paired fits'' &
+        &half split keys on these rows, so a cut splits its particles as the full project does', 'e.g. rows.txt', &
+        &.false., '', visibility=UI_VIS_ADVANCED)
         call flex_pca%add_input(UI_COMP, nparts, required_override=.false., &
             group="compute", visibility=UI_VIS_ADVANCED)
         call flex_pca%add_input(UI_COMP, nthr, group="compute", visibility=UI_VIS_STANDARD)
@@ -571,6 +575,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call site_rank%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
         &'Real-space mask with values in [0,1] confining the class deviation', 'e.g. site.mrc', &
         &.true., '', visibility=UI_VIS_STANDARD)
+        call site_rank%add_input(UI_FILE, 'rowmap', 'file', 'Input-project rows', &
+        &'One input-project row per project row when the project is a cut of it (a hetero_tree node): the halves and &
+        &quarters key on these rows, so a cut splits its particles as the full project does', 'e.g. rows.txt', &
+        &.false., '', visibility=UI_VIS_ADVANCED)
         call site_rank%add_input(UI_FILT, 'lp', 'num', 'Resolution of the working box', &
         &'The particles are Fourier-cropped to this Nyquist resolution{10}', 'in Angstroms{10}', &
         &.false., 10., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)

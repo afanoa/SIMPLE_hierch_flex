@@ -2214,6 +2214,7 @@ contains
         real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:), posth(:), curveh(:,:)
         real,    allocatable :: craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:), cls2(:), hpk(:)
         integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsh(:,:), nsx(:), twin(:)
+        integer, allocatable :: rk(:), mk(:)
         integer, allocatable :: gm(:), fidx(:), ntopx(:), epmx(:)
         logical, allocatable :: seed(:), fit(:), hsel(:,:), qsel(:,:), ok(:), starts(:,:)
         complex, allocatable :: devs(:,:,:,:), dall(:,:,:,:,:,:), dq(:,:,:,:,:,:)
@@ -2288,10 +2289,22 @@ contains
         allocate(posts(n,ne), nsh(ne,2), nsx(ne), ntopx(ne), cls2(ne), hpk(ne), epmx(ne))
         l_halves = params%pole_merge <= 0.
         allocate(hsel(n,2), qsel(n,4))
+        rk = rows
+        if( params%rowmap%strlen() > 0 )then
+            allocate(mk(nlines(params%rowmap)))
+            call fopen(funit, params%rowmap, status='old', action='read', iostat=ios)
+            call fileiochk('site_rank: cannot read '//params%rowmap%to_char(), ios)
+            do i = 1, size(mk)
+                read(funit,*) mk(i)
+            end do
+            call fclose(funit)
+            if( size(mk) /= nrows ) THROW_HARD('rowmap= must hold one input-project row per project row; site_rank')
+            rk = mk(rows)
+        endif
         do i = 1, n
-            hsel(i,1) = mod((rows(i) - 1) / 2, 2) == 0
+            hsel(i,1) = mod((rk(i) - 1) / 2, 2) == 0
             do h = 1, 4
-                qsel(i,h) = 2 * mod((rows(i) - 1) / 2, 2) + mod((rows(i) - 1) / 4, 2) + 1 == h
+                qsel(i,h) = 2 * mod((rk(i) - 1) / 2, 2) + mod((rk(i) - 1) / 4, 2) + 1 == h
             end do
         end do
         hsel(:,2) = .not. hsel(:,1)

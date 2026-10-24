@@ -301,6 +301,7 @@ contains
                 call simple_mkdir(string(d//'/flex'))
                 call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/flex/f.simple'))
                 call flex_keys(self, cl, d//'/mean/recvol_state01.mrc', k)
+                if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
                 call self%submit(i, S_FLEX, cl)
             case(S_FLEX)
                 if( self%nodes(i)%depth == 0 .and. .not. self%l_subtree )then
@@ -528,6 +529,7 @@ contains
             call cl%set('pgrp',        trim(self%p%pgrp))
             call cl%set('mskdiam',     self%p%mskdiam)
             call cl%set('nthr',        max(self%p%nthr, SITE_NTHR))
+            if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
             call self%submit_in(sdir, cl, size(rows))
             self%nodes(i)%step = S_SITE
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//sdir(index(sdir, '/', back=.true.)+1:)//&
@@ -586,6 +588,7 @@ contains
         call simple_copy_file(string(d//'/'//NODE_PROJ), string(d//'/fflex/f.simple'))
         call flex_keys(self, cl, vmean, min(KMAX, max(2, size(rows) / max(1, self%p%kfloor))))
         call cl%set('pcg_mskfile', d//'/mask.mrc')
+        if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
         call self%submit(i, S_FFLEX, cl)
     end subroutine submit_fflex
 

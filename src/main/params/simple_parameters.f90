@@ -209,6 +209,7 @@ type :: parameters
     type(string)              :: infile               !< file with inputs(.txt)
     type(string)              :: infile2              !< file with inputs(.txt)
     type(string)              :: pindfile             !< distributed worker: particle rows written by the master (flex_pca, reconstruct3D)
+    type(string)              :: rowmap
     type(string)              :: keys
     type(string)              :: last_prev_dir        !< last previous execution directory
     type(string)              :: mic_new_root         !< new root for relocated micrograph data

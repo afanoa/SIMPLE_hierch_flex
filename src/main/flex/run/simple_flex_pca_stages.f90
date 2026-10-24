@@ -14,7 +14,7 @@ public :: flex_stage_request
 public :: PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH, PCA_STAGE_EMBED_MERGED
 public :: FLEX_FIT_ALL, FLEX_FIT_A, FLEX_FIT_B
 public :: FLEX_MOD4_PAIRING
-public :: flex_pca_half_of
+public :: flex_pca_half_of, set_flex_half_keys
 
 ! Compact current stage protocol carried to workers in params%stage.
 integer, parameter :: PCA_STAGE_EMBED  = 1
@@ -36,6 +36,8 @@ integer, parameter :: FLEX_FIT_B   = 2
 ! The supported balanced split: row residues {0,1} and {2,3}; both halves retain both eo classes.
 integer, parameter :: FLEX_MOD4_PAIRING = 1
 
+integer, allocatable :: half_keys(:)
+
 !> One round's control state. Constructed with keywords at the call site; every field has the
 !! value a round without that piece of state always carried.
 type :: flex_stage_request
@@ -51,15 +53,22 @@ contains
     !> The ONE mod-4 split rule, shared by the paired engine's master driver and its workers so both
     !! partition the selection identically. Row residues {0,1} form half A and {2,3} half B, so
     !! each half keeps both internal e/o classes under the row-alternating project eo split.
+    !! A cut of the input project keys on the input rows set_flex_half_keys was given.
     pure integer function flex_pca_half_of( pind ) result( ifit )
         integer, intent(in) :: pind
         integer :: r4
         r4 = mod(pind, 4)
+        if( allocated(half_keys) ) r4 = mod(half_keys(pind), 4)
         if( r4 == 0 .or. r4 == 1 )then
             ifit = FLEX_FIT_A
         else
             ifit = FLEX_FIT_B
         endif
     end function flex_pca_half_of
+
+    subroutine set_flex_half_keys( keys )
+        integer, intent(in) :: keys(:)
+        half_keys = keys
+    end subroutine set_flex_half_keys
 
 end module simple_flex_pca_stages

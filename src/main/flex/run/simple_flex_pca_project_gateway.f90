@@ -16,6 +16,7 @@ use simple_sigma2_files,       only: load_sigma2
 use simple_flex_pca_rounds,    only: flex_pca_rounds
 use simple_state_weight_set,   only: state_weight_set, STATE_WEIGHTS_KIND_PARTITION
 use simple_eo_partition,       only: ensure_field_halves
+use simple_flex_pca_stages,    only: set_flex_half_keys
 implicit none
 private
 #include "simple_local_flags.inc"
@@ -58,8 +59,8 @@ contains
         type(builder),          intent(inout) :: build
         integer, allocatable,   intent(out)   :: pinds(:)
         integer,                intent(out)   :: nptcls
-        integer :: q, i, cnt
-        integer, allocatable :: sel(:)
+        integer :: q, i, cnt, nk
+        integer, allocatable :: sel(:), keys(:)
         if( trim(params%oritype) /= 'ptcl3D' ) THROW_HARD('flex_pca requires oritype=ptcl3D')
         if( .not. l_vol1_explicit )then
             THROW_HARD('flex_pca requires a consensus mean map: pass vol1 or register one in the project out segment')
@@ -107,6 +108,11 @@ contains
         if( count([(build%spproj_field%get_eo(pinds(q))==0,q=1,nptcls)]) < 20 .or. &
             &count([(build%spproj_field%get_eo(pinds(q))==1,q=1,nptcls)]) < 20 ) &
             &THROW_HARD('flex_pca requires populated even and odd halfsets')
+        if( params%rowmap%strlen() > 0 )then
+            call read_pind_list(params%rowmap%to_char(), keys, nk)
+            if( nk /= build%spproj_field%get_noris() ) THROW_HARD('rowmap= must hold one input-project row per project row')
+            call set_flex_half_keys(keys)
+        endif
     end subroutine validate_covariance_inputs
 
     !> The canonical sigma2 state through the one rebuild entry (simple_sigma2_bootstrap), before any
