@@ -308,6 +308,8 @@ contains
         ! the run's solver controls carry over to its delivered maps
         call cline_rec%set('maxits_pcg',  params%maxits_pcg)
         call cline_rec%set('rtol',        params%rtol)
+        ! a distributed run reconstructs its delivered maps on its parts, as it runs its rounds
+        if( params%nparts > 1 ) call cline_rec%set('nparts',      params%nparts)
         write(logfhandle,'(A,I0,A)') '>>> FLEX_PCA DELIVERED STATE MAPS: reconstruct3D m_estimator=flex nstates=', nstates, &
             &' from the published state weight set'
         call flush(logfhandle)
