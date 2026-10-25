@@ -80,6 +80,7 @@ type :: state_mergeup
     procedure, private :: estep
     procedure, private :: maps
     procedure, private :: accumulate
+    procedure, private :: accumulate_jobs
     procedure, private :: finish
     procedure, private :: dock
     procedure, private :: strata
@@ -775,16 +776,16 @@ contains
         integer,              intent(out)   :: neq
         real,    allocatable, intent(out)   :: eps(:)
         complex, allocatable, intent(inout) :: cons(:,:,:,:)
-        real, allocatable :: epsa(:), epsb(:)
+        real,    allocatable :: epsa(:), epsb(:)
+        integer, allocatable :: js(:)
         neq = min(minnz(la, k0), minnz(lb, k0))
-        call self%accumulate(ia, 1, .false.)
-        call self%recs(1)%get_rho_shell_medians(epsa)
-        call self%accumulate(ib, 2, .false.)
-        call self%recs(2)%get_rho_shell_medians(epsb)
+        call self%accumulate_jobs([ia, ib], [1, size(ia)+1, size(ia)+size(ib)+1], .false., js)
+        call self%recs(js(1))%get_rho_shell_medians(epsa)
+        call self%recs(js(2))%get_rho_shell_medians(epsb)
         eps = EPS_REG * 0.5 * (epsa * real(neq) / real(size(ia)) + epsb * real(neq) / real(size(ib)))
         if( .not. allocated(cons) ) allocate(cons(self%nh,self%box,self%box,2))
-        call self%finish(1, eps * real(size(ia)) / real(neq), .true., cons(:,:,:,1))
-        call self%finish(2, eps * real(size(ib)) / real(neq), .true., cons(:,:,:,2))
+        call self%finish(js(1), eps * real(size(ia)) / real(neq), .true., cons(:,:,:,1))
+        call self%finish(js(2), eps * real(size(ib)) / real(neq), .true., cons(:,:,:,2))
     end subroutine consensus
 
     subroutine screen( self, ia, ib, la, lb, k0, neq, eps, cons, junk )
@@ -796,7 +797,7 @@ contains
         complex, allocatable, intent(inout) :: cons(:,:,:,:)
         integer, allocatable, intent(out)   :: junk(:)
         complex, allocatable :: um(:,:,:,:), sc(:,:,:,:)
-        integer, allocatable :: units(:), jidx(:), joff(:), sa(:), sb(:), part(:)
+        integer, allocatable :: units(:), jidx(:), joff(:), sa(:), sb(:), part(:), js(:)
         real,    allocatable :: jscale(:), met(:,:,:)
         logical, allocatable :: flag(:), keepa(:), keepb(:)
         integer :: nu, u, nfl, i
@@ -820,10 +821,9 @@ contains
             sa = pack(ia, [(any(units == la(i) .and. .not. flag), i=1,size(ia))])
             sb = pack(ib, [(any(units == lb(i) .and. .not. flag), i=1,size(ib))])
             allocate(sc(self%nh,self%box,self%box,2))
-            call self%accumulate(sa, 1, .false.)
-            call self%finish(1, eps * real(size(sa)) / real(neq), .true., sc(:,:,:,1))
-            call self%accumulate(sb, 2, .false.)
-            call self%finish(2, eps * real(size(sb)) / real(neq), .true., sc(:,:,:,2))
+            call self%accumulate_jobs([sa, sb], [1, size(sa)+1, size(sa)+size(sb)+1], .false., js)
+            call self%finish(js(1), eps * real(size(sa)) / real(neq), .true., sc(:,:,:,1))
+            call self%finish(js(2), eps * real(size(sb)) / real(neq), .true., sc(:,:,:,2))
             call flags(sc, 0.5 * real(size(sa) + size(sb)))
         endif
         junk = pack(units, flag)
@@ -2769,6 +2769,47 @@ contains
         call self%recs(it)%compress_exp
     end subroutine accumulate
 
+    ! job j's particles jidx(joff(j):joff(j+1)-1) cut into chunks accumulated in parallel; its sum ends in slot js(j)
+    subroutine accumulate_jobs( self, jidx, joff, l_band, js, jw )
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: jidx(:), joff(:)
+        logical,              intent(in)    :: l_band
+        integer, allocatable, intent(out)   :: js(:)
+        real, optional,       intent(in)    :: jw(:)
+        integer, allocatable :: cfrom(:), cto(:)
+        integer :: nj, nc, nthr, j, c, ic
+        nj   = size(joff) - 1
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        nc = max(1, min(self%nslots, max(nthr, nj)) / nj)
+        if( nj * nc > self%nslots ) THROW_HARD('more jobs than slots; accumulate_jobs')
+        allocate(cfrom(nj*nc), cto(nj*nc), js(nj))
+        do j = 1, nj
+            js(j) = (j - 1) * nc + 1
+            do c = 1, nc
+                ic = js(j) + c - 1
+                cfrom(ic) = joff(j) + ((c - 1) * (joff(j+1) - joff(j))) / nc
+                cto(ic)   = joff(j) + (c * (joff(j+1) - joff(j))) / nc - 1
+            end do
+        end do
+        !$omp parallel do default(shared) private(ic) schedule(static,1) proc_bind(close)
+        do ic = 1, nj * nc
+            if( present(jw) )then
+                call self%accumulate(jidx(cfrom(ic):cto(ic)), ic, l_band, jw(cfrom(ic):cto(ic)))
+            else
+                call self%accumulate(jidx(cfrom(ic):cto(ic)), ic, l_band)
+            endif
+        end do
+        !$omp end parallel do
+        !$omp parallel do default(shared) private(j,c) schedule(static,1) proc_bind(close)
+        do j = 1, nj
+            do c = 2, nc
+                call self%recs(js(j))%sum_reduce(self%recs(js(j)+c-1))
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine accumulate_jobs
+
     subroutine finish( self, it, epsv, l_mask, cm )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: it
@@ -2796,7 +2837,19 @@ contains
         logical,              intent(in)    :: l_mask, l_band
         complex,              intent(inout) :: cms(:,:,:,:)
         real, optional,       intent(in)    :: jw(:)
-        integer :: j, it
+        integer, allocatable :: js(:)
+        integer :: j, it, nthr
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        if( size(jscale) < nthr .and. size(jscale) <= self%nslots )then
+            call self%accumulate_jobs(jidx, joff, l_band, js, jw)
+            !$omp parallel do default(shared) private(j) schedule(static,1) proc_bind(close)
+            do j = 1, size(jscale)
+                call self%finish(js(j), eps * jscale(j), l_mask, cms(:,:,:,j))
+            end do
+            !$omp end parallel do
+            return
+        endif
         !$omp parallel do default(shared) private(j,it) schedule(dynamic,1) proc_bind(close)
         do j = 1, size(jscale)
             it = omp_thread()
