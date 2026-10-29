@@ -144,6 +144,8 @@ type :: hetero_tree
     procedure, private :: fs_mask
     procedure, private :: fs_zd
     procedure, private :: tree_junk
+    procedure, private :: fs_home_ranked
+    procedure, private :: state_seeds
     procedure, private :: fs_read_table
     procedure, private :: fs_write_table
     procedure, private :: step_dir
@@ -186,6 +188,7 @@ contains
             allocate(self%cl0)
             self%cl0 = cline
         endif
+        if( params%site_states .eq. 'yes' .and. params%site_layer .ne. 'yes' ) THROW_HARD('site_states=yes needs site_layer=yes')
         self%l_oneflex = params%oneflex .eq. 'yes'
         self%l_motion  = params%node_motion .eq. 'yes'
         self%l_strong  = params%strongest_pole .eq. 'yes' .and. .not. self%l_motion
@@ -328,6 +331,12 @@ contains
                     self%nodes(i)%step = S_FAILED
                     call self%write_table
                     cycle
+                endif
+                if( (self%nodes(i)%step == S_SITE .or. self%nodes(i)%step == S_SBATCH) .and. self%p%site_states .eq. 'yes' )then
+                    if( .not. self%fs_home_ranked(self%nodes(i)%id) )then
+                        nact = nact + 1
+                        cycle
+                    endif
                 endif
                 call system_clock(t0, rate)
                 call expand_proj(self%step_dir(i, self%nodes(i)%step))
@@ -991,6 +1000,7 @@ contains
                 endif
                 kss = 1
             endif
+            if( self%p%site_states .eq. 'yes' .and. .not. self%l_motion ) call self%state_seeds(i, sd, sds, kss)
             if( any([(count(sds == m) == 0, m=1,kss)]) )then
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': ERROR, seed states 1..'//int2str(kss)//&
                     &' hold '//joined([(count(sds == m), m=1,kss)])//' particles; a state without particles cannot be '//&
@@ -3207,6 +3217,74 @@ contains
         self%tjunk(rows) = .not. inleaf(rows)
     end subroutine tree_junk
 
+    logical function fs_home_ranked( self, id )
+        class(hetero_tree), intent(in) :: self
+        character(len=*),   intent(in) :: id
+        integer :: j
+        fs_home_ranked = .true.
+        if( .not. allocated(self%fs) ) return
+        do j = 1, size(self%fs)
+            if( self%fs(j)%home == id .and. self%fs(j)%k > 1 .and. self%fs(j)%st == F_RUN ) fs_home_ranked = .false.
+        end do
+    end function fs_home_ranked
+
+    ! site_states: each minority pole of another site at the node that does not rank as the seeding site does is one more seed state
+    subroutine state_seeds( self, i, sd, seeds, ks )
+        class(hetero_tree),   intent(inout) :: self
+        integer,              intent(in)    :: i
+        character(len=*),     intent(in)    :: sd
+        integer, allocatable, intent(inout) :: seeds(:)
+        integer,              intent(inout) :: ks
+        integer, allocatable :: ev(:), rows(:), ia(:), cand(:), ord(:), top(:)
+        real,    allocatable :: pp(:,:), key(:)
+        logical, allocatable :: tp(:,:)
+        character(len=:), allocatable :: id, hd
+        integer :: j, a, m, n, k0, fu, io, nmin
+        real    :: r
+        logical :: l_ok
+        if( .not. allocated(self%fs) ) return
+        id   = self%nodes(i)%id
+        ev   = self%fs_eval_rows(id)
+        k0   = ks
+        nmin = max(self%p%minpop, PROB_MULTISTATE_MIN_POP + 1)
+        call fopen(fu, string(self%ndir(i)//'/sites/state_seeds.txt'), status='replace', action='write', iostat=io)
+        call fileiochk('hetero_tree: cannot write '//self%ndir(i)//'/sites/state_seeds.txt', io)
+        write(fu,'(A)') '# site pole equivalent_pure_members Spearman_with_the_seeding_site seed_state (0 = not added)'
+        do j = 1, size(self%fs)
+            if( self%fs(j)%home /= id .or. self%fs(j)%st == F_RUN .or. self%fs(j)%st == F_FAIL ) cycle
+            hd = self%fs_hd(j)
+            if( hd == sd .or. npoles_of(hd) == 0 ) cycle
+            r = self%fs_rho(hd, sd, ev, .false.)
+            call site_poles(hd, self%nrows, rows, pp, tp)
+            allocate(ia(self%nrows), source=0)
+            ia(rows) = [(m, m=1,size(rows))]
+            do a = 1, size(pp,2)
+                n    = pole_epm(hd, a)
+                cand = pack(ev, ia(ev) > 0 .and. seeds(ev) >= 1 .and. seeds(ev) <= k0)
+                n    = min(n, size(cand))
+                l_ok = r < FGATE .and. n >= nmin .and. 2 * (count(seeds(ev) > k0) + n) < size(ev)
+                if( l_ok )then
+                    key = -pp(ia(cand), a)
+                    ord = [(m, m=1,size(cand))]
+                    call hpsort(key, ord)
+                    top  = cand(ord(1:n))
+                    l_ok = all([(count(seeds(ev) == m) - count(seeds(top) == m) >= nmin, m=1,k0)])
+                endif
+                if( .not. l_ok )then
+                    write(fu,'(A)') self%fs(j)%name//' '//int2str(a)//' '//int2str(n)//' '//rstr(r)//' 0'
+                    cycle
+                endif
+                ks = ks + 1
+                seeds(top) = ks
+                write(fu,'(A)') self%fs(j)%name//' '//int2str(a)//' '//int2str(n)//' '//rstr(r)//' '//int2str(ks)
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//id//': site '//self%fs(j)%name//' pole '//int2str(a)//' ('//&
+                    &int2str(n)//' equivalent pure members, Spearman '//rstr(r)//' with the seeding site) seeds state '//int2str(ks)
+            end do
+            deallocate(ia)
+        end do
+        call fclose(fu)
+    end subroutine state_seeds
+
     subroutine fs_read_table( self )
         class(hetero_tree), intent(inout) :: self
         character(len=4096) :: line
@@ -5317,6 +5395,29 @@ contains
         call pole_ends(sd, ends, pole, .false.)
         npoles_of = maxval([0, pole])
     end function npoles_of
+
+    integer function pole_epm( sd, a )
+        character(len=*), intent(in) :: sd
+        integer,          intent(in) :: a
+        type(string), allocatable :: ends(:)
+        integer,      allocatable :: pole(:)
+        character(len=4096) :: ln
+        integer :: fu, io, e
+        pole_epm = 0
+        call pole_ends(sd, ends, pole, .false.)
+        if( .not. file_exists(string(sd//'/site_starts.txt')) ) return
+        call fopen(fu, string(sd//'/site_starts.txt'), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            do e = 1, size(ends)
+                if( pole(e) == a .and. ends(e)%to_char() == word(ln, 1) ) pole_epm = max(pole_epm, str2int(word(ln, nwords(ln))))
+            end do
+        end do
+        call fclose(fu)
+    end function pole_epm
 
     function pole_z( sd, np ) result( z )
         character(len=*), intent(in) :: sd

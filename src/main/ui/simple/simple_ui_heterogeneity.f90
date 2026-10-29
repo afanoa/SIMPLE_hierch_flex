@@ -722,6 +722,12 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Reuse fixed particle interpolation geometry across candidate maps in split and merge tests(yes|no)', '', &
         &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'site_states', 'binary', 'Site poles as seed states', &
+        &'Needs site_layer=yes. A node seeds once all its sites are ranked: every pole of another site whose ranking is not the &
+        &seeding site''s (Spearman < 0.5 on the node''s particles) adds one seed state, its equivalent pure members by posterior, &
+        &while the added states stay under half the node and every seed keeps minpop; the split test decides whether it stays &
+        &a child(yes|no){no}', '', &
+        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
         &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &

@@ -57,6 +57,7 @@ type :: parameters
     character(len=3)          :: pcg_focus='no'
     character(len=3)          :: site_disc='no'
     character(len=3)          :: site_layer='yes'
+    character(len=3)          :: site_states='no'
     character(len=3)          :: node_rows='yes'
     character(len=3)          :: node_subset_io='no' !< write compact tree projects directly from selected rows(yes|no){no}
     character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}
