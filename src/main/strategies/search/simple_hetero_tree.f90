@@ -803,6 +803,7 @@ contains
                             &'groups of its fflex states seed the refinement'
                     endif
                 endif
+                if( self%nodes(i)%depth > self%p%kway_maxdepth .and. ks > 2 ) call binary_seeds
                 call seed_node(seeds, ks, sd//'/site_contrast.txt')
                 if( l_tp ) call write_ints(d//'/seeds/start.txt', jk)
             case(S_MOTION, S_MBATCH, S_GATEW)
@@ -984,6 +985,27 @@ contains
             call site_step(d//'/sites/site_'//pad2(j0 + 1)//'.mrc')
         end subroutine next_site
 
+        ! kway_maxdepth: a deeper node seeds the two ends of its seeding site's pole, else its two largest seed states
+        subroutine binary_seeds
+            integer, allocatable :: cnt(:)
+            integer :: e, m1, m2
+            if( two_pole_seeds(d, j, self%p%minpop, ch, jk, tmsg) )then
+                seeds = ch
+                l_tp  = .true.
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': binary below kway_maxdepth, two-pole seeds '//&
+                    &'from site '//int2str(j)//': '//tmsg
+            else
+                cnt = [(count(seeds == e), e=1,ks)]
+                m1  = maxloc(cnt, 1)
+                cnt(m1) = -1
+                m2  = maxloc(cnt, 1)
+                seeds = merge(1, merge(2, 0, seeds == m2), seeds == m1)
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': binary below kway_maxdepth, seed states '//&
+                    &int2str(m1)//' and '//int2str(m2)//' of '//int2str(ks)//' kept'
+            endif
+            ks = 2
+        end subroutine binary_seeds
+
         subroutine seed_node( sds, kss, cfile )
             integer, allocatable, intent(inout) :: sds(:)
             integer,              intent(inout) :: kss
@@ -1000,7 +1022,8 @@ contains
                 endif
                 kss = 1
             endif
-            if( self%p%site_states .eq. 'yes' .and. .not. self%l_motion ) call self%state_seeds(i, sd, sds, kss)
+            if( self%p%site_states .eq. 'yes' .and. .not. self%l_motion .and. self%nodes(i)%depth <= self%p%kway_maxdepth ) &
+                &call self%state_seeds(i, sd, sds, kss)
             if( any([(count(sds == m) == 0, m=1,kss)]) )then
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': ERROR, seed states 1..'//int2str(kss)//&
                     &' hold '//joined([(count(sds == m), m=1,kss)])//' particles; a state without particles cannot be '//&

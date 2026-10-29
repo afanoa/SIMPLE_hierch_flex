@@ -404,6 +404,7 @@ contains
         call reg%add_int('kfloor', self%kfloor)
         call reg%add_int('flex_min_neff', self%flex_min_neff)
         call reg%add_int('subtree_max', self%subtree_max)
+        call reg%add_int('kway_maxdepth', self%kway_maxdepth)
         call reg%add_int('split_ntests', self%split_ntests)
         call reg%add_int('maxdepth', self%maxdepth)
         call reg%add_int('nodepar', self%nodepar)

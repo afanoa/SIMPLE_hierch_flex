@@ -399,6 +399,7 @@ type :: parameters
     integer :: kfloor=5000
     integer :: flex_min_neff=0
     integer :: subtree_max=0
+    integer :: kway_maxdepth=99
     integer :: split_ntests=1
     integer :: kfromto(2)
     integer :: ldim(3)=0

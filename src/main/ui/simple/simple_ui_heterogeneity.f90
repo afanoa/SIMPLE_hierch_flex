@@ -728,6 +728,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &while the added states stay under half the node and every seed keeps minpop; the split test decides whether it stays &
         &a child(yes|no){no}', '', &
         &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'kway_maxdepth', 'num', 'Depth of K-way seeding', &
+        &'A node deeper than this seeds at most two states, the two ends of its seeding site''s pole (else its two largest &
+        &seed states), and adds no site-pole states; -1 = every node, the root included; 99 = no limit{99}', 'depth{99}', &
+        &.false., 99., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
         &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &
