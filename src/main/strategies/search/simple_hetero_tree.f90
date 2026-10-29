@@ -58,7 +58,7 @@ integer,  parameter :: SITE_NFIT = 100000, F_FAIL = -1, F_RUN = 1, F_TEST = 2, F
                      & F_DUP = 7, F_KEEP = 8, F_MAPS = 9, F_DONE = 10, F_REC = 11, F_REF = 12, F_READY = 13, F_PREC = 14, &
                      & F_PREF = 15, F_SIZE = 16
 real,     parameter :: FGATE = 0.5
-character(len=*), parameter :: SITE_TABLE = 'hetero_tree_sites', FDIR = 'factorial'
+character(len=*), parameter :: SITE_TABLE = 'hetero_tree_sites', FDIR = 'factorial', DELIVERED = 'STATES_DELIVERED'
 character(len=8), parameter :: FST_NAMES(F_FAIL:F_SIZE) = [character(len=8) :: 'failed', '-', 'ranking', 'ranked', 'pooling', &
                                                            & 'level', 'copy', 'no_pole', 'dup', 'kept', 'maps', 'done', 'refclass', &
                                                            & 'refrank', 'ready', 'prerec', 'preref', 'sizing']
@@ -1873,8 +1873,31 @@ contains
         if( .not. self%l_mudone ) self%l_mudone = self%mergeup()
         if( .not. file_exists(string(self%root//'/final_maps/choice.txt')) ) call final_maps(self)
         if( .not. self%l_mudone ) return
+        if( .not. file_exists(string(self%root//'/'//DELIVERED)) ) call mark_delivered(self, l_fac)
         final = l_fac
     end function final
+
+    ! the states are delivered once the leaves, labels, merge-up and final maps are written; the factorial phase may still run
+    subroutine mark_delivered( self, l_fac )
+        class(hetero_tree), intent(in) :: self
+        logical,            intent(in) :: l_fac
+        character(len=8)  :: dat
+        character(len=10) :: tim
+        character(len=5)  :: zone
+        character(len=:), allocatable :: msg
+        integer :: funit, ios
+        if( file_exists(string(self%root//'/mergeup/'//STEP_EXIT)) .and. &
+            &.not. file_exists(string(self%root//'/hetero_tree_merged.txt')) ) return
+        call date_and_time(dat, tim, zone)
+        call fopen(funit, string(self%root//'/'//DELIVERED), status='replace', action='write', iostat=ios)
+        call fileiochk('hetero_tree: cannot write '//DELIVERED, ios)
+        write(funit,'(A)') dat(1:4)//'-'//dat(5:6)//'-'//dat(7:8)//'T'//tim(1:2)//':'//tim(3:4)//':'//tim(5:6)//&
+            &zone(1:3)//':'//zone(4:5)
+        call fclose(funit)
+        msg = '>>> HETERO_TREE states delivered: leaves, labels, merge-up and final maps written ('//DELIVERED//')'
+        if( .not. l_fac ) msg = msg//'; the factorial phase continues'
+        write(logfhandle,'(A)') msg
+    end subroutine mark_delivered
 
     ! the landscape between the accepted poles of every finished node (landscape_sample in node_<id>/landscape)
     logical function landscape( self )
