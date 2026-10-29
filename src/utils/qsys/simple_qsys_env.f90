@@ -47,6 +47,7 @@ type :: qsys_env
     procedure :: exec_simple_prg_in_queue_async
     procedure :: exec_simple_prgs_in_queue_async
     procedure :: start_persistent_workers
+    procedure :: stop_exclusive_workers
     procedure :: service_persistent_worker_warmup
     procedure :: get_persistent_worker_server_address
     procedure :: get_persistent_worker_nthr
@@ -118,7 +119,8 @@ contains
     !> Initialize qsys environment state, script controllers, and optional worker backend.
     !! A qsys_name ending in '_worker' (e.g. 'local_worker', 'slurm_worker') activates the
     !! TCP persistent-worker dispatch path; all other names use the standard backend directly.
-    subroutine new( self, params, nparts, stream, numlen, nptcls, exec_bin, qsys_name, qsys_nthr, qsys_partition, l_active )
+    subroutine new( self, params, nparts, stream, numlen, nptcls, exec_bin, qsys_name, qsys_nthr, qsys_partition, l_active, &
+        &base_only, qsys_memory, strict_dispatch )
         use simple_sp_project, only: sp_project
         class(qsys_env), target, intent(inout) :: self
         class(parameters),       intent(in)    :: params             !< run-time parameter set
@@ -131,6 +133,8 @@ contains
         class(string), optional, intent(in)    :: qsys_name          !< override scheduler name from params/env
         class(string), optional, intent(in)    :: qsys_partition     !< override scheduler partition from params/env
         logical,       optional, intent(in)    :: l_active(:)        !< split_mode='even': balance the particles that do work
+        logical,       optional, intent(in)    :: base_only, strict_dispatch
+        integer,       optional, intent(in)    :: qsys_memory        !< per-worker memory in MB, set before worker launch
         type(ori)             :: compenv_o
         type(sp_project)      :: spproj
         type(string)          :: qsnam, qsnam_requested, tpi, hrs_str, mins_str, secs_str, runtime_simple_path
@@ -233,6 +237,16 @@ contains
             call self%qdescr%set('qsys_name', qsnam)
         endif
         qsnam_requested = qsnam
+        if( present(qsys_memory) )then
+            if( qsys_memory < 1 ) THROW_HARD('qsys_memory must be positive')
+            call self%qdescr%set('job_memory_per_task', int2str(qsys_memory))
+        endif
+        if( present(base_only) )then
+            if( base_only )then
+                qsnam = qsnam%substr_remove(string('_worker'))
+                call self%qdescr%set('qsys_name', qsnam)
+            endif
+        endif
         call validate_requested_qsys(qsnam)
         ! The '_worker' suffix on a qsys name (e.g. 'local_worker', 'slurm_worker')
         ! opts into the TCP persistent-worker backend.  Strip the suffix so the
@@ -260,11 +274,12 @@ contains
                 if( params%worker_server%strlen() > 0 ) then
                     call self%qscripts%new(self%simple_exec_bin, self%dispatch_qsys, self%parts,&
                         &[1, self%nparts], params%ncunits, sstream, numlen, nthr_worker=nthr_workers, &
-                        worker_priority=self%worker_priority)
+                        worker_priority=self%worker_priority, strict_dispatch=strict_dispatch)
                 else
                     call self%qscripts%new(self%simple_exec_bin, self%dispatch_qsys, self%parts,&
                         &[1, self%nparts], params%ncunits, sstream, numlen, nthr_worker=nthr_workers, &
-                        worker_priority=self%worker_priority, warmup_callback=persistent_worker_warmup_callback)
+                        worker_priority=self%worker_priority, warmup_callback=persistent_worker_warmup_callback, &
+                        strict_dispatch=strict_dispatch)
                 end if
                 call diagnose_parallelism(params, qsnam_requested, qsnam, self%nparts, params%ncunits, &
                     &nthr_workers, n_workers, nthr_workers, .true.)
@@ -630,6 +645,19 @@ contains
         deallocate(launch_ids)
         call cline%kill
     end subroutine start_persistent_workers
+
+    ! Only an exclusive owner may stop the shared runtime; other queue users must finish first.
+    subroutine stop_exclusive_workers( self )
+        class(qsys_env), target, intent(inout) :: self
+        if( .not. associated(persistent_worker%server) ) return
+        if( .not. is_warmup_owner(self) .or. n_warmup_envs() /= 1 ) THROW_HARD('worker pool is not exclusively owned by this queue')
+        call persistent_worker%server%kill()
+        deallocate(persistent_worker%server)
+        persistent_worker%n_workers = 0
+        persistent_worker%nthr_per_worker = 0
+        call persistent_worker%launch_backend%kill()
+        call unregister_warmup_env(self)
+    end subroutine stop_exclusive_workers
 
     !> Return persistent worker server address as "host:port".
     !! Empty string is returned when no persistent worker server is allocated,

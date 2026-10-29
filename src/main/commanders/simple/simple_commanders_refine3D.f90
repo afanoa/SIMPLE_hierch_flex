@@ -2155,6 +2155,7 @@ contains
         integer, allocatable :: labels(:), rows(:), child(:), junk(:), out(:)
         real    :: smpd
         integer :: box, i, kstar, funit, ios
+        character(len=8) :: envv
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
         if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
@@ -2171,10 +2172,20 @@ contains
         call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         labels = build%spproj_field%get_all_asint('state')
-        call split%new(params, build, EM_LIM)
+        call get_environment_variable('SIMPLE_SPLIT_CONTRAST', envv, status=ios)
+        if( ios /= 0 ) envv = ''
+        call split%new(params, build, EM_LIM, contrast=any(trim(envv) == ['yes  ', 'maps ']), &
+            &amplitude=any(trim(envv) == ['yes  ', 'estep']))
         if( cline%defined('pcg_mskfile') ) call split%focus(params%pcg_mskfile)
+        if( params%merge_insert_audit == 'yes' .and. params%merge_audit_request%strlen() > 0 )then
+            call split%audit_em_wrapper()
+            call split%kill()
+            call build%kill_general_tbox()
+            call simple_end('**** SIMPLE_EM_WRAPPER_CHECK NORMAL STOP ****')
+            return
+        endif
         rows = split%get_rows()
-        call split%test(labels(rows), maxval(labels), child, kstar, junk)
+        call split%test(labels(rows), maxval(labels), child, kstar, junk, ntests=params%split_ntests)
         allocate(out(size(labels)), source=0)
         out(rows) = child
         call fopen(funit, string('split_children.txt'), status='replace', action='write', iostat=ios)
@@ -2224,6 +2235,8 @@ contains
         integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq, nfit, ntop, band(2)
         real    :: neff
         logical :: l_halves
+        logical, allocatable :: lpool(:)
+        type(string), allocatable :: plines(:)
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
         call cline%set('hp',      40.)
@@ -2365,6 +2378,8 @@ contains
             call halves_matrices
             call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .true., [(.false., i=1,ne)], &
                 &grp, seeds, ok, twin, gm)
+            allocate(plines(0))
+            if( params%pooled_poles .eq. 'yes' ) call pooled_rule
             if( maxval([0, seeds]) > maxval([0, grp]) ) call test_rest
             call fopen(funit, string('site_halves.txt'), status='replace', action='write', iostat=ios)
             call fileiochk('site_rank: cannot write site_halves.txt', ios)
@@ -2377,7 +2392,11 @@ contains
                     write(line,'(1X,F6.3)') craw(i,j)
                     members = members//trim(line)
                 end do
-                write(line,'(F6.3)') craw(i,i) / sqrt(max(rel1(i), 1.e-3) * max(rel2(i), 1.e-3))
+                if( rel1(i) <= 0. .or. rel2(i) <= 0. )then
+                    line = '-999.000'
+                else
+                    write(line,'(F8.3)') craw(i,i) / sqrt(max(rel1(i), 1.e-3) * max(rel2(i), 1.e-3))
+                endif
                 members = members//' | '//trim(adjustl(line))//' | '//int2str(grp(i))
                 write(funit,'(A)') members
                 write(logfhandle,'(A)') '>>> SITE_RANK halves '//members
@@ -2389,6 +2408,9 @@ contains
                 write(funit,'(A)') members
                 write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' joins '//names(twin(i))%to_char()//&
                     &' (each other''s best partner in both directions): '//trim(merge('accepted', 'rejected', ok(i)))
+            end do
+            do i = 1, size(plines)
+                write(funit,'(A)') plines(i)%to_char()
             end do
             call fclose(funit)
             if( maxval([0, grp]) > 0 ) call pole_rule
@@ -2480,6 +2502,76 @@ contains
             end do
         end subroutine halves_matrices
 
+        ! pooled_poles: a merged group the member rule rejects is tested once more as one endpoint, on its members' averaged maps
+        subroutine pooled_rule
+            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
+            complex, allocatable :: p1(:,:,:,:), p2(:,:,:,:), pq(:,:,:,:,:)
+            logical, allocatable :: cand(:), pt(:)
+            integer, allocatable :: mem(:)
+            character(len=:), allocatable :: nm
+            real    :: s0, r1, r2, sq(4), mr, mc, qr(4), qc(4), zs, zr, zc, br, bc, bqr(4), bqc(4)
+            integer :: m, a, f, k
+            logical :: lpass
+            m = size(names)
+            allocate(lpool(m), source=.false.)
+            cand = halves_cand(craw, rel1, rel2, cq)
+            pt   = cand .and. [(names(a)%to_char() /= 'rest', a=1,m)]
+            do a = 1, m
+                if( any(gm(1:a-1) == gm(a)) ) cycle
+                mem = pack([(f, f=1,m)], gm == gm(a))
+                if( size(mem) < 2 .or. all(ok(mem)) ) cycle
+                p1 = sum(dall(:,:,:,:,mem,1), dim=5) / real(size(mem))
+                p2 = sum(dall(:,:,:,:,mem,2), dim=5) / real(size(mem))
+                pq = sum(dq(:,:,:,:,mem,:), dim=5) / real(size(mem))
+                s0 = site%half_corr(p1, p2)
+                r1 = site%half_rel(p1)
+                r2 = site%half_rel(p2)
+                do k = 1, 4
+                    sq(k) = site%half_corr(pq(:,:,:,:,QA(k)), pq(:,:,:,:,QB(k)))
+                end do
+                br  = -huge(br)
+                bc  = -huge(bc)
+                bqr = -huge(br)
+                bqc = -huge(br)
+                do f = 1, m
+                    if( .not. pt(f) .or. gm(f) == gm(a) ) cycle
+                    br = max(br, site%half_corr(p1, dall(:,:,:,:,f,2)))
+                    bc = max(bc, site%half_corr(dall(:,:,:,:,f,1), p2))
+                    do k = 1, 4
+                        bqr(k) = max(bqr(k), site%half_corr(pq(:,:,:,:,QA(k)), dq(:,:,:,:,f,QB(k))))
+                        bqc(k) = max(bqc(k), site%half_corr(dq(:,:,:,:,f,QA(k)), pq(:,:,:,:,QB(k))))
+                    end do
+                end do
+                mr = s0
+                mc = s0
+                qr = sq
+                qc = sq
+                if( br > -huge(br) )then
+                    mr = s0 - br
+                    mc = s0 - bc
+                    qr = sq - bqr
+                    qc = sq - bqc
+                endif
+                zs    = s0 / max(halves_se(sq), 1.e-6)
+                zr    = mr / max(halves_se(qr), 1.e-6)
+                zc    = mc / max(halves_se(qc), 1.e-6)
+                lpass = s0 > 0. .and. r1 > 0. .and. r2 > 0. .and. zs >= HALVES_KSIG .and. mr > 0. .and. zr >= HALVES_KSIG .and. &
+                    &mc > 0. .and. zc >= HALVES_KSIG
+                if( lpass ) lpool(mem) = .true.
+                nm = names(mem(1))%to_char()
+                do k = 2, size(mem)
+                    nm = nm//'+'//names(mem(k))%to_char()
+                end do
+                write(line,'(A,3(1X,F0.3),A,2(1X,F0.3),A,2(1X,F0.3),A)') 'pooled '//nm//' self', s0, halves_se(sq), zs, ' row', mr, &
+                    &zr, ' column', mc, zc, ' '//trim(merge('accepted', 'rejected', lpass))
+                plines = [plines, string(trim(line))]
+                write(logfhandle,'(A)') '>>> SITE_RANK halves '//trim(line)
+            end do
+            if( .not. any(lpool) ) return
+            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .true., [(.false., k=1,m)], &
+                &grp, seeds, ok, twin, gm, lpool)
+        end subroutine pooled_rule
+
         ! the rest (particles no accepted pole claims at 0.5) is ranked by 1 - its best pole posterior and tested as one more endpoint
         subroutine test_rest
             type(string), allocatable :: nm2(:)
@@ -2517,8 +2609,14 @@ contains
             call move_alloc(s2, nsh)
             call move_alloc(p2, posts)
             call halves_matrices
-            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
-                &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm)
+            if( allocated(lpool) )then
+                lpool = [lpool, .false.]
+                call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
+                    &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm, lpool)
+            else
+                call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
+                    &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm)
+            endif
             write(logfhandle,'(A)') '>>> SITE_RANK rest state (best pole posterior < 0.5): '//trim(merge('accepted as a state       ', &
                 &'rejected, to its best pole', grp(m+1) > 0))
         end subroutine test_rest
@@ -2530,17 +2628,17 @@ contains
             real,     allocatable :: hs(:)
             integer,  allocatable :: plab(:), sd(:), kid(:)
             logical,  allocatable :: keep(:), pt(:), lpole(:)
+            real,     allocatable :: shs(:), zrs(:), zcs(:)
+            integer,  allocatable :: cnt0(:), fin(:)
             real    :: share, zr, zc
             integer :: g, np, m, k, f, fu, io
             np = maxval(grp)
             m  = size(names)
             pt = halves_cand(craw, rel1, rel2, cq) .and. [(names(f)%to_char() /= 'rest', f=1,m)]
             allocate(keep(np), source=.true.)
+            allocate(shs(np), zrs(np), zcs(np), source=0.)
+            allocate(cnt0(np), fin(np), source=0)
             lpole = [(.not. any([(grp(f) == g .and. names(f)%to_char() == 'rest', f=1,m)]), g=1,np)]
-            call fopen(fu, string('site_pole_rule.txt'), status='replace', action='write', iostat=io)
-            call fileiochk('site_rank: cannot write site_pole_rule.txt', io)
-            write(fu,'(A)') '# pole, seeds, share of the node, halves accept margin / SE of the seeds'' own maps (row, column), '//&
-                &'kept (share < 0.5 and both >= '//int2str(nint(HALVES_KSIG))//')'
             do g = 1, np
                 if( .not. lpole(g) ) cycle
                 share = real(count(seeds == g)) / real(n)
@@ -2564,38 +2662,75 @@ contains
                     zc = seed_z(dh, dhq, g, pt, .false.)
                 endif
                 keep(g) = share < 0.5 .and. zr >= HALVES_KSIG .and. zc >= HALVES_KSIG
-                write(fu,'(I0,1X,I0,1X,F6.3,2(1X,F0.3),1X,A)') g, count(seeds == g), share, max(zr, -999.), max(zc, -999.), &
-                    &trim(merge('kept    ', 'rejected', keep(g)))
+                shs(g)  = share
+                zrs(g)  = max(zr, -999.)
+                zcs(g)  = max(zc, -999.)
+                cnt0(g) = count(seeds == g)
                 write(line,'(A,I0,A,I0,A,F6.3,A,F0.3,A,F0.3,A)') '>>> SITE_RANK pole rule: pole ', g, ', ', count(seeds == g), &
                     &' seeds (', share, ' of the node), seed maps accept z ', max(zr, -999.), ' / ', max(zc, -999.), ': '//&
                     &trim(merge('kept    ', 'rejected', keep(g)))
                 write(logfhandle,'(A)') trim(line)
             end do
-            call fclose(fu)
-            if( all(keep) ) return
-            kid = pack([(g, g=1,np)], keep)
-            if( .not. any(keep .and. lpole) )then
-                seeds = 1
-                grp   = 0
-                write(logfhandle,'(A)') '>>> SITE_RANK pole rule: no pole kept, one state'
-                return
-            endif
-            allocate(gp(n,size(kid)), source=0._dp)
-            do k = 1, size(kid)
-                do f = 1, m
-                    if( grp(f) == kid(k) ) gp(:,k) = gp(:,k) + real(posts(:,f),dp) / real(count(grp == kid(k)),dp)
-                end do
-            end do
-            call seed_poles(gp, PROB_MULTISTATE_MIN_POP + 1, all(lpole(kid)), sd, plab)
-            do f = 1, m
-                if( grp(f) == 0 ) cycle
-                if( keep(grp(f)) )then
-                    grp(f) = plab(findloc(kid, grp(f), dim=1))
+            if( all(keep) )then
+                fin = [(g, g=1,np)]
+            else
+                kid = pack([(g, g=1,np)], keep)
+                if( .not. any(keep .and. lpole) )then
+                    seeds = 1
+                    grp   = 0
+                    write(logfhandle,'(A)') '>>> SITE_RANK pole rule: no pole kept, one state'
                 else
-                    grp(f) = 0
+                    ! a kept pole keeps the seed rows it was tested on; a rejected pole's rows join their best kept pole at
+                    ! posterior >= 0.5, else the rest
+                    kid = pack([(g, g=1,np)], keep .and. lpole)
+                    allocate(gp(n,size(kid)), source=0._dp)
+                    do k = 1, size(kid)
+                        do f = 1, m
+                            if( grp(f) == kid(k) ) gp(:,k) = gp(:,k) + real(posts(:,f),dp) / real(count(grp == kid(k)),dp)
+                        end do
+                    end do
+                    sd   = [(0, f=1,n)]
+                    plab = [(0, g=1,np)]
+                    do k = 1, size(kid)
+                        plab(kid(k)) = k
+                    end do
+                    do f = 1, n
+                        if( seeds(f) <= 0 ) cycle
+                        if( plab(seeds(f)) > 0 )then
+                            sd(f) = plab(seeds(f))
+                        else if( lpole(seeds(f)) )then
+                            k = maxloc(gp(f,:), dim=1)
+                            sd(f) = size(kid) + 1
+                            if( gp(f,k) >= 0.5_dp ) sd(f) = k
+                        else
+                            sd(f) = size(kid) + 1
+                        endif
+                    end do
+                    do f = 1, m
+                        if( grp(f) == 0 ) cycle
+                        if( plab(grp(f)) > 0 )then
+                            grp(f) = plab(grp(f))
+                        else if( lpole(grp(f)) )then
+                            grp(f) = 0
+                        else
+                            grp(f) = merge(size(kid) + 1, 0, any(sd == size(kid) + 1))
+                        endif
+                    end do
+                    seeds = sd
+                    fin   = plab
                 endif
+            endif
+            call fopen(fu, string('site_pole_rule.txt'), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write site_pole_rule.txt', io)
+            write(fu,'(A)') '# pole, seeds, share of the node, halves accept margin / SE of the seeds'' own maps (row, column), '//&
+                &'its state in site_seeds.txt after the rule and that state''s seeds (0 = none; a rejection re-seeds the kept '//&
+                &'poles at posterior >= 0.5), kept (share < 0.5 and both >= '//int2str(nint(HALVES_KSIG))//')'
+            do g = 1, np
+                if( .not. lpole(g) ) cycle
+                write(fu,'(I0,1X,I0,1X,F6.3,2(1X,F0.3),2(1X,I0),1X,A)') g, cnt0(g), shs(g), zrs(g), zcs(g), fin(g), &
+                    &merge(count(seeds == fin(g)), 0, fin(g) > 0), trim(merge('kept    ', 'rejected', keep(g)))
             end do
-            seeds = sd
+            call fclose(fu)
         end subroutine pole_rule
 
         real function seed_z( dh, dhq, g, pt, l_row )
@@ -2916,7 +3051,7 @@ contains
             counts = [counts, real(count(labels == s),dp)]
         end do
         if( size(names) < 2 ) THROW_HARD('site_discover needs at least two states')
-        call discover_sites(evens, odds, counts, names, params%mskdiam, '.', nsite)
+        call discover_sites(evens, odds, counts, names, params%mskdiam, '.', nsite, trim(params%pgrp))
         write(logfhandle,'(A)') '>>> SITE_DISCOVER '//int2str(nsite)//' sites over '//int2str(size(names))//' states'
         call simple_end('**** SIMPLE_SITE_DISCOVER NORMAL STOP ****')
     end subroutine exec_site_discover

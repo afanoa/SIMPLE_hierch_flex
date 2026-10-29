@@ -11,6 +11,7 @@ use simple_core_module_api,    only: dp, dtiny, simple_exception
 use simple_linalg,             only: jacobi, cholesky, chol_forward, chol_backward, spd_inverse, spd_logdet
 use simple_flex_pca_fit_types, only: flex_fit
 use simple_kmeans,             only: kmeans
+use simple_flex_shared_private, only: sp_posterior
 implicit none
 private
 #include "simple_local_flags.inc"
@@ -153,6 +154,43 @@ contains
         real(dp) :: lw(fit%spec%kmix), rk(fit%spec%kmix)
         real(dp) :: aa, lwm, wsm
         integer  :: q, r, kk
+        if( fit%spec%l_sp_req )then
+            block
+                real(dp) :: gg(fit%model%ncomp,fit%model%ncomp), hh(fit%model%ncomp), logp
+                real(dp) :: cm(fit%model%ncomp,fit%spec%kmix)
+                real(dp) :: cs(fit%model%ncomp,fit%model%ncomp,fit%spec%kmix)
+                integer :: sp_status
+                lok = .false.; ldA = 0.d0; nll_add = 0.d0
+                if( .not. allocated(fit%history%sp_loading) ) return
+                if( .not. allocated(fit%history%sp_sigma) ) return
+                if( .not. allocated(fit%history%mix_xi) ) return
+                if( .not. allocated(fit%history%mix_pi) ) return
+                if( fit%model%sig2 <= 0.d0 ) return
+                gg = (a*a/fit%model%sig2)*fit%iter%Gth(:,:,ithr)
+                hh = (a*fit%iter%bth(:,ithr)-a*a*fit%iter%cth(:,ithr))/fit%model%sig2
+                call sp_posterior(fit%model%ncomp, fit%spec%sp_shared+fit%spec%sp_private, &
+                    &fit%spec%kmix, gg, hh, 0.d0, 0.d0, fit%history%sp_loading, fit%history%mix_xi, &
+                    &fit%history%sp_sigma, fit%history%mix_pi, logp, rk, fit%iter%zth(:,ithr), &
+                    &fit%iter%dens(:,:,i), cm, cs, sp_status)
+                if( sp_status /= 0 ) return
+                ! The varying term includes every component logdet(Sigma); add no tied logdet later.
+                nll_add = -2.d0*logp; ldA = 0.d0; lok = .true.
+                fit%iter%Ainvth(:,:,ithr) = 0.d0
+                do kk = 1, fit%spec%kmix
+                    fit%history%mxa_sr(kk,ithr) = fit%history%mxa_sr(kk,ithr)+rk(kk)
+                    fit%history%mxa_sm(:,kk,ithr) = fit%history%mxa_sm(:,kk,ithr)+rk(kk)*cm(:,kk)
+                    ! Unlike the tied MCFA path, this accumulator already INCLUDES covariance.
+                    fit%history%mxa_smm(:,:,kk,ithr) = fit%history%mxa_smm(:,:,kk,ithr)+rk(kk)*cs(:,:,kk)
+                    do r = 1, fit%model%ncomp
+                        do q = 1, fit%model%ncomp
+                            fit%iter%Ainvth(q,r,ithr) = fit%iter%Ainvth(q,r,ithr) + &
+                                &rk(kk)*(cs(q,r,kk)-cm(q,kk)*cm(r,kk))
+                        enddo
+                    enddo
+                enddo
+                return
+            end block
+        endif
         associate( n => fit%model%ncomp, kmix => fit%spec%kmix, sig2 => fit%model%sig2, &
             &G => fit%iter%Gth(:,:,ithr), b => fit%iter%bth(:,ithr), c => fit%iter%cth(:,ithr), &
             &Ominv => fit%history%mix_Ominv, Omxi => fit%history%mix_Omxi, &

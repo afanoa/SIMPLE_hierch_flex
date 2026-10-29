@@ -2148,16 +2148,17 @@ interface
     end subroutine apply_ctf_wiener_wpad
 
     module subroutine gen_fplane4rec( self, smpd_crop, ctfparms, shift, fplane, grid, half, &
-        &store_transfer, observation_model )
+        &store_transfer, observation_model, reuse_storage )
         class(image),      intent(inout) :: self
         real,              intent(in)    :: smpd_crop
         class(ctfparams),  intent(in)    :: ctfparms
         real,              intent(in)    :: shift(2)
-        type(fplane_type), intent(out)   :: fplane
+        type(fplane_type), intent(inout) :: fplane
         type(fplane_grid), intent(in)    :: grid
         integer, optional, intent(in)    :: half
         logical, optional, intent(in)    :: store_transfer
         logical, optional, intent(in)    :: observation_model
+        logical, optional, intent(in)    :: reuse_storage
     end subroutine gen_fplane4rec
 
     module subroutine calc_ice_frac( self, tfun, ctfparms, score )

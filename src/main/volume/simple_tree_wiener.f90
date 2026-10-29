@@ -158,11 +158,12 @@ contains
                 call write_unit(ie, u)
             end do
         end do
+        call summary
+        ! choice.txt goes last: the tree's restart guard reads its presence as the final maps being complete
         call fopen(funit, string(outdir//'/choice.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('tree_wiener_maps: cannot write choice.txt', ios)
         write(funit,'(A)') choice//' '//outdir//'/'//choice
         call fclose(funit)
-        call summary
         call vol%kill
 
     contains

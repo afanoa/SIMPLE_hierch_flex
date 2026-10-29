@@ -6,7 +6,7 @@
 !! table) and frees them once. The worker runs exactly one stage body. Distribution goes through
 !! the rounds object the strategy hands in; supported configuration comes from `parameters`.
 module simple_flex_pca_application
-use simple_core_module_api, only: del_file, dp, dtiny, fdim, int2str_pad, kbwinsz, logfhandle, mrc_ext, &
+use simple_core_module_api, only: del_file, dp, dtiny, fclose, fdim, fileiochk, fopen, int2str_pad, kbwinsz, logfhandle, mrc_ext, &
     &simple_exception, string, tic, timer_int_kind, tiny, toc
 use simple_flex_pca_records,         only: flex_fit_model, flex_selection
 use simple_builder,                  only: builder
@@ -20,7 +20,8 @@ use simple_flex_pca_state_service,   only: apply_latent_deconvolution, prune_und
 use simple_flex_pca_delivery_3d,     only: deliver_latent_readouts, write_covariance_tables, &
     &write_covariance_eigenvolumes, write_covariance_manifest
 use simple_flex_pca_project_gateway, only: validate_covariance_inputs, load_and_validate_sigma, &
-    &write_state_weight_set, write_discrete_state_project, deliver_state_maps, register_embedding_artifact
+    &write_state_weight_set, write_discrete_state_project, deliver_state_maps, register_embedding_artifact, &
+    &read_pind_list, validate_distinct_physical_rows
 use simple_flex_pca_stages,          only: flex_stage_request, PCA_STAGE_EMBED, PCA_STAGE_PROBE, PCA_STAGE_POLISH, &
     &PCA_STAGE_EMBED_MERGED
 use simple_flex_pca_run_types,       only: flex_run_session
@@ -30,7 +31,8 @@ use simple_flex_pca_basis,           only: estimate_covariance_mean, &
     &align_basis_to_reference, save_probe_state, init_mean_reconstructor, apply_cached_mean_scale
 use simple_fileio,                   only: simple_copy_file
 use simple_syslib,                   only: file_exists
-use simple_flex_pca_embed,           only: embed_latents_with_contrast
+use simple_flex_pca_embed,           only: embed_latents_with_contrast, evaluate_predictive_rows
+use simple_flex_pca_observation_export, only: open_observation_export, write_observation_export, close_observation_export
 use simple_flex_pca_fit_driver,      only: run_flex_pca_paired, probe_worker_pass, embed_worker_pass
 use simple_image,                    only: image
 use simple_parameters,               only: parameters
@@ -50,6 +52,7 @@ character(len=*), parameter :: TRIAL_PREFIX = 'flex_pca_trial'
 
 type :: flex_pca_application
     type(flex_run_session), allocatable :: sess
+    type(flex_selection) :: eval_sel
     type(flex_plane_store), allocatable :: plane_store
     type(flex_pcg_environment), allocatable :: pcg_env
   contains
@@ -58,6 +61,7 @@ type :: flex_pca_application
     procedure :: kill       => app_kill
     procedure, private :: prepare, obtain_embedding, infer_states, reconstruct_states, publish
     procedure, private :: resume_from_cache, embed_all
+    procedure, private :: prepare_evaluation, evaluate_predictive
 end type flex_pca_application
 
 contains
@@ -76,6 +80,15 @@ contains
             &params%mskdiam, params%box_crop, params%smpd_crop)
         call self%prepare(params, build, cline, rounds)
         call self%obtain_embedding(params, build, rounds)
+        if( params%flex_sp_k > 0 )then
+            call self%kill
+            return
+        endif
+        call self%evaluate_predictive(params, build)
+        if( self%eval_sel%nptcls > 0 )then
+            call self%kill
+            return
+        endif
         call self%infer_states(params, build, cline)
         call self%reconstruct_states(params, build, cline)
         call self%publish(params, build, rounds)
@@ -84,6 +97,7 @@ contains
 
     subroutine app_kill( self )
         class(flex_pca_application), intent(inout) :: self
+        call self%eval_sel%kill
         if( allocated(self%pcg_env) )then
             call self%pcg_env%kill
             deallocate(self%pcg_env)
@@ -106,6 +120,7 @@ contains
         type(builder),               intent(inout) :: build
         class(cmdline),              intent(inout) :: cline
         associate( sess => self%sess )
+            call self%prepare_evaluation(params, build, rounds)
             call validate_covariance_inputs(params, cline%defined('vol1'), cline%defined('pindfile'), &
                 &build, sess%sel%pinds, sess%sel%nptcls, rounds=rounds)
             sess%l_resume       = cline%defined('infile')
@@ -167,6 +182,148 @@ contains
         end associate
     end subroutine prepare
 
+    !> Validate the explicit disjoint selection before any model fitting or plane preparation.
+    subroutine prepare_evaluation( self, params, build, rounds )
+        class(flex_pca_application), intent(inout) :: self
+        type(parameters),           intent(in)    :: params
+        type(builder),              intent(inout) :: build
+        class(flex_pca_rounds),      intent(in)    :: rounds
+        logical, allocatable :: seen(:)
+        integer, allocatable :: training_rows(:)
+        integer :: i, row, nrows, ntrain, eo, halves(2)
+        call self%eval_sel%kill
+        if( params%pca_eval_pindfile%strlen() == 0 .and. params%flex_sp_k == 0 ) return
+        if( rounds%distributed() .or. rounds%is_worker() ) &
+            THROW_HARD('predictive evaluation requires a shared-memory master')
+        nrows = build%spproj_field%get_noris()
+        if( params%pindfile%strlen() > 0 )then
+            call read_pind_list(params%pindfile%to_char(), training_rows, ntrain)
+        else
+            if( params%fromp < 1 .or. params%top > nrows .or. params%fromp > params%top ) &
+                THROW_HARD('shared/private training range is outside the project')
+            training_rows = pack([(i,i=params%fromp,params%top)], &
+                &[(build%spproj_field%get_state(i)>0,i=params%fromp,params%top)])
+            ntrain = size(training_rows)
+        endif
+        allocate(seen(nrows), source=.false.)
+        halves = 0
+        do i = 1, ntrain
+            row = training_rows(i)
+            if( row < 1 .or. row > nrows ) THROW_HARD('training particle row is outside the project')
+            if( seen(row) ) THROW_HARD('duplicate training particle row')
+            if( build%spproj_field%get_state(row) <= 0 ) THROW_HARD('training particle is inactive')
+            eo = build%spproj_field%get_eo(row)
+            if( eo < 0 .or. eo > 1 ) THROW_HARD('training particle lacks an original even/odd label')
+            halves(eo+1) = halves(eo+1) + 1
+            seen(row) = .true.
+        end do
+        if( ntrain < 100 .or. any(halves < 20) ) &
+            THROW_HARD('experimental fitting needs 100 training rows with at least 20 per original half')
+        if( params%pca_eval_pindfile%strlen() == 0 )then
+            call validate_distinct_physical_rows(build, training_rows)
+            return
+        endif
+        call read_pind_list(params%pca_eval_pindfile%to_char(), self%eval_sel%pinds, self%eval_sel%nptcls)
+        do i = 1, self%eval_sel%nptcls
+            row = self%eval_sel%pinds(i)
+            if( row < 1 .or. row > nrows ) THROW_HARD('evaluation particle row is outside the project')
+            if( seen(row) ) THROW_HARD('evaluation rows overlap training rows or contain duplicates')
+            if( build%spproj_field%get_state(row) <= 0 ) THROW_HARD('evaluation particle is inactive')
+            if( build%spproj_field%get_eo(row) < 0 .or. build%spproj_field%get_eo(row) > 1 ) &
+                THROW_HARD('evaluation particle lacks an original even/odd label')
+            seen(row) = .true.
+        end do
+        call validate_distinct_physical_rows(build, [training_rows,self%eval_sel%pinds])
+    end subroutine prepare_evaluation
+
+    !> Score held-out rows once against the frozen training model and report the noise assumption.
+    subroutine evaluate_predictive( self, params, build )
+        class(flex_pca_application), intent(inout) :: self
+        type(parameters),           intent(inout) :: params
+        type(builder),              intent(inout) :: build
+        real(dp), allocatable :: logp(:)
+        integer, allocatable :: ndof(:)
+        logical, allocatable :: valid(:)
+        integer :: i, funit, io_stat, stats_length, stats_status
+        integer :: statistics_unit, open_status, export_status, write_status, close_status
+        real(dp) :: fixed_sig2
+        character(len=8) :: stats_env
+        logical :: export_statistics
+        character(len=*), parameter :: model_receipt = 'flex_pca_predictive_model.txt'
+        if( self%eval_sel%nptcls == 0 ) return
+        fixed_sig2 = real(params%pca_eval_sig2,dp)
+        stats_env = ''
+        call get_environment_variable('SIMPLE_PCA_EVAL_STATS', stats_env, length=stats_length, status=stats_status)
+        export_statistics = stats_status == 0 .and. stats_length == 3 .and. stats_env == 'yes'
+        write_status = 0
+        if( export_statistics )then
+            call open_observation_export('flex_pca_predictive_unit_statistics.txt', model_receipt, 'heldout', &
+                &self%sess%model%ncomp, self%eval_sel%nptcls, statistics_unit, open_status)
+            if( open_status /= 0 ) THROW_HARD('cannot open predictive reference-statistics export')
+            call evaluate_predictive_rows(params, build, self%sess%model, self%sess%sel, &
+                &self%eval_sel%pinds, fixed_sig2, logp, ndof, valid, &
+                &statistics_row=observe_one, statistics_status=export_status)
+            call close_observation_export(statistics_unit, self%eval_sel%pinds, ndof, valid, close_status)
+            call fopen(funit, file=string(model_receipt), action='WRITE', status='NEW', iostat=io_stat)
+            call fileiochk('flex_pca predictive prior receipt', io_stat)
+            write(funit,'(A)') 'simple_flex_predictive_model 1'
+            write(funit,'(A)') 'scope diagonal_prior_and_sampling; external_manifest_binds_mean_basis_noise_and_rows'
+            write(funit,'(A,I0)') 'rank ', self%sess%model%ncomp
+            write(funit,'(A,3(1X,I0))') 'model_dimensions', self%sess%model%mean_rec%get_ldim()
+            write(funit,'(A,1X,ES26.17E3)') 'model_sampling', real(self%sess%model%mean_rec%get_smpd(),dp)
+            write(funit,'(A,*(1X,ES26.17E3))') 'diagonal_prior', self%sess%model%eigvals
+            write(funit,'(A,A)') 'training_rows ', params%pindfile%to_char()
+            call fclose(funit)
+        else
+            call evaluate_predictive_rows(params, build, self%sess%model, self%sess%sel, &
+                &self%eval_sel%pinds, fixed_sig2, logp, ndof, valid)
+        endif
+        call fopen(funit, file=string('flex_pca_predictive.tsv'), action='WRITE', status='REPLACE', iostat=io_stat)
+        call fileiochk('flex_pca predictive report', io_stat)
+        write(funit,'(A)') '# conditional_transformed_noise_approximation; fixed poses and amplitude=1'
+        write(funit,'(A,ES24.16)') '# fixed_complex_noise_variance=', real(params%pca_eval_sig2,dp)
+        write(funit,'(A,I0)') '# frozen_model_rank=', self%sess%model%ncomp
+        write(funit,'(A,A)') '# training_rows=', params%pindfile%to_char()
+        write(funit,'(A,A)') '# evaluation_rows=', params%pca_eval_pindfile%to_char()
+        write(funit,'(A)') '# project_row logp_nats ndof valid'
+        do i = 1, self%eval_sel%nptcls
+            write(funit,'(I0,1X,ES24.16,1X,I0,1X,L1)') self%eval_sel%pinds(i), logp(i), ndof(i), valid(i)
+        end do
+        call fclose(funit)
+        write(logfhandle,'(A,I0,A,I0,A)') '>>> FLEX_PCA predictive evaluation: ', count(valid), '/', &
+            &size(valid), ' valid held-out rows; conditional transformed-noise approximation'
+        call flush(logfhandle)
+        if( export_statistics )then
+            if( export_status /= 0 .or. write_status /= 0 .or. close_status /= 0 ) &
+                THROW_HARD('predictive reference-statistics export failed; diagnostic artifacts retained')
+            if( count(valid) /= size(valid) ) THROW_HARD('predictive evaluation incomplete; all requested row statuses retained')
+        endif
+        if( count(valid) == 0 ) THROW_HARD('predictive evaluation has no valid rows; diagnostic artifacts retained')
+    contains
+        subroutine observe_one( pind, half, gram, rhs, energy, nu, logdet_noise, row_ndof, status )
+            integer, intent(in) :: pind, half, row_ndof
+            real(dp), intent(in) :: gram(:,:), rhs(:), energy, nu, logdet_noise
+            integer, intent(out) :: status
+            real(dp) :: expected_logdet, tolerance
+            status = write_status
+            if( status /= 0 ) return
+            if( half < 0 .or. half > 1 .or. row_ndof < 2 .or. mod(row_ndof,2) /= 0 )then
+                write_status = 1
+                status = write_status
+                return
+            endif
+            expected_logdet = real(row_ndof,dp)*(log(nu)-log(2._dp))
+            tolerance = 64._dp*epsilon(1._dp)*max(1._dp,abs(expected_logdet))
+            if( abs(logdet_noise-expected_logdet) > tolerance )then
+                write_status = 1
+                status = write_status
+                return
+            endif
+            call write_observation_export(statistics_unit, pind, row_ndof, nu, gram, rhs, energy, status)
+            if( status /= 0 ) write_status = status
+        end subroutine observe_one
+    end subroutine evaluate_predictive
+
     !> The basis and the raw embedding: from the cache (resume) or from the paired fit with its
     !! merge and polish; then one all-N embedding, cached and read
     !! out; then the component reliability and the latent deconvolution.
@@ -193,8 +350,18 @@ contains
                         &rounds%nparts(), ' parts, one part per worker per iteration'
                     call flush(logfhandle)
                 endif
-                call run_flex_pca_paired(params, build, self%plane_store, self%pcg_env, sess%sel, sess%col_sep, &
-                    &sess%neigs_req, sess%model, rounds=rounds)
+                if( params%flex_sp_k > 0 .and. self%eval_sel%nptcls > 0 )then
+                    call run_flex_pca_paired(params, build, self%plane_store, self%pcg_env, sess%sel, sess%col_sep, &
+                        &sess%neigs_req, sess%model, rounds=rounds, eval_pinds=self%eval_sel%pinds, &
+                        &eval_sig2=real(params%pca_eval_sig2,dp))
+                else
+                    call run_flex_pca_paired(params, build, self%plane_store, self%pcg_env, sess%sel, sess%col_sep, &
+                        &sess%neigs_req, sess%model, rounds=rounds)
+                endif
+                if( params%flex_sp_k > 0 )then
+                    call self%plane_store%release
+                    return
+                endif
                 sess%l_paired_states = .true.
                 call sess%clamp_state_axis
                 call self%embed_all(params, build, rounds)

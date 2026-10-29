@@ -547,10 +547,12 @@ contains
         if( whiten )then
             ih = sigma2_half(build%spproj_field%get_eo(iptcl))
             call pad_img%gen_fplane4rec(params%smpd_crop, ctfparms, shift, fplane, grid, half=ih, &
-                &store_transfer=observation_model, observation_model=observation_model)
+                &store_transfer=observation_model, observation_model=observation_model, &
+                &reuse_storage=params%rec_plane_reuse == 'yes')
         else
             call pad_img%gen_fplane4rec(params%smpd_crop, ctfparms, shift, fplane, grid, &
-                &store_transfer=observation_model, observation_model=observation_model)
+                &store_transfer=observation_model, observation_model=observation_model, &
+                &reuse_storage=params%rec_plane_reuse == 'yes')
         endif
         ! the plane claims no frequency beyond the band (padded units)
         if( cap .and. fplane%nyq > 0 ) fplane%nyq = min(fplane%nyq, max(OSMPL_PAD_FAC, OSMPL_PAD_FAC*kfromto(2)))

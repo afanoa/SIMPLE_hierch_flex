@@ -8,8 +8,12 @@ use simple_gridding,   only: kb_stencil_inv_envelope_1d, deapodize3D_inplace
 implicit none
 
 public :: reconstructor, gridding_half_restore, exp_samples, insert_planes_multi
+public :: insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
 private
 #include "simple_local_flags.inc"
+
+integer, parameter :: MAX_INSERT_TARGETS = 4
+integer, parameter :: MAX_INSERT_PLANES = 32
 
 !> Dense outputs produced while restoring one gridding half. The base image is
 !! deliberately undeapodized because FSC and cFAR are estimated on it;
@@ -571,6 +575,180 @@ contains
         end subroutine kb_apod_vecs_3d_fast
 
     end subroutine insert_plane_oversamp
+
+    ! Bounded ordered batch: one team shares geometry across targets without changing per-map addition order.
+    subroutine insert_planes_targets( recs, slots, se, orientations, fpls, w, nrecords )
+        use simple_math, only: ceil_div, floor_div
+        class(reconstructor), intent(inout) :: recs(:)
+        integer,              intent(in)    :: slots(:)
+        class(sym),           intent(inout) :: se
+        class(ori),           intent(inout) :: orientations(:)
+        class(fplane_type),   intent(in)    :: fpls(:)
+        real,                 intent(in)    :: w(:,:)
+        integer,              intent(in)    :: nrecords
+        type(ori) :: o_sym
+        complex   :: comp(MAX_INSERT_TARGETS), cmplx_raw
+        real      :: rotmats(se%get_nsym(),3,3,MAX_INSERT_PLANES), loc(3), hrow(3), ctfval(MAX_INSERT_TARGETS)
+        integer, parameter :: WDIM = 2 * ceiling(KBWINSZ - 0.5) + 1
+        real      :: wx(WDIM), wy(WDIM), wz(WDIM), ww, ctfsq_raw
+        real      :: r11, r12, r13, r21, r22, r23
+        integer   :: win(2, 3), h, k, l, nsym, isym, iwinsz, stride, fpllims_pd(3, 2)
+        integer   :: fpllims(3, 2,MAX_INSERT_PLANES), pf, ix, iy, iz, hx, ky, mz, i
+        integer   :: nyq_disk, h_sq, k_max_h, k_lo, k_hi, q, r0, nt
+        real      :: source_scale(MAX_INSERT_TARGETS,MAX_INSERT_PLANES), eps_norm, inv_wdim
+        nt = size(slots)
+        if( nt < 1 .or. nt > MAX_INSERT_TARGETS .or. size(w,1) /= nt ) THROW_HARD('invalid target count; insert_planes_targets')
+        if( nrecords < 1 .or. nrecords > MAX_INSERT_PLANES ) THROW_HARD('invalid batch size; insert_planes_targets')
+        if( min(size(orientations),size(fpls),size(w,2)) < nrecords ) THROW_HARD('batch arrays too small; insert_planes_targets')
+        if( any(slots < 1) .or. any(slots > size(recs)) ) THROW_HARD('target slot outside array; insert_planes_targets')
+        r0 = slots(1)
+        do q = 1, nt
+            if( any(slots(:q-1) == slots(q)) ) THROW_HARD('duplicate target slot; insert_planes_targets')
+            if( .not. allocated(recs(slots(q))%cmat_exp) ) THROW_HARD('missing expanded target; insert_planes_targets')
+            if( .not. allocated(recs(slots(q))%rho_exp) ) THROW_HARD('missing density target; insert_planes_targets')
+            if( recs(slots(q))%wdim /= WDIM .or. recs(slots(q))%nyq /= recs(r0)%nyq ) &
+                THROW_HARD('incompatible target kernel; insert_planes_targets')
+            if( any(recs(slots(q))%lims /= recs(r0)%lims) ) THROW_HARD('incompatible target limits; insert_planes_targets')
+            if( any(lbound(recs(slots(q))%cmat_exp) /= lbound(recs(r0)%cmat_exp)) .or. &
+                &any(ubound(recs(slots(q))%cmat_exp) /= ubound(recs(r0)%cmat_exp)) ) &
+                THROW_HARD('incompatible target lattice; insert_planes_targets')
+            if( any(lbound(recs(slots(q))%rho_exp) /= lbound(recs(r0)%rho_exp)) .or. &
+                &any(ubound(recs(slots(q))%rho_exp) /= ubound(recs(r0)%rho_exp)) ) &
+                THROW_HARD('incompatible target density; insert_planes_targets')
+        end do
+        if( all(w(:,:nrecords) <= 0.) ) return
+        iwinsz = ceiling(KBWINSZ - 0.5)
+        ! Separate h-lines by a full window width along at least one target axis.
+        stride = ceiling(sqrt(3.0) * real(recs(r0)%wdim))
+        nsym   = se%get_nsym()
+        pf     = OSMPL_PAD_FAC
+        source_scale(:nt,:nrecords) = real(pf*pf) * w(:,:nrecords)
+        ! Symmetry/pose setup stays outside the team; only a bounded geometry batch is retained.
+        do i = 1, nrecords
+            rotmats(1,:,:,i) = orientations(i)%get_mat()
+            do isym = 2, nsym
+                call se%apply(orientations(i), isym, o_sym)
+                rotmats(isym,:,:,i) = o_sym%get_mat()
+            end do
+            fpllims_pd        = fpls(i)%frlims
+            fpllims(:,:,i)    = fpllims_pd
+            fpllims(1,1,i)    = ceil_div (fpllims_pd(1,1), pf)
+            fpllims(1,2,i)    = floor_div(fpllims_pd(1,2), pf)
+            fpllims(2,1,i)    = ceil_div (fpllims_pd(2,1), pf)
+            fpllims(2,2,i)    = floor_div(fpllims_pd(2,2), pf)
+        end do
+        eps_norm     = epsilon(1.0)
+        inv_wdim     = 1.0 / real(recs(r0)%wdim)
+        ! integer disk gate: bit-equivalent to nint(sqrt(h*h+k*k)) > nyq
+        nyq_disk = recs(r0)%nyq * (recs(r0)%nyq + 1)
+        ! KB interpolation / insertion
+        !$omp parallel default(shared) shared(recs,fpls) private(h,k,l,h_sq,k_max_h,k_lo,k_hi,comp,cmplx_raw,&
+        !$omp& ctfsq_raw,ctfval,wx,wy,wz,ww,win,loc,hrow,r11,r12,r13,r21,r22,r23,&
+        !$omp& isym,ix,iy,iz,hx,ky,mz,q,i) proc_bind(close)
+        do i = 1, nrecords
+            if( all(w(:,i) <= 0.) ) cycle
+            do isym = 1, nsym
+                r11 = rotmats(isym,1,1,i); r12 = rotmats(isym,1,2,i); r13 = rotmats(isym,1,3,i)
+                r21 = rotmats(isym,2,1,i); r22 = rotmats(isym,2,2,i); r23 = rotmats(isym,2,3,i)
+                do l = 0, stride-1
+                    !$omp do schedule(static,1)
+                    do h = fpllims(1,1,i)+l, fpllims(1,2,i), stride
+                        h_sq = h*h
+                        if( h_sq > nyq_disk ) cycle
+                        k_max_h = int(sqrt(real(nyq_disk - h_sq)))
+                        k_lo    = max(fpllims(2,1,i), -k_max_h)
+                        k_hi    = min(fpllims(2,2,i),  k_max_h)
+                        hrow(1) = real(h) * r11
+                        hrow(2) = real(h) * r12
+                        hrow(3) = real(h) * r13
+                        do k = k_lo, k_hi
+                            ! gen_fplane4rec stores only k<=0, on the native lattice; Friedel symmetry for k>0.
+                            if( k <= 0 )then
+                                cmplx_raw = fpls(i)%cmplx_plane(h,k)
+                                ctfsq_raw = fpls(i)%ctfsq_plane(h,k)
+                            else
+                                cmplx_raw = conjg(fpls(i)%cmplx_plane(-h,-k))
+                                ctfsq_raw = fpls(i)%ctfsq_plane(-h,-k)
+                            endif
+                            if( abs(real(cmplx_raw)) + abs(aimag(cmplx_raw)) <= TINY .and. &
+                                ctfsq_raw <= TINY ) cycle
+                            ! Source samples and interpolation geometry use the native Fourier lattice.
+                            loc(1) = hrow(1) + real(k) * r21
+                            loc(2) = hrow(2) + real(k) * r22
+                            loc(3) = hrow(3) + real(k) * r23
+                            win(1,:) = nint(loc)
+                            win(2,:) = win(1,:) + iwinsz
+                            win(1,:) = win(1,:) - iwinsz
+                            ! no need to update outside the non-redundant Friedel limits consistent with compress_exp
+                            if( win(2,1) < recs(r0)%lims(1,1) ) cycle
+                            do q = 1, nt
+                                comp(q)   = source_scale(q,i) * cmplx_raw
+                                ctfval(q) = w(q,i) * ctfsq_raw
+                            end do
+                            call kb_apod_vecs_3d_fast(loc, wx, wy, wz, recs(r0)%kbwin, recs(r0)%wdim)
+                            do iz = 1, recs(r0)%wdim
+                                mz = win(1,3) + iz - 1
+                                do iy = 1, recs(r0)%wdim
+                                    ky = win(1,2) + iy - 1
+                                    do ix = 1, recs(r0)%wdim
+                                        hx = win(1,1) + ix - 1
+                                        ww = wx(ix) * (wy(iy) * wz(iz))
+                                        do q = 1, nt
+                                            if( w(q,i) <= 0. ) cycle
+                                            recs(slots(q))%cmat_exp(hx,ky,mz) = recs(slots(q))%cmat_exp(hx,ky,mz) + comp(q) * ww
+                                            recs(slots(q))%rho_exp( hx,ky,mz) = recs(slots(q))%rho_exp( hx,ky,mz) + ctfval(q) * ww
+                                        end do
+                                    end do
+                                end do
+                            end do
+                        end do
+                    end do
+                    !$omp end do
+                end do
+            end do
+        end do
+        !$omp end parallel
+        call o_sym%kill
+
+    contains
+
+        subroutine kb_apod_vecs_3d_fast( point, vx, vy, vz, kernel, nwin )
+            use simple_kbinterpol, only: kbinterpol
+            type(kbinterpol), intent(in) :: kernel
+            integer, intent(in) :: nwin
+            real, intent(in)  :: point(3)
+            real, intent(out) :: vx(:), vy(:), vz(:)
+            integer :: iw, win_lo(3)
+            real    :: base(3), kernel_values(3), sx, sy, sz
+            win_lo = nint(point) - iwinsz
+            base   = real(win_lo) - point
+            do iw = 1, nwin
+                kernel_values    = kernel%apod_fast(base + real(iw-1))
+                vx(iw) = kernel_values(1)
+                vy(iw) = kernel_values(2)
+                vz(iw) = kernel_values(3)
+            end do
+            sx = sum(vx)
+            sy = sum(vy)
+            sz = sum(vz)
+            if( abs(sx) > eps_norm )then
+                vx = vx * (1.0 / sx)
+            else
+                vx = inv_wdim
+            endif
+            if( abs(sy) > eps_norm )then
+                vy = vy * (1.0 / sy)
+            else
+                vy = inv_wdim
+            endif
+            if( abs(sz) > eps_norm )then
+                vz = vz * (1.0 / sz)
+            else
+                vz = inv_wdim
+            endif
+        end subroutine kb_apod_vecs_3d_fast
+
+    end subroutine insert_planes_targets
 
     !>  Floor rho at its shell mean / frac (default 1000, RELION-style; clamped >= 1) before
     !!  sampl_dens_correct, which divides unfloored. Needed for kernel-weighted (flex) state maps,

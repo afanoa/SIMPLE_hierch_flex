@@ -30,9 +30,13 @@ LAYERS = {
     "simple_flex_pca_project_gateway": 1,
     "simple_flex_pca_embedding_io": 1,
     # L2: probe-fit state and services.
+    "simple_flex_pca_observation_export": 2,
     "simple_flex_pca_fit_types": 2,
     "simple_flex_pca_mstep": 2,
     "simple_flex_pca_posterior": 2,
+    "simple_flex_shared_private": 2,
+    "simple_flex_shared_private_embed": 2,
+    "simple_flex_predictive": 2,
     "simple_flex_probe_fit": 2,
     "simple_flex_pca_basis": 2,
     "simple_flex_pca_embed": 2,
@@ -40,6 +44,8 @@ LAYERS = {
     "simple_flex_pca_fit_driver": 2,
     # L3: state inference and reconstruction.
     "simple_flex_pca_weights": 3,
+    "simple_flex_ancestral_init": 3,
+    "simple_flex_supported_extrema": 3,
     "simple_flex_pca_merge": 3,
     # L4-L6: application services, application and strategy.
     "simple_flex_pca_state_service": 4,

@@ -8,6 +8,7 @@ use simple_flex_pca_polar,                only: polar_grid_build, polar_project_
 use simple_flex_reconstructor_latent_ops, only: planes_batch_load
 use simple_reconstructor,                 only: exp_samples
 use simple_flex_pca_posterior,            only: probe_solve_plain, probe_solve_mix, mcfa_init, mcfa_condition, mcfa_mstep
+use simple_flex_shared_private, only: sp_initialize, sp_update
 use simple_matcher_3Drec,                 only: init_rec, cleanup_rec_buffers
 use simple_matcher_ptcl_io,               only: prepimgbatch, ptcl_read_session
 implicit none
@@ -230,6 +231,10 @@ contains
         if( fit%history%l_mix_used )then
             ! ---- MCFA E-step via the ONE shared solver (probe_solve_mix) ----
             call probe_solve_mix(fit, ithr, i, a, ldA, lok, nll_mix_add)
+            if( fit%spec%l_sp_req .and. .not. lok )then
+                fit%iter%sp_status_thr(ithr) = 1
+                return
+            endif
             if( lok ) fit%iter%nll_thr(ithr) = fit%iter%nll_thr(ithr) + nll_mix_add
         else
             call probe_solve_plain(fit, ithr, a, ldA, lok, qml)
@@ -261,6 +266,11 @@ contains
         fit%diag%gam_dbg(4,ithr) = fit%diag%gam_dbg(4,ithr) + a
         ! residual observation r_i = y - a*(T mu) in place (transfer/ctfsq intact for backprojection)
         call subtract_mean_banded(fpl, fit%iter%mean_fpl(ithr), real(a), fit%estep%nyqr_es)
+        ! Basis normal equations need amplitude-scaled moments; latent and mixture sums stay unscaled.
+        if( fit%spec%l_sp_req )then
+            fit%iter%zbatch(:,i) = a*fit%iter%zbatch(:,i)
+            fit%iter%dens(:,:,i) = (a*a)*fit%iter%dens(:,:,i)
+        endif
         twp2 = omp_get_wtime()
         ! This bucket is the complete per-particle tail: posterior solve,
         ! posterior moments, accumulation bookkeeping and residual subtraction.
@@ -338,6 +348,9 @@ contains
         class(flex_probe_fit),  intent(inout) :: fit
         integer,                intent(in)    :: it_eff, nthr
         integer :: q, kk2
+        if( fit%spec%l_sp_req )then
+            if( any(fit%iter%sp_status_thr /= 0) ) THROW_HARD('shared/private posterior rejected invalid model/statistics')
+        endif
         ! reduce the EM Gamma accumulator before ncomp is replaced below; Gamma travels between
         ! parts as a sum and is divided by the reduced nval
         fit%iter%nval = sum(fit%iter%nval_thr)
@@ -359,6 +372,40 @@ contains
         ! MCFA: mixture M-step, or its (re)initialisation from the current latents; runs on the
         ! master with this iteration's accumulators complete
         if( fit%spec%l_mix_req .and. .not. rounds%is_worker() )then
+            if( fit%spec%l_sp_req )then
+                block
+                    real(dp), allocatable :: sp_count(:), sp_first(:,:), sp_second(:,:,:)
+                    integer :: sp_status, sp_rank
+                    if( rounds%nparts() > 1 ) THROW_HARD('shared/private mixture requires shared-memory fitting')
+                    sp_rank = fit%spec%sp_shared+fit%spec%sp_private
+                    if( fit%model%ncomp /= fit%spec%sp_union ) THROW_HARD('shared/private union rank changed')
+                    if( fit%history%l_mix_active )then
+                        sp_count = sum(fit%history%mxa_sr,dim=2)
+                        sp_first = sum(fit%history%mxa_sm,dim=3)
+                        sp_second = sum(fit%history%mxa_smm,dim=4)
+                        call sp_update(fit%model%ncomp,sp_rank,fit%spec%kmix,sp_count,sp_first,sp_second, &
+                            &fit%history%sp_loading,fit%history%mix_xi,fit%history%sp_sigma,fit%history%mix_pi,sp_status)
+                        if( sp_status /= 0 ) THROW_HARD('shared/private full-moment update failed')
+                        if( abs(sum(sp_count)-real(fit%iter%nval,dp)) > 1.d-8*max(1,fit%iter%nval) ) &
+                            THROW_HARD('shared/private responsibilities do not count each image once')
+                    else if( it_eff >= fit%spec%n_mix_warm )then
+                        allocate(fit%history%mix_xi(fit%model%ncomp,fit%spec%kmix),fit%history%mix_pi(fit%spec%kmix), &
+                            &fit%history%sp_loading(fit%model%ncomp,sp_rank,fit%spec%kmix), &
+                            &fit%history%sp_sigma(sp_rank,sp_rank,fit%spec%kmix))
+                        call sp_initialize(size(fit%model%z,1),fit%model%ncomp,fit%spec%kmix, &
+                            &fit%spec%sp_shared,fit%spec%sp_private,fit%model%z,fit%history%sp_loading, &
+                            &fit%history%mix_xi,fit%history%sp_sigma,fit%history%mix_pi,sp_status)
+                        if( sp_status /= 0 ) THROW_HARD('shared/private warm-start lacks supported covariance rank')
+                        fit%history%l_mix_active = .true.
+                    endif
+                    fit%history%ldOm_mix = 0.d0
+                    if( fit%history%l_mix_active )then
+                        write(logfhandle,'(A,I0,A,I0,A,I0,A,F9.5)') '>>> FLEX_PCA SHARED_PRIVATE it=',it_eff, &
+                            &' K=',fit%spec%kmix,' active_rank=',sp_rank,' pi_max=',maxval(fit%history%mix_pi)
+                        call flush(logfhandle)
+                    endif
+                end block
+            else
             if( fit%history%l_mix_active )then
                 block
                     real(dp), allocatable :: rr_sr(:), rr_sm(:,:), rr_smm(:,:,:), rr_sai(:,:)
@@ -408,6 +455,7 @@ contains
                     &'  |xi|_max=',sqrt(maxval(sum(fit%history%mix_xi**2, dim=1)))
                 call flush(logfhandle)
             endif
+            endif ! default tied-MCFA branch
         endif
         call fit%mstep%reduce_local
     end subroutine fit_iter_reduce

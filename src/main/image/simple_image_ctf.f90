@@ -228,17 +228,18 @@ contains
     !! lattice. grid is the memoised plane grid of the padded box (shell table and, when whitening, the two
     !! spectra resampled to it); half selects the particle's spectrum and switches the whitening on.
     module subroutine gen_fplane4rec( self, smpd_crop, ctfparms, shift, fplane, grid, half, &
-        &store_transfer, observation_model )
+        &store_transfer, observation_model, reuse_storage )
         use simple_math,          only: ceil_div, floor_div
         class(image),      intent(inout) :: self
         real,              intent(in)    :: smpd_crop
         class(ctfparams),  intent(in)    :: ctfparms
         real,              intent(in)    :: shift(2)
-        type(fplane_type), intent(out)   :: fplane
+        type(fplane_type), intent(inout) :: fplane
         type(fplane_grid), intent(in)    :: grid
         integer, optional, intent(in)    :: half
         logical, optional, intent(in)    :: store_transfer
         logical, optional, intent(in)    :: observation_model
+        logical, optional, intent(in)    :: reuse_storage
         type(ctf)                :: tfun
         type(ctfvars)            :: ctfvals
         complex(c_float_complex) :: c, transfer, phase, w1, w2, ph0, ph_h, ph_k
@@ -251,10 +252,12 @@ contains
         integer :: box_croppd
         integer :: hloop_min, hloop_max, kloop_min, sample_stride
         integer :: hlo_nat, hhi_nat, klo_nat
-        logical :: l_ctf, l_flip
+        logical :: l_ctf, l_flip, l_reuse
         integer :: r2
         character(len=:), allocatable :: msg
         l_ml_reg = present(half)
+        l_reuse = .false.
+        if( present(reuse_storage) ) l_reuse = reuse_storage
         l_store_transfer = .false.
         if( present(store_transfer) ) l_store_transfer = store_transfer
         l_observation_model = .false.
@@ -279,10 +282,6 @@ contains
         ! use redundant logical limits (mode 3) so negative h exists for Friedel access (-h,-k)
         fplane%frlims = fiterator%loop_lims(3)
         fplane%nyq    = fiterator%get_lfny(1)
-        ! matrices
-        if( allocated(fplane%cmplx_plane) ) deallocate(fplane%cmplx_plane)
-        if( allocated(fplane%ctfsq_plane) ) deallocate(fplane%ctfsq_plane)
-        if( allocated(fplane%transfer_plane) ) deallocate(fplane%transfer_plane)
         ! Only every OSMPL_PAD_FAC-th padded sample is used, so the planes are stored on the native
         ! lattice: index (h,k) holds padded sample (h*OSMPL_PAD_FAC, k*OSMPL_PAD_FAC). Only k<=0 is
         ! stored (Friedel symmetry gives the rest).
@@ -291,12 +290,30 @@ contains
         hlo_nat = ceil_div (hmin, OSMPL_PAD_FAC)
         hhi_nat = floor_div(hmax, OSMPL_PAD_FAC)
         klo_nat = ceil_div (kmin, OSMPL_PAD_FAC)
-        allocate(fplane%cmplx_plane(hlo_nat:hhi_nat, klo_nat:0), &
-        fplane%ctfsq_plane(hlo_nat:hhi_nat, klo_nat:0))
-        if( l_store_transfer ) allocate(fplane%transfer_plane(hlo_nat:hhi_nat, klo_nat:0))
-        fplane%cmplx_plane = cmplx(0.,0.)
-        fplane%ctfsq_plane = 0.
-        if( l_store_transfer ) fplane%transfer_plane = cmplx(0.,0.)
+        ! Retain storage only at identical bounds; every element is assigned below, including zeros.
+        if( allocated(fplane%cmplx_plane) )then
+            if( .not. l_reuse .or. any(lbound(fplane%cmplx_plane) /= [hlo_nat,klo_nat]) .or. &
+                &any(ubound(fplane%cmplx_plane) /= [hhi_nat,0]) ) deallocate(fplane%cmplx_plane)
+        endif
+        if( allocated(fplane%ctfsq_plane) )then
+            if( .not. l_reuse .or. any(lbound(fplane%ctfsq_plane) /= [hlo_nat,klo_nat]) .or. &
+                &any(ubound(fplane%ctfsq_plane) /= [hhi_nat,0]) ) deallocate(fplane%ctfsq_plane)
+        endif
+        if( allocated(fplane%transfer_plane) )then
+            if( .not. l_reuse .or. .not. l_store_transfer .or. &
+                &any(lbound(fplane%transfer_plane) /= [hlo_nat,klo_nat]) .or. &
+                &any(ubound(fplane%transfer_plane) /= [hhi_nat,0]) ) deallocate(fplane%transfer_plane)
+        endif
+        if( .not. allocated(fplane%cmplx_plane) ) allocate(fplane%cmplx_plane(hlo_nat:hhi_nat,klo_nat:0))
+        if( .not. allocated(fplane%ctfsq_plane) ) allocate(fplane%ctfsq_plane(hlo_nat:hhi_nat,klo_nat:0))
+        if( l_store_transfer )then
+            if( .not. allocated(fplane%transfer_plane) ) allocate(fplane%transfer_plane(hlo_nat:hhi_nat,klo_nat:0))
+        endif
+        if( .not. l_reuse )then
+            fplane%cmplx_plane = cmplx(0.,0.)
+            fplane%ctfsq_plane = 0.
+            if( l_store_transfer ) fplane%transfer_plane = cmplx(0.,0.)
+        endif
         ! -----------------------
         ! CTF flags
         ! -----------------------

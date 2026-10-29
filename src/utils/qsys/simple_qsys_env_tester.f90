@@ -22,11 +22,80 @@ contains
         write(*,'(A)') '**** running all qsys environment tests ****'
         call test_installation_path_policy()
         call test_missing_project_scheduler()
+        call test_base_only_worker_claims()
+        call test_polymorphic_backend_name()
         call test_active_balanced_split()
         call test_active_balanced_qsys_parts()
         call test_warmup_owner_lifetime()
         call test_forget_warmup_envs()
     end subroutine run_all_qsys_env_tests
+
+    subroutine test_base_only_worker_claims()
+        class(parameters), allocatable :: params
+        type(qsys_env) :: qenv
+        type(string) :: local_simple_path
+        integer :: ios
+        local_simple_path = simple_getenv('SIMPLE_PATH', ios)
+        call assert_int(0, ios, 'SIMPLE_PATH is set for base-only queue construction')
+        if( ios /= 0 ) return
+        allocate(params)
+        params%prg = 'qsys_base_only'
+        params%projfile = ''
+        params%nptcls = 1
+        params%nparts = 1
+        params%ncunits = 1
+        params%nthr = 1
+        params%workers = 2
+        params%worker_nthr = 4
+        params%worker_server = ''
+        call qenv%new(params, 1, qsys_name=string('local_worker'), qsys_nthr=3, &
+            &qsys_memory=12345, base_only=.true., strict_dispatch=.true.)
+        call assert_string_eq('local', qenv%qdescr%get('qsys_name'), 'controllers resolve the base backend')
+        call assert_string_eq('3', qenv%qdescr%get('job_cpus_per_task'), 'controller threads retain their own claim')
+        call assert_string_eq('12345', qenv%qdescr%get('job_memory_per_task'), 'memory override reaches job metadata')
+        call assert_int(0, qenv%get_persistent_worker_nthr(), 'base-only construction launches no worker server')
+        call qenv%kill()
+        call qenv%kill()
+        params%script = 'yes'
+        call qenv%new(params, 1, qsys_name=string('local_worker'), qsys_memory=23456)
+        call assert_int(0, qenv%get_persistent_worker_nthr(), 'script-only worker configuration launches no server')
+        call assert_string_eq('23456', qenv%qdescr%get('job_memory_per_task'), 'script mode retains the memory claim')
+        call qenv%kill()
+        deallocate(params)
+    end subroutine test_base_only_worker_claims
+
+    !> Resolve the assembly owner's backend after construction and thread-budget reinitialization.
+    subroutine test_polymorphic_backend_name()
+        class(parameters), allocatable :: params
+        class(qsys_env), allocatable :: qenv
+        type(string) :: backend, local_simple_path, expected_threads
+        integer :: ios, nthr
+        local_simple_path = simple_getenv('SIMPLE_PATH', ios)
+        call assert_int(0, ios, 'SIMPLE_PATH is set for polymorphic queue construction')
+        if( ios /= 0 ) return
+        allocate(params, qenv)
+        params%prg = 'qsys_backend_name'
+        params%projfile = ''
+        params%nptcls = 2
+        params%nparts = 2
+        params%ncunits = 2
+        params%nthr = 9
+        params%worker_server = ''
+        do nthr = 9, 4, -5
+            call qenv%new(params, 2, qsys_name=string('local_worker'), qsys_nthr=nthr, &
+                &qsys_memory=12345, base_only=.true., strict_dispatch=.true.)
+            backend = string(qenv%get_qsys())
+            expected_threads = int2str(nthr)
+            call assert_string_eq('local', backend, 'polymorphic queue returns its canonical base backend')
+            call assert_string_eq(expected_threads%to_char(), qenv%qdescr%get('job_cpus_per_task'), &
+                &'backend lookup preserves the updated thread claim')
+            call assert_int(0, qenv%get_persistent_worker_nthr(), 'backend lookup starts no persistent workers')
+        enddo
+        call qenv%kill()
+        call backend%kill()
+        call expected_threads%kill()
+        deallocate(qenv, params)
+    end subroutine test_polymorphic_backend_name
 
     !> a forked stream stage forgets its parent's warm-up registrants
     subroutine test_forget_warmup_envs()

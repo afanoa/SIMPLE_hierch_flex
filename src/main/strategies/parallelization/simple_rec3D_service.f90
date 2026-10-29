@@ -260,7 +260,7 @@ contains
                 endif
             endif
         end do
-        call run_volassemble(cline_volassemble)
+        call run_volassemble(cline_volassemble, worker_nthr_limit=params%nthr)
         call cline_volassemble%kill
         call volname%kill
         call vol_in%kill

@@ -36,6 +36,8 @@ type :: flex_fit_spec
     real(dp) :: conv_thresh = 0.d0
     logical :: l_mix_req = .false.
     integer :: kmix = 0, n_mix_warm = 3
+    logical :: l_sp_req = .false.
+    integer :: sp_shared = 0, sp_private = 0, sp_union = 0
     integer :: kfr_ann(2) = 0
     real :: dstep_ann = 0., lp_it = 0.
     logical :: l_deflate_mean = .false.
@@ -53,6 +55,7 @@ type :: flex_fit_history
     logical :: l_mix_used = .false.
     real(dp) :: ldOm_mix = 0.d0, ldOm_used = 0.d0
     real(dp), allocatable :: mix_xi(:,:), mix_Om(:,:), mix_Ominv(:,:), mix_pi(:)
+    real(dp), allocatable :: sp_loading(:,:,:), sp_sigma(:,:,:)
     real(dp), allocatable :: mix_Omxi(:,:), mix_xiOx(:), mix_lpi(:)
     real(dp), allocatable :: rhs0th(:,:), mkth(:,:,:), lwth(:,:), rkth(:,:)
     real(dp), allocatable :: mxa_sr(:,:), mxa_sm(:,:,:), mxa_smm(:,:,:,:), mxa_sainv(:,:,:)
@@ -87,6 +90,7 @@ type :: flex_fit_iter
     logical,  allocatable :: valid(:), valid_e(:), valid_o(:)
     real(dp), allocatable :: gam_thr(:,:), gam_acc(:), gam_sum(:)
     integer,  allocatable :: nval_thr(:)
+    integer,  allocatable :: sp_status_thr(:)
     real(dp) :: nll_tot = 0.d0
     integer :: nval = 0
     type(fplane_type), allocatable :: basis_fpls(:,:), mean_fpl(:)
@@ -214,12 +218,16 @@ contains
         call self%fprefix%kill
         call self%meta_fname%kill
         self%id = 0; self%npp = 0
+        self%l_sp_req = .false.
+        self%sp_shared = 0; self%sp_private = 0; self%sp_union = 0
     end subroutine flex_fit_spec_kill
 
     subroutine flex_fit_history_kill( self )
         class(flex_fit_history), intent(inout) :: self
         integer :: q
         ! ---- MCFA mixture state (see the fit's lifecycle contract) ----
+        if( allocated(self%sp_loading) ) deallocate(self%sp_loading)
+        if( allocated(self%sp_sigma) ) deallocate(self%sp_sigma)
         if( allocated(self%mix_xi)   ) deallocate(self%mix_xi)
         if( allocated(self%mix_Om)   ) deallocate(self%mix_Om)
         if( allocated(self%mix_Ominv)) deallocate(self%mix_Ominv)
@@ -288,6 +296,7 @@ contains
         if( allocated(self%gam_acc)) deallocate(self%gam_acc)
         if( allocated(self%gam_sum)) deallocate(self%gam_sum)
         if( allocated(self%nval_thr)) deallocate(self%nval_thr)
+        if( allocated(self%sp_status_thr)) deallocate(self%sp_status_thr)
         if( allocated(self%mean_fpl) )then
             do ithr = 1, size(self%mean_fpl)
                 call cleanup_plane(self%mean_fpl(ithr))

@@ -47,6 +47,16 @@ contains
         &'simple_exec',&
         &.true., &
         &visibility=UI_VIS_STANDARD, display_name='Covariance Heterogeneity States')
+        call flex_pca%add_input(UI_COMP, 'state_assembly', 'num', 'Concurrent state assemblies', &
+            &'Opt-in weighted gridding delivery; bounded by particle parts, zero keeps serial assembly', &
+            &'jobs{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call flex_pca%add_input(UI_COMP, 'assembly_mem', 'num', 'Memory per state assembly', &
+            &'Explicit per-state memory request for concurrent assembly', &
+            &'MB{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call flex_pca%add_input(UI_COMP, 'rec_plane_reuse', 'binary', 'Reuse Fourier plane buffers', &
+            &'Reuse native FLEX and gridding plane storage while recomputing all values(yes|no)', &
+            &'', .false., 'no', visibility=UI_VIS_DEVELOPER, &
+            &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call flex_pca%add_input(UI_IMG, 'vol1', 'file', &
             'Consensus mean volume', 'Fixed mean subtracted from every particle; when omitted, the &
             &project consensus map (out segment, state 1) at native sampling is used', &
@@ -66,6 +76,14 @@ contains
             &a value given with preimage_auto=yes is honoured as the ceiling', &
             'max # states 3-32', .false., 4.0, &
         &visibility=UI_VIS_STANDARD, preserve_default=.true.)
+        call flex_pca%add_input(UI_FILT, 'flex_sp_k', 'num', 'Shared/private components', &
+            'Experimental fit-only covariance model: zero disables it; K>=2 writes two separate native &
+            &fits from the original project, with optional full-prior held-out scores. Shared-memory only; no state delivery.', &
+            'e.g. 0', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call flex_pca%add_input(UI_FILT, 'flex_sp_shared', 'num', 'Shared covariance rank', &
+            'Shared rank q. The full union rank must satisfy neigs=q+K*r+K-1 with integer private rank r>=1. &
+            &Use q=0 for the independent control; cached-model resume is unsupported.', &
+            'e.g. 0', .false., 0., visibility=UI_VIS_DEVELOPER)
         call flex_pca%add_input(UI_FILT, 'preimage_auto', 'binary', &
             'Determine the state count automatically (default no)', &
             'Raises the state ceiling to 8 (unless npreimages is given) and enables the two-gate merge, &
@@ -207,6 +225,17 @@ contains
         &'One input-project row per project row when the project is a cut of it (a hetero_tree node): the paired fits'' &
         &half split keys on these rows, so a cut splits its particles as the full project does', 'e.g. rows.txt', &
         &.false., '', visibility=UI_VIS_ADVANCED)
+        call flex_pca%add_input(UI_FILE, 'pindfile', 'file', 'Training particle rows', &
+            'Optional explicit training selection: one active row of the original project per line.', &
+            'e.g. training_rows.txt', .false., '', visibility=UI_VIS_DEVELOPER)
+        call flex_pca%add_input(UI_FILE, 'pca_eval_pindfile', 'file', 'Held-out particle rows', &
+            'Disjoint evaluation rows for a fresh shared-memory fit with explicit training rows. Writes &
+            &conditional transformed-noise predictive scores and ends before state inference and delivery.', &
+            'e.g. heldout_rows.txt', .false., '', visibility=UI_VIS_DEVELOPER)
+        call flex_pca%add_input(UI_FILT, 'pca_eval_sig2', 'num', 'Fixed evaluation noise variance', &
+            'Positive complex noise variance fixed outside evaluation and shared across all candidate models. &
+            &Evaluation uses fixed poses and unit amplitude without fitting the held-out particles.', &
+            'e.g. 1.0', .false., 0., visibility=UI_VIS_DEVELOPER)
         call flex_pca%add_input(UI_COMP, nparts, required_override=.false., &
             group="compute", visibility=UI_VIS_ADVANCED)
         call flex_pca%add_input(UI_COMP, nthr, group="compute", visibility=UI_VIS_STANDARD)
@@ -486,9 +515,21 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call state_mergeup%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
         &'Fourier-cropped box of the test; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
         &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call state_mergeup%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
+        &'States whose high-resolution signal per particle falls under the screen''s threshold are set aside as junk; no &
+        &logs the screen and keeps every state(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call state_mergeup%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call state_mergeup%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
         call state_mergeup%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call state_mergeup%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
+        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call state_mergeup%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
+        &'Prepare each particle''s fixed interpolation geometry once for all candidate maps(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call add_ui_program('state_mergeup', state_mergeup, prgtab, UI_CATEGORY)
     end subroutine new_state_mergeup
 
@@ -500,9 +541,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'is a program that tests the states of a project as one node on the even and odd particles: states without &
         &high-resolution signal are set aside as junk, every pair of states is tested at the equal N of its smaller &
         &member with group maps docked to the other half, against a label-shuffle null stratified by view and defocus; &
-        &the merged groups are refined by a cross-half EM and re-tested in the band beyond the EM band. With a focus mask &
-        &every map is compared inside it. Writes the supported groups per particle to split_children.txt and the junk &
-        &states to split_junk.txt',&
+        &the merged groups are refined by a cross-half EM and re-tested in the band beyond the EM band, where a pair is kept &
+        &at a z over the shuffle null above the Bonferroni threshold of split_ntests tests. With a focus mask every map is &
+        &compared inside it. Writes the supported groups per particle to split_children.txt and the junk states to &
+        &split_junk.txt',&
         &'simple_exec',&
         &.true.,&
         &visibility=UI_VIS_ADVANCED, display_name='State Split Test')
@@ -518,9 +560,32 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         call state_split%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
         &'Fourier-cropped box of the test; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
         &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call state_split%add_input(UI_PARM, 'split_ntests', 'num', 'Split tests corrected for', &
+        &'The re-test beyond the EM band is Bonferroni-corrected at alpha 1/21 over this many split tests, its z taken &
+        &against the mean and sd of a shuffle null of 20 shuffles, extended to 50 while a merge is within its uncertainty; &
+        &hetero_tree passes 2 x root particles / minpop - 1{1}', 'tests{1}', &
+        &.false., 1., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call state_split%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
+        &'States whose high-resolution signal per particle falls under the screen''s threshold are set aside as junk; no &
+        &logs the screen and keeps every state(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call state_split%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call state_split%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
         call state_split%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call state_split%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
+        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call state_split%add_input(UI_COMP, 'merge_insert_audit', 'binary', 'Export EM wrapper acceptance arrays', &
+        &'Write production EM input identities and maps after finish before docking; diagnostic output only(yes|no)', &
+        &'', .false., 'no', visibility=UI_VIS_DEVELOPER, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call state_split%add_input(UI_FILE, 'merge_audit_request', 'file', 'EM wrapper replay request', &
+        &'Versioned wrapper stress replay request; requires merge_insert_audit=yes and nthr=8 to prepare eight slots', &
+        &'e.g. em_wrapper_request.txt', .false., '', visibility=UI_VIS_DEVELOPER)
+        call state_split%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
+        &'Prepare each particle''s fixed interpolation geometry once for all candidate maps(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call add_ui_program('state_split', state_split, prgtab, UI_CATEGORY)
     end subroutine new_state_split
 
@@ -558,6 +623,10 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &other match by 3 standard errors and endpoints merge unless 3 standard errors apart (site_halves.txt). A &
         &Spearman value instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., &
         &0., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call site_rank%add_input(UI_PARM, 'pooled_poles', 'binary', 'Pooled group test', &
+        &'With pole_merge=0, a merged group of endpoints that fails because one member falls short is tested once more as one &
+        &endpoint, on its members'' averaged half-maps, by the same 3-standard-error rule (site_halves.txt pooled lines)(yes|no){no}', &
+        &'', .false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call site_rank%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
         &'Every particle''s contrast against the other half''s mean map (shells to 12 A, its own noise level) is fitted as a &
         &zero-contrast junk atom against a log-normal genuine contrast; particles whose zero-contrast posterior is at least &
@@ -606,6 +675,16 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'simple_exec',&
         &.true.,&
         &visibility=UI_VIS_ADVANCED, display_name='Heterogeneity Tree')
+        call hetero_tree%add_input(UI_COMP, 'state_assembly', 'num', 'Concurrent state assemblies', &
+            &'Opt-in weighted gridding delivery; bounded by particle parts, zero keeps serial assembly', &
+            &'jobs{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call hetero_tree%add_input(UI_COMP, 'assembly_mem', 'num', 'Memory per state assembly', &
+            &'Explicit per-state memory request for concurrent assembly', &
+            &'MB{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call hetero_tree%add_input(UI_COMP, 'rec_plane_reuse', 'binary', 'Reuse Fourier plane buffers', &
+            &'Reuse native FLEX and gridding plane storage while recomputing all values(yes|no)', &
+            &'', .false., 'no', visibility=UI_VIS_DEVELOPER, &
+            &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_FILE, 'infile', 'file', 'Root particles', &
         &'One value per particle of the project: the rows with a positive value form the root node, a node of an earlier tree at its &
         &poses, masked like an inner node{all particles with a state}', &
@@ -630,10 +709,22 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &upward while the parent''s ranking agrees; per particle and kept site a pole label and posterior, a site table and &
         &unsharpened pole maps (factorial/)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
+        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
+        &'Reuse fixed particle interpolation geometry across candidate maps in split and merge tests(yes|no)', '', &
+        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
         &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &
         &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call hetero_tree%add_input(UI_PARM, 'pooled_poles', 'binary', 'Pooled group test', &
+        &'Every site ranking tests a merged group that fails because one member falls short once more on its members'' averaged &
+        &half-maps (site_rank pooled_poles)(yes|no){no}', '', .false., 'no', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen at every node', &
         &'At every node''s seeding, particles at zero contrast get label 0 at that node and below &
         &(site/site_junk_report.txt)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
@@ -662,10 +753,60 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Each refine3D and reconstruct3D step of a node runs on a project holding only its particles; the results return to &
         &the full project when the step ends(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'node_subset_io', 'binary', 'Direct compact project creation', &
+        &'Write selected particle rows and preserved metadata directly into compact node and step projects(yes|no)', &
+        &'', .false., 'no', visibility=UI_VIS_DEVELOPER, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_COMP, 'node_worker_pool', 'binary', 'Reuse standalone-job workers', &
+        &'Run fitting standalone split, merge and site jobs in a bounded worker pool; controllers retain base scheduling(yes|no)', &
+        &'', .false., 'no', visibility=UI_VIS_DEVELOPER, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_COMP, 'workers', 'num', 'Standalone worker count', &
+        &'Maximum standalone worker allocations; required with node_worker_pool=yes', '', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call hetero_tree%add_input(UI_COMP, 'worker_nthr', 'num', 'Threads per standalone worker', &
+        &'A pooled task reserves a complete worker; larger tasks retain base scheduling', '', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call hetero_tree%add_input(UI_COMP, 'node_worker_mem', 'num', 'Memory per standalone worker', &
+        &'Memory in MB per worker; tasks with larger existing memory claims retain base scheduling', &
+        &'', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call hetero_tree%add_input(UI_PARM, 'split_ntests', 'num', 'Split tests corrected for (override)', &
+        &'Replaces the split re-test''s Bonferroni count, by default 2 x root particles / minpop - 1; 1 is the uncorrected &
+        &test{0}', 'tests{0}', .false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'node_proj', 'binary', 'Node projects hold only the node''s particles', &
         &'Every node''s project and its steps'' projects hold only the node''s particles, mapped to the input project''s rows &
         &by the node''s rows.txt; the leaves map back to them. Needs site_layer=no, where it is on unless set to no(yes|no){yes}', &
         &'', .false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'node_motion', 'binary', 'Switch / swing call per node', &
+        &'Every site is ranked; each kept pole (and the fflex fallback when no site is a switch or swing) gets a 5-bin &
+        &reconstruction of its score and is called switch, swing or none. A switch seeds its pole and the opposite end, a swing &
+        &its two poles and the middle as a state; their product cells, folded under minpop, seed the split(yes|no){no}', '', &
+        &.false., 'no', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'strongest_pole', 'binary', 'Seed from the strongest kept pole', &
+        &'Every site is ranked and the site whose kept pole has the largest smaller pole-rule margin seeds the split, instead of &
+        &the first site that keeps a pole; ignored with node_motion=yes(yes|no){no}', '', .false., 'no', &
+        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'two_poles', 'binary', 'Seed both ends of the split''s axis', &
+        &'The split is seeded from the kept pole and the opposite end of its axis: the kept pole at the opposite endpoints of &
+        &any site, else the rows at posterior >= 0.5 of the same site''s opposite endpoints; the other rows start at their &
+        &nearer end and stage A decides; ignored with node_motion=yes(yes|no){no}', '', .false., 'no', &
+        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'motion_gate', 'binary', 'Split-half gate on new axes', &
+        &'With node_motion=yes, below the root every new axis (a kept pole, or the fflex fallback) is refit on random particle &
+        &halves (site_rank, or flex_pca and its two groups) and kept only when the halves'' difference maps correlate at 15 A &
+        &above the tree''s floor: median + 3 MAD-sd of permutation splits (random fifths of each particle half, scored the same &
+        &way) on the root and its first two children; a node whose fallback fails becomes a leaf(yes|no){no}', '', .false., &
+        &'no', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'motion_inherit', 'binary', 'Inherit ancestor axes', &
+        &'With node_motion=yes, every ancestor''s own switch or swing axes, restricted to the node''s particles, join its &
+        &candidates and get the switch / swing call there without a gate(yes|no){no}', '', .false., 'no', &
+        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'motion_multi', 'binary', 'Split on every motion at once', &
+        &'With node_motion=yes, yes seeds the split from the product cells of every passing switch and swing; no splits on one, &
+        &the strongest by its pole-rule margin (a switch into at most two states, a swing into at most three), and leaves the &
+        &others to the children(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'motion_floor', 'num', 'Gate floor (override)', &
+        &'The split-half correlation an axis must reach with motion_gate=yes; 0 measures it once per tree from &
+        &permutation splits{0}', 'corr{0}', .false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'node_seed', 'binary', 'Per-node random numbers', &
         &'The controller''s random draws (the cheap children''s direction bins) are seeded per node, so a node''s result does &
         &not depend on the order the nodes run in(yes|no){no}', '', .false., 'no', visibility=UI_VIS_ADVANCED, &

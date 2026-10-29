@@ -515,6 +515,12 @@ contains
         &'simple_test_exec',&
         &.true., display_name='Write Mixed State Weights')
         call write_state_weights_mixed%add_input(UI_SRCH, nstates)
+        call write_state_weights_mixed%add_input(UI_FILE, 'infile', 'file', 'Verified ancestral initializer', &
+        &'Optional pinned same-factor partition fixture; replaces the fractional-label recipe and initializes states', &
+        &'initializer.txt', .false., '', visibility=UI_VIS_DEVELOPER)
+        call write_state_weights_mixed%add_input(UI_FILE, 'outfile', 'file', 'Ancestral array receipt', &
+        &'Required with infile; writes double-precision memberships, normalized columns and mapped state labels', &
+        &'initializer_arrays.txt', .false., '', visibility=UI_VIS_DEVELOPER)
         call add_ui_program('write_state_weights_mixed', write_state_weights_mixed, tsttab, UI_CATEGORY)
     end subroutine new_write_state_weights
 

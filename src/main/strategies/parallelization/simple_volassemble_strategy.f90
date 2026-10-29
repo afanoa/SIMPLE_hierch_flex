@@ -36,6 +36,10 @@ integer, parameter :: TC_NSEED   = 4  ! mass of the rows a full reconstruction c
 integer, parameter :: TC_NCREP   = 5  ! contributors (rows with weight) behind TC_NREP
 integer, parameter :: TC_NCSEED  = 6  ! contributors behind TC_NSEED
 integer, parameter :: TC_N       = 6
+integer, parameter :: N_ASSEMBLY_PRODUCTS = 8
+character(len=*), parameter :: ASSEMBLY_DIR = '.state_assembly'
+character(len=*), parameter :: ASSEMBLY_REQUEST = 'assembly_request.bin'
+character(len=*), parameter :: ASSEMBLY_RESULT = 'assembly_result.bin'
 
 contains
 
@@ -510,7 +514,7 @@ contains
             type(imgfile)     :: ioimg_e, ioimg_o
             real, allocatable :: rho_e(:,:,:), rho_o(:,:,:)
             integer :: current_ldim(3), cshape(3), prev_ldim(3)
-            integer :: fhandle_rho_e, fhandle_rho_o, i, ierr, dummy
+            integer :: fhandle_rho_e, fhandle_rho_o, i, ierr, dummy, read_threads
             real    :: current_smpd, prev_smpd
             logical :: here(4), l_pad_with_zeros
             current_ldim = even_rec%get_ldim()
@@ -521,6 +525,8 @@ contains
             if( abs(odd_rec%get_smpd() - current_smpd) > TINY )then
                 THROW_HARD('gridding pair accumulator sampling does not match')
             endif
+            read_threads = 4
+            if( params%assembly_state > 0 ) read_threads = min(4, max(1, params%nthr))
             even_vol = fbody//'_even'//MRC_EXT
             even_rho = string('rho_')//fbody//'_even'//MRC_EXT
             odd_vol  = fbody//'_odd'//MRC_EXT
@@ -556,7 +562,7 @@ contains
                         &rho_o(1:cshape(1),1:cshape(2),1:cshape(3)))
                     call even_rec%reset
                     call odd_rec%reset
-                    !$omp parallel do default(shared) private(i,ierr) schedule(static) num_threads(4)
+                    !$omp parallel do default(shared) private(i,ierr) schedule(static) num_threads(read_threads)
                     do i = 1, 4
                         select case(i)
                             case(1)
@@ -582,7 +588,7 @@ contains
                         &readhead=.false., rwaction='read')
                     call ioimg_o%open(odd_vol, current_ldim, current_smpd, formatchar='M', &
                         &readhead=.false., rwaction='read')
-                    !$omp parallel do default(shared) private(i) schedule(static) num_threads(4)
+                    !$omp parallel do default(shared) private(i) schedule(static) num_threads(read_threads)
                     do i = 1, 4
                         select case(i)
                             case(1)
@@ -828,15 +834,182 @@ contains
         deallocate(state_pops, l_included)
     end subroutine filter_pcg_nonuniform_maps
 
+    !> Only the file-backed independent gridding contract is admitted here.
+    logical function independent_assembly_supported( params, cline ) result(supported)
+        class(parameters), intent(in) :: params
+        class(cmdline),    intent(in) :: cline
+        supported = .false.
+        if( params%nstates < 2 .or. params%nparts < 2 ) return
+        if( params%script == 'yes' ) return
+        if( .not. params%l_m_estimator_flex ) return
+        if( params%rec_backend /= 'gridding' ) return
+        if( params%l_nonuniform .or. params%l_envfsc .or. params%l_trail_rec ) return
+        if( params%l_state_defined .or. cline%defined('outfile') ) return
+        if( cline%defined('trail_seed') .or. cline%defined('frozen_seed') .or. &
+            &cline%defined('frozen_rec') .or. cline%defined('frozen_carry') ) return
+        supported = .true.
+    end function independent_assembly_supported
+
+    function assembly_products( params, cline, istate ) result(names)
+        use simple_halfmap_diagnostics, only: support_provenance_fname
+        class(parameters), intent(in) :: params
+        class(cmdline),    intent(in) :: cline
+        integer,           intent(in) :: istate
+        type(string) :: names(N_ASSEMBLY_PRODUCTS)
+        names(1) = refine3D_state_vol_fname(istate)
+        names(2) = refine3D_state_halfvol_fname(istate, 'even')
+        names(3) = refine3D_state_halfvol_fname(istate, 'odd')
+        names(4) = refine3D_state_halfvol_fname(istate, 'even', unfil=.true.)
+        names(5) = refine3D_state_halfvol_fname(istate, 'odd', unfil=.true.)
+        names(6) = refine3D_fsc_fname(istate)
+        names(7) = refine3D_resolution_txt_fbody(istate)
+        if( cline%defined('which_iter') ) names(7) = refine3D_resolution_txt_fbody(istate, params%which_iter)
+        names(8) = support_provenance_fname(names(1))
+    end function assembly_products
+
+    !> The existing state-file digest also pins absent partials, never treating a failed read as absence.
+    subroutine assembly_file_identity( name, ident )
+        use simple_sigma2_state_file, only: sigma2_state_digest_file
+        class(string),   intent(in)  :: name
+        integer(kind=8), intent(out) :: ident(2)
+        ident = [-1_8, 0_8]
+        if( .not. file_exists(name) ) return
+        inquire(file=name%to_char(), size=ident(1))
+        ident(2) = sigma2_state_digest_file(name)
+        if( ident(1) < 0_8 .or. ident(2) == 0_8 ) THROW_HARD('cannot identify state assembly artifact: '//name%to_char())
+    end subroutine assembly_file_identity
+
+    subroutine write_assembly_request( params, cline, root, workdir, istate, manifest, wset_id, worker_nthr )
+        use simple_refine3D_fnames, only: refine3D_partial_rec_fname, refine3D_partial_rho_fname
+        class(parameters), intent(in) :: params
+        class(cmdline),    intent(in) :: cline
+        class(string),     intent(in) :: root, workdir, manifest
+        integer,           intent(in) :: istate, worker_nthr
+        integer(kind=8),   intent(in) :: wset_id(2)
+        type(string), allocatable :: keys(:), sources(:), local_names(:)
+        type(string) :: val, exe, request
+        character(len=XLONGSTRLEN) :: source_text, local_text, val_text
+        character(len=KEYLEN) :: key_text
+        integer(kind=8) :: ident(2)
+        integer :: funit, i, part, offset, status
+        real :: rval
+        keys = cline%get_keys()
+        allocate(sources(3+4*params%nparts), local_names(3+4*params%nparts))
+        sources(1) = simple_abspath(params%projfile)
+        exe = simple_getenv('SIMPLE_PATH', status)
+        if( status /= 0 ) THROW_HARD('SIMPLE_PATH required for state assembly')
+        sources(2) = simple_abspath(exe//'/bin/simple_private_exec')
+        sources(3) = manifest
+        local_names(1:3) = sources(1:3)
+        do part = 1, params%nparts
+            offset = 3+4*(part-1)
+            sources(offset+1) = refine3D_partial_rec_fname(istate, part, max(1,params%numlen), 'even')
+            sources(offset+2) = refine3D_partial_rec_fname(istate, part, max(1,params%numlen), 'odd')
+            sources(offset+3) = refine3D_partial_rho_fname(istate, part, max(1,params%numlen), 'even')
+            sources(offset+4) = refine3D_partial_rho_fname(istate, part, max(1,params%numlen), 'odd')
+            do i = offset+1, offset+4
+                local_names(i) = workdir//'/'//sources(i)
+                sources(i) = root//'/'//sources(i)
+                if( file_exists(sources(i)) ) call syslib_symlink(sources(i), local_names(i))
+            enddo
+        enddo
+        request = workdir//'/'//ASSEMBLY_REQUEST
+        call fopen(funit, request, status='NEW', action='WRITE', access='STREAM')
+        write(funit) [1, istate, params%nstates, params%nparts, worker_nthr, params%box_crop], &
+            &[params%smpd_crop, params%msk_crop], params%l_ml_reg, wset_id, size(keys)
+        do i = 1, size(keys)
+            key_text = keys(i)%to_char()
+            val = cline%get_carg(trim(key_text))
+            val_text = val%to_char()
+            rval = cline%get_rarg(trim(key_text))
+            write(funit) key_text, val_text, rval
+        enddo
+        write(funit) size(sources)
+        do i = 1, size(sources)
+            call assembly_file_identity(sources(i), ident)
+            if( i <= 3 .and. ident(1) < 0 ) THROW_HARD('missing required state assembly input')
+            source_text = sources(i)%to_char()
+            local_text = local_names(i)%to_char()
+            write(funit) source_text, local_text, ident
+        enddo
+        call fclose(funit)
+    end subroutine write_assembly_request
+
+    subroutine check_assembly_request( params, cline, request, istate, wset_id, request_id, worker_nthr, check_command, verify_inputs )
+        use simple_sigma2_state_file, only: sigma2_state_digest_file
+        class(parameters), intent(in) :: params
+        class(cmdline),    intent(in) :: cline
+        class(string),     intent(in) :: request
+        integer,           intent(in) :: istate, worker_nthr
+        integer(kind=8),   intent(in) :: wset_id(2), request_id
+        logical,           intent(in) :: check_command, verify_inputs
+        character(len=XLONGSTRLEN) :: source_text, local_text, val_text, exe_text
+        character(len=KEYLEN) :: key_text
+        character(len=1) :: tail
+        type(string) :: val, executable
+        integer :: funit, ios, ints(6), nkeys, nfiles, i
+        integer(kind=8) :: ids(2), expected(2), actual(2)
+        real :: reals(2), rval
+        logical :: ml
+        if( request_id == 0_8 ) THROW_HARD('missing state assembly request')
+        if( sigma2_state_digest_file(request) /= request_id ) THROW_HARD('state assembly request changed')
+        call fopen(funit, request, status='OLD', action='READ', access='STREAM')
+        read(funit, iostat=ios) ints, reals, ml, ids, nkeys
+        if( ios /= 0 ) THROW_HARD('invalid state assembly request header')
+        if( any(ints /= [1, istate, params%nstates, params%nparts, worker_nthr, params%box_crop]) ) &
+            &THROW_HARD('state assembly request/grid mismatch')
+        if( any(reals /= [params%smpd_crop, params%msk_crop]) .or. (ml .neqv. params%l_ml_reg) ) &
+            &THROW_HARD('state assembly operator mismatch')
+        if( any(ids /= wset_id) .or. nkeys < 1 .or. nkeys > 200 ) THROW_HARD('state assembly weight/command mismatch')
+        do i = 1, nkeys
+            read(funit, iostat=ios) key_text, val_text, rval
+            if( ios /= 0 ) THROW_HARD('truncated state assembly command')
+            if( .not. check_command ) cycle
+            if( .not. cline%defined(trim(key_text)) ) THROW_HARD('missing state assembly command key')
+            if( len_trim(val_text) > 0 )then
+                val = cline%get_carg(trim(key_text))
+                if( val /= trim(val_text) ) THROW_HARD('state assembly command value mismatch: '//trim(key_text))
+            else
+                if( cline%get_rarg(trim(key_text)) /= rval ) THROW_HARD('state assembly numeric command mismatch')
+            endif
+        enddo
+        read(funit, iostat=ios) nfiles
+        if( ios /= 0 ) THROW_HARD('missing state assembly input count')
+        if( nfiles /= 3+4*params%nparts ) THROW_HARD('state assembly input count mismatch')
+        do i = 1, nfiles
+            read(funit, iostat=ios) source_text, local_text, expected
+            if( ios /= 0 ) THROW_HARD('truncated state assembly inputs')
+            if( verify_inputs .or. i <= 3 )then
+                call assembly_file_identity(string(trim(local_text)), actual)
+                if( any(actual /= expected) ) THROW_HARD('state assembly consumed input changed: '//trim(local_text))
+            endif
+            if( i == 1 )then
+                executable = simple_abspath(params%projfile)
+                if( executable /= trim(source_text) ) THROW_HARD('state assembly project path mismatch')
+            endif
+            if( i == 2 .and. check_command )then
+                call get_command_argument(0, exe_text)
+                executable = simple_abspath(string(trim(exe_text)))
+                call assembly_file_identity(executable, actual)
+                if( any(actual /= expected) ) THROW_HARD('state assembly executable mismatch')
+            endif
+        enddo
+        read(funit, iostat=ios) tail
+        if( ios >= 0 ) THROW_HARD('unexpected state assembly request tail')
+        call fclose(funit)
+    end subroutine check_assembly_request
+
     !> volume assembly on its own parameters and builder, built from cline; the names of the volumes each state ends
     !! with are returned as volassemble_exec returns them
-    subroutine run_volassemble( cline, vols, vols_even, vols_odd )
+    subroutine run_volassemble( cline, vols, vols_even, vols_odd, worker_nthr_limit )
         class(cmdline),                      intent(inout) :: cline
         type(string), allocatable, optional, intent(out)   :: vols(:), vols_even(:), vols_odd(:)
+        integer, optional, intent(in) :: worker_nthr_limit
         type(parameters), target :: params
         type(builder)            :: build
         call build%init_params_and_build_general_tbox(cline, params)
-        call volassemble_exec(params, build, cline, params%nthr, vols, vols_even, vols_odd)
+        call volassemble_exec(params, build, cline, params%nthr, vols, vols_even, vols_odd, &
+            &file_backed=.true., worker_nthr_limit=worker_nthr_limit)
         call build%kill_general_tbox
         call simple_end('**** SIMPLE_VOLASSEMBLE NORMAL STOP ****', print_simple=.false.)
     end subroutine run_volassemble
@@ -847,8 +1020,9 @@ contains
     !! written to the project file. The
     !! names of the volumes each state ends with (restored, or carried forward from disk) are returned in vols,
     !! vols_even and vols_odd; the parameters are left as they are, so no caller's parameters name a state without a map
-    subroutine volassemble_exec( params, build, cline, nthr, vols, vols_even, vols_odd, write )
+    subroutine volassemble_exec( params, build, cline, nthr, vols, vols_even, vols_odd, write, file_backed, worker_nthr_limit )
         use simple_reconstructor,   only: reconstructor
+        use simple_sigma2_state_file, only: sigma2_state_digest_file
         use simple_nu_filter,       only: set_nu_filter_report, NU_DEV_OUTPUT
         use simple_nu_state_filter, only: nonuniform_filter_state, nu_state_filter_timings, &
             &nu_aux_member
@@ -859,6 +1033,10 @@ contains
         integer,                   intent(in)    :: nthr
         type(string), allocatable, optional, intent(out) :: vols(:), vols_even(:), vols_odd(:)
         logical,                   optional, intent(in)  :: write   !< write the particle field to the project file{.true.}
+        logical, optional, intent(in) :: file_backed
+        integer, optional, intent(in) :: worker_nthr_limit
+        logical :: l_parallel_assembly, l_private_assembly
+        integer(kind=8) :: worker_request_id
         type(reconstructor)           :: even_rec, odd_rec, read_even_rec, read_odd_rec, sum_rec
         type(image)                   :: vol_nu_base_even, vol_nu_base_odd, vol_nu_aux_even, vol_nu_aux_odd
         type(string)                  :: volname, eonames(2)
@@ -886,11 +1064,25 @@ contains
         real(timer_int_kind)          :: rt_nu_envmask, rt_nonuniform_filter, rt_tot
         real(timer_int_kind)          :: rt_init_context, rt_trail_frac, rt_gridcorr, rt_upd_proj, rt_cleanup
         real(timer_int_kind), allocatable :: rt_state_restore(:), rt_state_nu(:)
-        integer(timer_int_kind)       :: t_state
+        integer(timer_int_kind)       :: t_state, t_parallel_assembly
+        real(timer_int_kind)          :: rt_parallel_assembly
         !$ call omp_set_num_threads(nthr)
         nthr_glob = nthr
         l_write_project = .true.
         if( present(write) ) l_write_project = write
+        l_private_assembly = params%assembly_state > 0
+        l_parallel_assembly = .false.
+        if( present(file_backed) )then
+            if( file_backed .and. params%state_assembly > 1 ) &
+                &l_parallel_assembly = independent_assembly_supported(params, cline)
+        endif
+        if( l_private_assembly )then
+            if( .not. independent_assembly_supported(params, cline) ) THROW_HARD('unsupported private state assembly')
+            if( .not. file_exists(string(ASSEMBLY_REQUEST)) ) THROW_HARD('private assembly request is missing')
+            l_write_project = .false.
+        endif
+        if( params%state_assembly > 0 .and. .not. l_parallel_assembly ) &
+            &write(logfhandle,'(A)') '>>> VOLASSEMBLE: retaining serial assembly for this execution mode'
         call initialize_bench_timers()
         if( L_BENCH_GLOB ) t_init_context = tic()
         call initialize_context()
@@ -900,23 +1092,267 @@ contains
         if( L_BENCH_GLOB ) rt_trail_frac = toc(t_trail_frac)
         rt_gridcorr = 0.  ! deapodization lives in the gridding backend (pair/sum restoration)
         call determine_dropped_states()
-        do state = 1, params%nstates
-            if( l_state_dropped(state) )then
-                call carry_forward_dropped_state()
-                cycle
-            endif
-            call assemble_state()
-        enddo
+        if( l_private_assembly )then
+            worker_request_id = sigma2_state_digest_file(string(ASSEMBLY_REQUEST))
+            call check_assembly_request(params, cline, string(ASSEMBLY_REQUEST), params%assembly_state, &
+                &wset_id, worker_request_id, params%nthr, check_command=.true., verify_inputs=.false.)
+        endif
+        rt_parallel_assembly = 0.
+        if( l_parallel_assembly )then
+            t_parallel_assembly = tic()
+            call assemble_independent_states()
+            rt_parallel_assembly = toc(t_parallel_assembly)
+        else
+            do state = 1, params%nstates
+                if( l_private_assembly )then
+                    if( state /= params%assembly_state ) cycle
+                endif
+                if( l_state_dropped(state) )then
+                    call carry_forward_dropped_state()
+                    cycle
+                endif
+                call assemble_state()
+            enddo
+        endif
         call collect_restore_timings()
         if( L_BENCH_GLOB ) t_upd_proj = tic()
-        call update_project_resolution_metadata()
+        if( l_private_assembly )then
+            state = params%assembly_state
+            call wset%new(build%spproj, build%spproj_field)
+            call check_assembly_request(params, cline, string(ASSEMBLY_REQUEST), state, &
+                &wset_id, worker_request_id, params%nthr, check_command=.true., verify_inputs=.true.)
+            call write_assembly_result()
+        else
+            call update_project_resolution_metadata()
+            if( l_parallel_assembly ) call simple_rename(string(ASSEMBLY_DIR//'/receipt.txt'), &
+                &string('state_assembly_receipt.txt'), overwrite=.true.)
+        endif
         if( L_BENCH_GLOB ) rt_upd_proj = toc(t_upd_proj)
         if( L_BENCH_GLOB ) t_cleanup = tic()
         call cleanup_context()
         if( L_BENCH_GLOB ) rt_cleanup = toc(t_cleanup)
         call write_benchmark()
+        if( l_parallel_assembly ) call simple_rmdir(string(ASSEMBLY_DIR))
 
     contains
+
+        subroutine write_assembly_result()
+            use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+            type(string) :: names(N_ASSEMBLY_PRODUCTS), tmp
+            integer(kind=8) :: identities(2,N_ASSEMBLY_PRODUCTS)
+            integer :: funit, i
+            real :: metadata(4)
+            metadata = [res0143s(state), res05s(state), cfars(state), nu_align_lps(state)]
+            if( .not. all(ieee_is_finite(metadata)) ) THROW_HARD('nonfinite state assembly result')
+            if( l_state_dropped(state) ) THROW_HARD('private assembly unexpectedly dropped its requested state')
+            names = assembly_products(params, cline, state)
+            do i = 1, N_ASSEMBLY_PRODUCTS
+                call assembly_file_identity(names(i), identities(:,i))
+                if( identities(1,i) <= 0_8 ) THROW_HARD('missing state assembly product: '//names(i)%to_char())
+            enddo
+            tmp = string(ASSEMBLY_RESULT//'.tmp')
+            call fopen(funit, tmp, status='NEW', action='WRITE', access='STREAM')
+            write(funit) 1, state, worker_request_id, metadata, &
+                &[restore_timings%reduce_partials, restore_timings%sum_eos, &
+                &restore_timings%restore_eos_and_write_fsc, restore_timings%restore_merged_volume, &
+                &restore_timings%trail_blend_accums, rt_state_restore(state)], identities
+            call fclose(funit)
+            call simple_rename(tmp, string(ASSEMBLY_RESULT))
+        end subroutine write_assembly_result
+
+        subroutine assemble_independent_states()
+            use simple_qsys_env, only: qsys_env
+            use simple_qsys_async_job, only: qsys_async_job, ASYNC_JOB_DONE, ASYNC_JOB_FAILED
+            use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+            !$ use omp_lib, only: omp_get_proc_bind, omp_proc_bind_false, omp_get_num_procs
+            class(qsys_env), allocatable :: queue
+            class(cmdline), allocatable :: child
+            type(qsys_async_job), allocatable :: jobs(:)
+            type(string) :: root, workdir, batchdir, manifest, request, result, src, backend
+            type(string) :: names(N_ASSEMBLY_PRODUCTS)
+            integer(kind=8), allocatable :: request_ids(:), output_ids(:,:,:)
+            integer(kind=8) :: identity(2), result_id
+            real(timer_int_kind) :: times(6)
+            real :: metadata(4)
+            integer :: next_state, active, limit, istate, i, funit, receipt, ios, version, result_state, job_status, j, local_cpus
+            integer :: worker_nthr, allocated_cpus, envlen
+            character(len=STDLEN) :: cpu_env
+            logical, allocatable :: running(:), finished(:)
+            character(len=1) :: tail
+            logical :: bound_owner
+            integer(timer_int_kind) :: start_wait
+            call simple_getcwd(root)
+            batchdir = root//'/'//ASSEMBLY_DIR
+            if( dir_exists(batchdir) ) THROW_HARD('pending state assembly exists; reconcile its jobs before restarting')
+            limit = min(params%state_assembly, params%nstates, params%nparts)
+            worker_nthr = nthr
+            if( present(worker_nthr_limit) ) worker_nthr = min(nthr, max(1,worker_nthr_limit))
+            allocate(queue, child, jobs(params%nstates))
+            call queue%new(params, limit, exec_bin=string('simple_private_exec'), qsys_nthr=worker_nthr, &
+                &qsys_memory=params%assembly_mem, base_only=.true., strict_dispatch=.true.)
+            backend = string(queue%get_qsys())
+            if( backend == 'coarray' ) THROW_HARD('independent state assembly requires a script-based qsys')
+            if( backend == 'local' )then
+                bound_owner = .false.
+                local_cpus = 1
+                !$ bound_owner = omp_get_proc_bind() /= omp_proc_bind_false
+                !$ local_cpus = omp_get_num_procs()
+                if( bound_owner ) THROW_HARD('local state assembly requires an unbound owner; set OMP_PROC_BIND=false before launch')
+                call get_environment_variable('SLURM_CPUS_PER_TASK', cpu_env, length=envlen)
+                if( envlen > 0 )then
+                    read(cpu_env,*,iostat=ios) allocated_cpus
+                    if( ios /= 0 ) THROW_HARD('invalid SLURM_CPUS_PER_TASK for local state assembly')
+                    if( allocated_cpus < 1 ) THROW_HARD('nonpositive SLURM_CPUS_PER_TASK for local state assembly')
+                    local_cpus = min(local_cpus, allocated_cpus)
+                endif
+                if( 1+limit > local_cpus ) THROW_HARD('local state assembly exceeds available CPUs including its owner')
+                if( 1+limit*worker_nthr > local_cpus )then
+                    worker_nthr = (local_cpus-1)/limit
+                    call queue%new(params, limit, exec_bin=string('simple_private_exec'), qsys_nthr=worker_nthr, &
+                        &qsys_memory=params%assembly_mem, base_only=.true., strict_dispatch=.true.)
+                endif
+            endif
+            if( file_exists(string('VOLASSEMBLE_FINISHED')) ) call del_file(string('VOLASSEMBLE_FINISHED'))
+            call simple_mkdir(batchdir)
+            ! The new file is also an exclusive owner claim if two controllers raced to mkdir.
+            call fopen(funit, batchdir//'/owner', status='NEW', action='WRITE')
+            write(funit,'(A)') root%to_char()
+            call fclose(funit)
+            write(logfhandle,'(A,I0,A,I0,A,I0,A,I0,A)') '>>> STATE ASSEMBLY: ', limit, &
+                &' concurrent states x ', worker_nthr, ' threads + owner; ', limit*worker_nthr, &
+                &' descendant CPUs, ', limit*params%assembly_mem, ' MB descendant memory'
+            allocate(request_ids(params%nstates), source=0_8)
+            allocate(output_ids(2,N_ASSEMBLY_PRODUCTS,params%nstates), source=0_8)
+            allocate(running(params%nstates), source=.false.)
+            allocate(finished(params%nstates), source=l_state_dropped)
+            manifest = wset%get_manifest_path()
+            manifest = simple_abspath(manifest)
+            child = cline
+            call child%set('prg', 'volassemble')
+            call child%set('projfile', simple_abspath(params%projfile))
+            call child%set('mkdir', 'no')
+            call child%set('nthr', worker_nthr)
+            call child%delete('box')
+            call child%delete('smpd')
+            call child%delete('smpd_crop')
+            call child%set('state_assembly', 0)
+            call child%delete('dir_exec')
+            call child%delete('worker_server')
+            call child%delete('workers')
+            call child%set('node_worker_pool', 'no')
+            ! Pin every request before dispatch: no child can race request construction.
+            do istate = 1, params%nstates
+                if( l_state_dropped(istate) ) cycle
+                workdir = batchdir//'/state'//int2str_pad(istate,2)
+                call simple_mkdir(workdir)
+                call child%set('assembly_state', istate)
+                call write_assembly_request(params, child, root, workdir, istate, manifest, wset_id, worker_nthr)
+                request = workdir//'/'//ASSEMBLY_REQUEST
+                request_ids(istate) = sigma2_state_digest_file(request)
+            enddo
+            next_state = 1
+            active = 0
+            start_wait = tic()
+            do while( .not. all(finished) )
+                ! Drain completed jobs before releasing their slot or submitting more work.
+                do istate = 1, params%nstates
+                    if( .not. running(istate) ) cycle
+                    job_status = jobs(istate)%status()
+                    if( job_status == ASYNC_JOB_FAILED )then
+                        do j = 1, params%nstates
+                            if( running(j) ) call jobs(j)%cancel()
+                        enddo
+                        THROW_HARD('state assembly child failed; pending batch retained, reconcile children before restart')
+                    endif
+                    if( job_status /= ASYNC_JOB_DONE ) cycle
+                    running(istate) = .false.
+                    finished(istate) = .true.
+                    active = active-1
+                enddo
+                do while( next_state <= params%nstates .and. active < limit )
+                    istate = next_state
+                    next_state = next_state+1
+                    if( l_state_dropped(istate) ) cycle
+                    workdir = batchdir//'/state'//int2str_pad(istate,2)
+                    call child%set('assembly_state', istate)
+                    call jobs(istate)%start(queue, child, workdir, 'assembly')
+                    running(istate) = .true.
+                    active = active+1
+                enddo
+                if( all(finished) ) exit
+                if( toc(start_wait) > real(params%walltime,timer_int_kind) )then
+                    do j = 1, params%nstates
+                        if( running(j) ) call jobs(j)%cancel()
+                    enddo
+                    THROW_HARD('state assembly timed out; pending batch retained, reconcile children before restart')
+                endif
+                call sleep(1)
+            enddo
+            do istate = 1, params%nstates
+                call jobs(istate)%kill()
+            enddo
+            call queue%kill
+            ! Validate the complete batch before changing any owner artifact or project field.
+            call fopen(receipt, batchdir//'/receipt.txt', status='NEW', action='WRITE')
+            write(receipt,'(A,I0,A,I0,A,I0)') 'state_assembly jobs=',limit,' nthr=',worker_nthr,' memory_MB_per_job=',params%assembly_mem
+            do state = 1, params%nstates
+                if( l_state_dropped(state) )then
+                    call carry_forward_dropped_state()
+                    write(receipt,'(A,I0,A)') 'state=',state,' carried; original artifacts retained'
+                    cycle
+                endif
+                workdir = batchdir//'/state'//int2str_pad(state,2)
+                request = workdir//'/'//ASSEMBLY_REQUEST
+                call check_assembly_request(params, cline, request, state, wset_id, request_ids(state), worker_nthr, &
+                    &check_command=.false., verify_inputs=.true.)
+                result = workdir//'/'//ASSEMBLY_RESULT
+                call fopen(funit, result, status='OLD', action='READ', access='STREAM')
+                read(funit, iostat=ios) version, result_state, result_id, metadata, times, output_ids(:,:,state)
+                if( ios /= 0 ) THROW_HARD('invalid state assembly result')
+                if( version /= 1 .or. result_state /= state .or. result_id /= request_ids(state) ) &
+                    &THROW_HARD('state assembly result identity mismatch')
+                if( .not. all(ieee_is_finite(metadata)) .or. .not. all(ieee_is_finite(times)) ) &
+                    &THROW_HARD('nonfinite state assembly result metadata')
+                if( metadata(4) /= 0. ) THROW_HARD('unexpected NU alignment limit in independent assembly')
+                read(funit, iostat=ios) tail
+                if( ios >= 0 ) THROW_HARD('unexpected state assembly result tail')
+                call fclose(funit)
+                names = assembly_products(params, cline, state)
+                do i = 1, N_ASSEMBLY_PRODUCTS
+                    src = workdir//'/'//names(i)
+                    call assembly_file_identity(src, identity)
+                    if( identity(1) <= 0_8 .or. any(identity /= output_ids(:,i,state)) ) &
+                        &THROW_HARD('state assembly product identity mismatch')
+                    write(receipt,'(I0,1X,A,1X,I0,1X,I0)') state,names(i)%to_char(),identity
+                enddo
+                res0143s(state) = metadata(1)
+                res05s(state) = metadata(2)
+                cfars(state) = metadata(3)
+                nu_align_lps(state) = metadata(4)
+                restore_timings%reduce_partials = restore_timings%reduce_partials+times(1)
+                restore_timings%sum_eos = restore_timings%sum_eos+times(2)
+                restore_timings%restore_eos_and_write_fsc = restore_timings%restore_eos_and_write_fsc+times(3)
+                restore_timings%restore_merged_volume = restore_timings%restore_merged_volume+times(4)
+                restore_timings%trail_blend_accums = restore_timings%trail_blend_accums+times(5)
+                rt_state_restore(state) = times(6)
+                if( present(vols) ) vols(state) = names(1)
+                if( present(vols_even) ) vols_even(state) = names(2)
+                if( present(vols_odd) ) vols_odd(state) = names(3)
+                write(receipt,'(A,I0,A,I0,A,4(1X,ES16.8))') 'state=',state,' request=',result_id,' metadata=',metadata
+            enddo
+            call fclose(receipt)
+            call wset%new(build%spproj, build%spproj_field)
+            do state = 1, params%nstates
+                if( l_state_dropped(state) ) cycle
+                workdir = batchdir//'/state'//int2str_pad(state,2)
+                names = assembly_products(params, cline, state)
+                do i = 1, N_ASSEMBLY_PRODUCTS
+                    call simple_rename(workdir//'/'//names(i), root//'/'//names(i), overwrite=.true.)
+                enddo
+            enddo
+            call child%kill
+            deallocate(queue, child, jobs)
+        end subroutine assemble_independent_states
 
         subroutine initialize_bench_timers()
             rt_reduce_partials           = 0.
@@ -940,11 +1376,13 @@ contains
             ! projection-direction labels before assembly; preserve that contract
             if( .not. build%spproj_field%isthere('proj') ) call build%spproj_field%set_projs(build%eulspace)
             call set_nu_filter_report(params%part == 1)
-            call even_rec%new_accumulator(params, build%spproj, expand=.false.)
-            call odd_rec%new_accumulator(params, build%spproj, expand=.false.)
-            call read_even_rec%new_accumulator(params, build%spproj, expand=.false.)
-            call read_odd_rec%new_accumulator(params, build%spproj, expand=.false.)
-            call sum_rec%new_accumulator(params, build%spproj, expand=.false.)
+            if( .not. l_parallel_assembly )then
+                call even_rec%new_accumulator(params, build%spproj, expand=.false.)
+                call odd_rec%new_accumulator(params, build%spproj, expand=.false.)
+                call read_even_rec%new_accumulator(params, build%spproj, expand=.false.)
+                call read_odd_rec%new_accumulator(params, build%spproj, expand=.false.)
+                call sum_rec%new_accumulator(params, build%spproj, expand=.false.)
+            endif
             numlen_part       = max(1, params%numlen)
             l_nonuniform_mode = params%l_nonuniform
             ! m_estimator=flex: the project's state weight set weighs every particle (fractional reconstruction)
@@ -1354,12 +1792,17 @@ contains
             write(fnr,'(a,1x,f0.2)') 'volassemble update_proj_metadata      :', rt_upd_proj
             write(fnr,'(a,1x,f0.2)') 'volassemble cleanup                   :', rt_cleanup
             write(fnr,'(a,1x,f0.2)') 'volassemble total time                :', rt_tot
-            write(fnr,'(a,1x,f0.2)') 'volassemble % accounted for           :', &
+            if( l_parallel_assembly )then
+                write(fnr,'(a,1x,f0.2)') 'volassemble concurrent assembly wall  :', rt_parallel_assembly
+                write(fnr,'(a)') 'state worker timing sums overlap; they are not serial wall time'
+            else
+                write(fnr,'(a,1x,f0.2)') 'volassemble % accounted for           :', &
                 &((rt_reduce_partials + rt_sum_eos + rt_restore_eos_and_write_fsc +               &
                 &  rt_restore_merged_volume + rt_trail_blend_accums +                             &
                 &  rt_nonuniform_filter +                                                         &
                 &  rt_init_context + rt_trail_frac + rt_gridcorr + rt_upd_proj + rt_cleanup)      &
                 & / rt_tot) * 100.
+            endif
             ! parts of the timings above, not added to the accounted-for total
             write(fnr,'(a)') ''
             write(fnr,'(a)') '*** SPLIT TIMINGS (S) ***'

@@ -57,6 +57,7 @@ type qsys_ctrl
     integer                       :: ncomputing_units       = 0    !< total computing slots available to this instance
     integer                       :: ncomputing_units_avail = 0    !< slots currently free for new submissions
     integer                       :: nthr_worker            = 1    !< thread slots required per job (persistent worker backend only)
+    logical                       :: strict_dispatch        = .false.
     integer                       :: numlen                 = 0    !< zero-padding width for partition index in file names
     ! --- job tracking ---
     logical,          allocatable :: jobs_done(:)                  !< .true. once a partition job has finished
@@ -140,7 +141,7 @@ contains
 
     !> Initialise (or reinitialise) the controller: wire scheduler pointers, allocate
     !! tracking arrays, and pre-compute script and sentinel file names.
-    subroutine new( self, exec_binary, qsys_obj, parts, fromto_part, ncomputing_units, stream, numlen, nthr_worker, worker_priority, warmup_callback )
+    subroutine new( self, exec_binary, qsys_obj, parts, fromto_part, ncomputing_units, stream, numlen, nthr_worker, worker_priority, warmup_callback, strict_dispatch )
         class(qsys_ctrl),         intent(inout) :: self             !< this instance
         class(string),            intent(in)    :: exec_binary      !< executable launched by generated scripts
         class(qsys_base), target, intent(in)    :: qsys_obj         !< scheduler backend (not owned)
@@ -151,9 +152,12 @@ contains
         integer, optional,        intent(in)    :: numlen           !< explicit zero-padding width; derived from nparts_tot when absent
         integer, optional,        intent(in)    :: nthr_worker      !< thread slots per job for persistent worker backend (default 1)
         logical, optional,        intent(in)    :: worker_priority  !< .true. for high priority workers (default .false.)
+        logical, optional,        intent(in)    :: strict_dispatch  !< fail if the worker server does not accept a task
         procedure(worker_warmup_callback), optional :: warmup_callback !< callback invoked when server requests worker warm-up
         integer :: ipart
         call self%kill
+        self%strict_dispatch = .false.
+        if( present(strict_dispatch) ) self%strict_dispatch = strict_dispatch
         ! Wire scheduler state.
         self%stream                 =  stream
         self%exec_binary            =  exec_binary
@@ -845,6 +849,7 @@ contains
         integer,                      intent(in)    :: nthr         !< thread slots required by this task
         type(qsys_persistent_worker_message_task)   :: task_msg
         if( .not. associated(persistent_worker%server) ) then
+            if( self%strict_dispatch ) THROW_HARD('worker server unavailable; task submission failed')
             write(logfhandle,'(A)') '>>> QSYS_CTRL dispatch_task_to_persistent_worker: worker server not initialised; task ignored'
             return
         end if
@@ -853,6 +858,7 @@ contains
         task_msg%script_path = script_path%to_char()
         task_msg%priority    = self%worker_priority
         if( .not. persistent_worker%server%queue_task(task_msg, string('norm')) ) then
+            if( self%strict_dispatch ) THROW_HARD('worker server did not acknowledge task submission')
             if( self%worker_priority ) then
                 write(logfhandle,'(A,A)') '>>> QSYS_CTRL dispatch_task_to_persistent_worker: high-priority queue full; dropped job_id ', int2str(task_msg%job_id)
             else
@@ -1289,6 +1295,7 @@ contains
         self%ncomputing_units       = 0
         self%ncomputing_units_avail = 0
         self%nthr_worker            = 1
+        self%strict_dispatch        = .false.
         self%numlen                 = 0
         self%cline_stacksz          = 0
         nullify(self%warmup_callback)

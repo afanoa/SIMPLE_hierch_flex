@@ -33,6 +33,16 @@ contains
         ! image input/output
         ! <empty>
         ! parameter input/output
+        call reconstruct3D%add_input(UI_COMP, 'state_assembly', 'num', 'Concurrent state assemblies', &
+            &'Opt-in weighted gridding delivery; bounded by particle parts, zero keeps serial assembly', &
+            &'jobs{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call reconstruct3D%add_input(UI_COMP, 'assembly_mem', 'num', 'Memory per state assembly', &
+            &'Explicit per-state memory request for concurrent assembly', &
+            &'MB{0}', .false., 0., visibility=UI_VIS_DEVELOPER)
+        call reconstruct3D%add_input(UI_COMP, 'rec_plane_reuse', 'binary', 'Reuse Fourier plane buffers', &
+            &'Reuse native FLEX and gridding plane storage while recomputing all values(yes|no)', &
+            &'', .false., 'no', visibility=UI_VIS_DEVELOPER, &
+            &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call reconstruct3D%add_input(UI_PARM, 'rec_backend', 'multi', 'Reconstruction backend', &
         &'Reconstruction backend; PCG runs independent kernel solves for the two halfsets(gridding|pcg){gridding}', &
         &'', .false., 'gridding', &

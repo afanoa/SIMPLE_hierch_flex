@@ -1054,6 +1054,26 @@ contains
 
     ! Writers
 
+    ! Read the source once, retaining raw metadata and selected particle records.
+    ! Publish a fresh packed project; the caller owns its row map and mutable state.
+    module subroutine write_selected_particles( self, src, dst, rows )
+        class(sp_project), intent(inout) :: self
+        class(string),     intent(in)    :: src, dst
+        integer,           intent(in)    :: rows(:)
+        type(string) :: tmpfile, srcpath, dstpath, tmppath
+        tmpfile = swap_suffix(dst, string('.tmp'), string(METADATA_EXT))
+        srcpath = simple_abspath(src)
+        dstpath = simple_abspath(dst, check_exists=.false.)
+        tmppath = simple_abspath(tmpfile, check_exists=.false.)
+        if( srcpath == dstpath .or. srcpath == tmppath ) THROW_HARD('source aliases output; write_selected_particles')
+        if( .not. file_exists(src) ) THROW_HARD('missing source; write_selected_particles')
+        call self%bos%close
+        call self%bos%open(src)
+        call self%bos%copy_selected_particles(tmpfile, rows)
+        call self%bos%close
+        call simple_rename(tmpfile, dst)
+    end subroutine write_selected_particles
+
     module subroutine write( self, fname, fromto, isegment, tempfile )
         class(sp_project),                    intent(inout) :: self
         class(string),              optional, intent(in)    :: fname

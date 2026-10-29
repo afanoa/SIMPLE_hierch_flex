@@ -984,13 +984,14 @@ end subroutine exec_test_write_state_weights_mixed
 !> Publish a PARTITION state weight set over the project's labelled particles (state > 0): w_own on the
 !! labelled state, the rest spread equally over the other states (w_own = 1 gives the hard labels).
 !! Written in the working directory and registered in the project (nstates from the command line).
+!! With infile, publish verified ancestral memberships and labels into the caller's private project copy.
 subroutine write_state_weights_from_labels( cline, w_own )
     use simple_state_weight_set, only: state_weight_set
     class(cmdline), intent(inout) :: cline
     real,           intent(in)    :: w_own
     class(sp_project), allocatable :: project
     type(state_weight_set) :: wset
-    type(string)           :: projfile
+    type(string)           :: projfile, fixture, receipt
     real,    allocatable   :: weights(:,:)
     integer, allocatable   :: pinds(:), labels(:)
     integer :: nstates, nsel, i, s
@@ -1000,6 +1001,22 @@ subroutine write_state_weights_from_labels( cline, w_own )
     nstates  = cline%get_iarg('nstates')
     allocate(project)
     call project%read(projfile)
+    if( cline%defined('infile') )then
+        if( w_own /= 0.7 ) THROW_HARD('ancestral infile is supported only by write_state_weights_mixed')
+        if( .not. cline%defined('outfile') ) THROW_HARD('ancestral initializer requires outfile= for its arrays')
+        fixture = cline%get_carg('infile')
+        receipt = cline%get_carg('outfile')
+        call read_ancestral_initializer(project, nstates, fixture, receipt, pinds, weights, labels)
+        do i = 1, size(pinds)
+            call project%os_ptcl3D%set_state(pinds(i), labels(i))
+        enddo
+        call project%write_segment_inside('ptcl3D', projfile)
+        call wset%publish(project, project%os_ptcl3D, projfile, pinds, weights, labels, 'ancestral_init')
+        call wset%kill
+        call project%kill
+        deallocate(project, pinds, labels, weights)
+        return
+    endif
     nsel = 0
     do i = 1, project%os_ptcl3D%get_noris()
         s = project%os_ptcl3D%get_state(i)
@@ -1027,5 +1044,102 @@ subroutine write_state_weights_from_labels( cline, w_own )
     call project%kill
     deallocate(project, pinds, labels, weights)
 end subroutine write_state_weights_from_labels
+
+!> Read a pinned initializer fixture; verify the caller's project identities without project I/O.
+subroutine read_ancestral_initializer( project, nstates, fixture, receipt, rows, weights, labels )
+    use simple_flex_ancestral_init, only: flex_ancestral_mix
+    class(sp_project), intent(in) :: project
+    integer,          intent(in) :: nstates
+    class(string),    intent(in) :: fixture, receipt
+    integer, allocatable, intent(out) :: rows(:), labels(:)
+    real,    allocatable, intent(out) :: weights(:,:)
+    type(string), allocatable :: sources(:)
+    type(string) :: stack_ref
+    integer, allocatable :: ar(:), eo(:), ae(:), targets(:), at(:), stack(:), indstk(:), pind(:), fit(:)
+    real(real64), allocatable :: leaf(:,:), ancestor(:,:), draws(:), p(:,:), w(:,:), tr(:,:), prior(:)
+    character(len=2048) :: line
+    character(len=128)  :: factor, ancestor_factor
+    character(len=64)   :: mask_sha, ancestor_mask_sha
+    character(len=256)  :: message
+    real(real64) :: blend
+    integer :: fu, io, n, k, ka, nsrc, verified, i, j, h, status, si, nactive
+    if( file_exists(receipt) ) THROW_HARD('ancestral array receipt already exists')
+    call fopen(fu, fixture, status='old', action='read', iostat=io)
+    call fileiochk('cannot read ancestral initializer fixture', io)
+    read(fu,'(A)',iostat=io) line
+    call fileiochk('cannot read ancestral initializer version', io)
+    if( trim(line) /= 'SIMPLE_ANCESTRAL_INIT_V1' ) THROW_HARD('unsupported ancestral initializer fixture')
+    read(fu,*,iostat=io) factor, ancestor_factor
+    call fileiochk('cannot read ancestral factor identities', io)
+    read(fu,*,iostat=io) mask_sha, ancestor_mask_sha
+    call fileiochk('cannot read ancestral mask identities', io)
+    if( len_trim(mask_sha) /= 64 .or. mask_sha /= ancestor_mask_sha ) THROW_HARD('ancestral masks differ')
+    read(fu,*,iostat=io) n, k, ka, nsrc, verified, blend
+    call fileiochk('cannot read ancestral initializer dimensions', io)
+    if( n < 1 .or. n > project%os_ptcl3D%get_noris() .or. k /= nstates .or. k < 1 .or. &
+        &ka < 1 .or. k > 64 .or. ka > 64 .or. nsrc < 1 .or. nsrc > n ) THROW_HARD('invalid ancestral fixture dimensions')
+    if( verified /= 1 ) THROW_HARD('ancestral factor evidence is not accepted')
+    allocate(rows(n), ar(n), eo(n), ae(n), targets(k), at(ka), stack(n), indstk(n), pind(n), fit(n), &
+        &draws(n), leaf(n,k), ancestor(n,ka), sources(nsrc))
+    read(fu,*,iostat=io) targets
+    call fileiochk('cannot read leaf target identities', io)
+    read(fu,*,iostat=io) at
+    call fileiochk('cannot read ancestor target identities', io)
+    do i = 1, nsrc
+        read(fu,'(A)',iostat=io) line
+        call fileiochk('cannot read ancestral stack reference', io)
+        sources(i) = trim(line)
+    enddo
+    do i = 1, n
+        read(fu,*,iostat=io) rows(i), ar(i), eo(i), ae(i), stack(i), indstk(i), pind(i), fit(i), draws(i), &
+            &leaf(i,:), ancestor(i,:)
+        call fileiochk('cannot read ancestral particle row', io)
+    enddo
+    read(fu,'(A)',iostat=io) line
+    if( io >= 0 ) THROW_HARD('extra rows after ancestral initializer fixture')
+    call fclose(fu)
+    if( any(fit < 0) .or. any(fit > 1) ) THROW_HARD('invalid ancestral training split')
+    call flex_ancestral_mix(leaf, ancestor, rows, ar, eo, ae, targets, at, fit == 1, draws, blend, factor, &
+        &ancestor_factor, verified == 1, p, w, tr, prior, labels, status, message)
+    if( status /= 0 ) THROW_HARD(trim(message))
+    nactive = 0
+    do i = 1, project%os_ptcl3D%get_noris()
+        if( project%os_ptcl3D%get_state(i) > 0 ) nactive = nactive + 1
+    enddo
+    if( nactive /= n ) THROW_HARD('ancestral fixture must match the complete active project selection')
+    do i = 1, n
+        if( rows(i) > project%os_ptcl3D%get_noris() ) THROW_HARD('ancestral row outside project')
+        if( project%os_ptcl3D%get_state(rows(i)) <= 0 ) THROW_HARD('ancestral row is inactive in project')
+        if( project%os_ptcl3D%get_eo(rows(i)) /= eo(i) ) THROW_HARD('ancestral half differs from project')
+        if( project%os_ptcl3D%get_int(rows(i),'indstk') /= indstk(i) .or. &
+            &project%os_ptcl3D%get_int(rows(i),'pind') /= pind(i) ) THROW_HARD('ancestral image identity differs from project')
+        si = project%os_ptcl3D%get_int(rows(i),'stkind')
+        if( si < 1 .or. si > project%os_stk%get_noris() ) THROW_HARD('invalid project stack identity')
+        if( stack(i) < 1 .or. stack(i) > nsrc ) THROW_HARD('invalid ancestral stack identity')
+        stack_ref = project%os_stk%get_str(si,'stk')
+        if( stack_ref /= sources(stack(i)) ) THROW_HARD('ancestral stack reference differs from project')
+    enddo
+    do j = 1, k
+        do h = 0, 1
+            if( count(labels == j .and. eo == h) < 6 ) THROW_HARD('ancestral state half-population is below six')
+        enddo
+    enddo
+    allocate(weights(n,k))
+    do j = 1, k
+        weights(:,targets(j)) = real(p(:,j))
+    enddo
+    call fopen(fu, receipt, status='new', action='write', iostat=io)
+    call fileiochk('cannot write ancestral array receipt', io)
+    write(fu,'(A)') '# SIMPLE_ANCESTRAL_ARRAYS_V1'
+    write(fu,*) n, k, ka
+    write(fu,'(*(ES25.16E3,1X))') prior
+    do j = 1, ka
+        write(fu,'(*(ES25.16E3,1X))') tr(j,:)
+    enddo
+    do i = 1, n
+        write(fu,'(3(I0,1X),*(ES25.16E3,1X))') rows(i), eo(i), labels(i), p(i,:), w(i,:)
+    enddo
+    call fclose(fu)
+end subroutine read_ancestral_initializer
 
 end submodule simple_commanders_test_highlevel_flex

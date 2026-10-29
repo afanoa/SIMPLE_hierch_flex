@@ -62,6 +62,7 @@ type binoris
     procedure, private :: read_segment_1, read_segment_2
     generic            :: read_segment => read_segment_1, read_segment_2
     procedure          :: read_record
+    procedure          :: copy_selected_particles
     ! getters
     procedure          :: get_segments_info
     procedure          :: get_n_segments
@@ -129,6 +130,109 @@ contains
             end subroutine open_local
 
     end subroutine open
+
+    ! Copy selected particle rows and all other segments verbatim into a fresh file.
+    ! Source headers and records stay unchanged; unused trailing bytes are omitted.
+    subroutine copy_selected_particles( self, fname, rows )
+        class(binoris), intent(inout) :: self
+        class(string), intent(in)    :: fname
+        integer,       intent(in)    :: rows(:)
+        integer, parameter :: BUFFER_BYTES = 4 * 1024 * 1024
+        type(binoris) :: dst
+        character(len=1), allocatable :: input(:), output(:)
+        type(string) :: srcpath, dstpath
+        integer(kind=8) :: filesz, nb, nr, first, pos_in, pos_out, remaining, nread, nptcls
+        integer(kind(ENUM_ORISEG)) :: iseg
+        integer :: i, j, firstrow, lastrow, per_block, nout, offset, io
+        if( .not. self%l_open ) THROW_HARD('source must be open; copy_selected_particles')
+        srcpath = simple_abspath(self%fname)
+        dstpath = simple_abspath(fname, check_exists=.false.)
+        if( srcpath == dstpath ) THROW_HARD('source equals destination; copy_selected_particles')
+        if( size(rows) > 0 )then
+            if( rows(1) < 1 ) THROW_HARD('particle rows must be positive; copy_selected_particles')
+            if( any(rows(2:) <= rows(:size(rows)-1)) ) THROW_HARD('particle rows must ascend; copy_selected_particles')
+        endif
+        filesz = funit_size(self%funit)
+        nptcls = -1
+        do iseg = 1, self%n_segments
+            nr    = self%header(iseg)%n_records
+            if( nr == 0 ) cycle
+            nb    = self%header(iseg)%n_bytes_per_record
+            first = self%header(iseg)%first_data_byte
+            if( nr < 0 .or. nb <= 0 .or. first <= N_BYTES_HEADER .or. first > filesz ) &
+                THROW_HARD('invalid segment header; copy_selected_particles')
+            if( nr > (filesz-first+1)/nb ) THROW_HARD('segment exceeds source; copy_selected_particles')
+            if( .not. is_particle_seg(iseg) ) cycle
+            if( self%header(iseg)%fromto(1) /= 1 ) THROW_HARD('partial particle segment; copy_selected_particles')
+            if( self%header(iseg)%fromto(2) /= nr ) THROW_HARD('particle range mismatch; copy_selected_particles')
+            if( nb > BUFFER_BYTES ) THROW_HARD('particle record too large; copy_selected_particles')
+            if( nptcls >= 0 )then
+                if( nr /= nptcls ) THROW_HARD('particle segment sizes differ; copy_selected_particles')
+            endif
+            nptcls = nr
+            if( size(rows) > 0 )then
+                if( int(rows(size(rows)),8) > nr ) THROW_HARD('particle row beyond source; copy_selected_particles')
+            endif
+        end do
+        if( size(rows) > 0 .and. nptcls < 0 ) THROW_HARD('no particle segment; copy_selected_particles')
+        call dst%open(fname, del_if_exists=.true.)
+        dst%header     = self%header
+        dst%n_segments = self%n_segments
+        do iseg = 1, self%n_segments
+            if( .not. is_particle_seg(iseg) ) cycle
+            if( dst%header(iseg)%n_records == 0 ) cycle
+            if( size(rows) == 0 )then
+                dst%header(iseg) = binoris_seginfo()
+            else
+                dst%header(iseg)%fromto = [1_8, int(size(rows),8)]
+                dst%header(iseg)%n_records = size(rows)
+            endif
+        end do
+        call dst%update_byte_ranges
+        allocate(input(BUFFER_BYTES), output(BUFFER_BYTES))
+        do iseg = 1, self%n_segments
+            if( dst%header(iseg)%n_records == 0 ) cycle
+            nb      = self%header(iseg)%n_bytes_per_record
+            pos_in  = self%header(iseg)%first_data_byte
+            pos_out = dst%header(iseg)%first_data_byte
+            if( is_particle_seg(iseg) )then
+                per_block = BUFFER_BYTES / int(nb)
+                i = 1
+                do while( i <= size(rows) )
+                    firstrow = rows(i)
+                    lastrow = int(min(self%header(iseg)%n_records, int(huge(lastrow),8), int(firstrow,8)+per_block-1))
+                    nread = int(lastrow-firstrow+1,8) * nb
+                    read(self%funit,pos=pos_in+int(firstrow-1,8)*nb,iostat=io) input(:int(nread))
+                    call fileiochk('read particle block; copy_selected_particles', io)
+                    nout = 0
+                    do j = i, size(rows)
+                        if( rows(j) > lastrow ) exit
+                        offset = (rows(j)-firstrow) * int(nb)
+                        output(nout+1:nout+int(nb)) = input(offset+1:offset+int(nb))
+                        nout = nout + int(nb)
+                    end do
+                    write(dst%funit,pos=pos_out,iostat=io) output(:nout)
+                    call fileiochk('write particle block; copy_selected_particles', io)
+                    pos_out = pos_out + nout
+                    i = j
+                end do
+            else
+                remaining = self%header(iseg)%n_records * nb
+                do while( remaining > 0 )
+                    nread = min(remaining, int(BUFFER_BYTES,8))
+                    read(self%funit,pos=pos_in,iostat=io) input(:int(nread))
+                    call fileiochk('read metadata block; copy_selected_particles', io)
+                    write(dst%funit,pos=pos_out,iostat=io) input(:int(nread))
+                    call fileiochk('write metadata block; copy_selected_particles', io)
+                    pos_in = pos_in + nread
+                    pos_out = pos_out + nread
+                    remaining = remaining - nread
+                end do
+            endif
+        end do
+        call dst%write_header
+        call dst%close
+    end subroutine copy_selected_particles
 
     subroutine clear_segments( self )
         class(binoris), intent(inout) :: self

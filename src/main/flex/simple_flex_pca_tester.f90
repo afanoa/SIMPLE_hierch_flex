@@ -46,8 +46,13 @@ public :: run_all_flex_pca_tests, run_all_flex_pca_lib_tests
 contains
 
     subroutine run_all_flex_pca_tests()
+        use simple_flex_ancestral_init_tester, only: test_flex_ancestral_init
+        use simple_flex_shared_private_tester, only: test_flex_shared_private
+        use simple_flex_supported_extrema_tester, only: test_flex_supported_extrema
+        use simple_flex_predictive_tester, only: test_flex_predictive
         write(*,'(A)') '**** running all flex_pca tests ****'
         call test_posterior_solve()
+        call test_flex_shared_private()
         call test_estep_former()
         call test_crossfit_fsc()
         call test_probe_codec()
@@ -58,6 +63,9 @@ contains
         call test_prune_states()
         call test_kernel_bandwidth()
         call test_state_weights()
+        call test_flex_ancestral_init()
+        call test_flex_supported_extrema()
+        call test_flex_predictive()
         call test_deconvolution(4000, 0.5d0, 5.d0)
         call test_mstep_toy()
     end subroutine run_all_flex_pca_tests

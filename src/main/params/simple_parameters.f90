@@ -31,6 +31,7 @@ type :: parameters
     character(len=3)          :: bin='no'             !< binarize image(yes|no){no}
     character(len=3)          :: boxes='no'           !< add box coordinates to JSON output(yes|no){no}
     character(len=3)          :: umap='yes'           !< flex_pca: UMAP plot coordinates and figures of the final embedding(yes|no){yes}
+    character(len=3)          :: rec_plane_reuse='no' !< reuse reconstruction plane storage, recomputing every value(yes|no){no}
     character(len=3)          :: cache='no'           !< cache Fourier-cropped particles to cut per-iteration I/O(yes|no){no}
     character(len=3)          :: cavg_ini='no'        !< use class averages for initialization(yes|no){no}
     character(len=3)          :: cavg_ini_ext='no'    !< use class averages for (external) initialization(yes|no){no}
@@ -57,7 +58,16 @@ type :: parameters
     character(len=3)          :: site_disc='no'
     character(len=3)          :: site_layer='yes'
     character(len=3)          :: node_rows='yes'
+    character(len=3)          :: node_subset_io='no' !< write compact tree projects directly from selected rows(yes|no){no}
+    character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}
     character(len=3)          :: node_proj='no'
+    character(len=3)          :: node_motion='no'
+    character(len=3)          :: strongest_pole='no'
+    character(len=3)          :: two_poles='no'
+    character(len=3)          :: motion_gate='no'
+    character(len=3)          :: motion_inherit='no'
+    character(len=3)          :: motion_multi='yes'
+    character(len=3)          :: pooled_poles='no'
     character(len=3)          :: node_seed='no'
     character(len=3)          :: site_size='no'
     character(len=3)          :: oneflex='yes'
@@ -87,6 +97,9 @@ type :: parameters
     character(len=3)          :: iterstats='no'       !< Whether to keep track alignment stats throughout iterations
     character(len=3)          :: json='no'            !< Print in json format (mainly for nice)
     character(len=3)          :: junk_screen='yes'
+    character(len=3)          :: merge_geom_reuse='no' !< reuse split/merge projection geometry across candidate maps(yes|no){no}
+    character(len=3)          :: merge_insert_reuse='no' !< reuse EM insertion geometry across candidate maps(yes|no){no}
+    character(len=3)          :: merge_insert_audit='no' !< export production EM wrapper inputs and maps for exact acceptance(yes|no){no}
     character(len=3)          :: keepvol='no'         !< dev flag for preserving iterative volumes in refine3d
     character(len=3)          :: lam_anneal='no'      !< anneal lambda parameter
     character(len=3)          :: loc_sdev='no'        !< Whether to calculate local standard deviations(yes|no){no}
@@ -210,6 +223,7 @@ type :: parameters
     type(string)              :: infile               !< file with inputs(.txt)
     type(string)              :: infile2              !< file with inputs(.txt)
     type(string)              :: pindfile             !< distributed worker: particle rows written by the master (flex_pca, reconstruct3D)
+    type(string)              :: pca_eval_pindfile    !< disjoint held-out project rows for conditional predictive evaluation
     type(string)              :: rowmap
     type(string)              :: subtree_node
     type(string)              :: keys
@@ -274,6 +288,7 @@ type :: parameters
     type(string)              :: vols_odd(MAXS)
     type(string)              :: worker_priority      !< priority to submit jobs with
     type(string)              :: worker_server        !< address and port of worker server for job submission
+    type(string)              :: merge_audit_request  !< optional EM wrapper replay request for state_split audit mode
     type(string)              :: xmldir
     type(string)              :: xmlloc
     ! other character variables in ascending alphabetical order
@@ -383,6 +398,7 @@ type :: parameters
     integer :: kfloor=5000
     integer :: flex_min_neff=0
     integer :: subtree_max=0
+    integer :: split_ntests=1
     integer :: kfromto(2)
     integer :: ldim(3)=0
     integer :: maxdepth=4
@@ -443,6 +459,8 @@ type :: parameters
     integer :: nptcls_per_part=0   !< # particles per part in balanced selection
     integer :: nptcls_refs=0       !< # selected particles solve3D_pyramid makes its reference volumes from (0: its default)
     integer :: npreimages=0        !< # state volumes; 0 = DISCOVER it (over-provision, then two-gate merge)
+    integer :: flex_sp_k=0         !< shared/private covariance components; 0 disables the experimental model
+    integer :: flex_sp_shared=0    !< shared covariance rank; private rank follows neigs=q+K*r+K-1
     integer :: niter=5             !< # alternating low-rank covariance fitting iterations
     integer :: min_neff=2000       !< minimum effective particle count for covariance state kernels
     integer :: state_axis=0        !< covariance latent coordinate for state targets; 0=diffusion k-center over all comps
@@ -508,6 +526,10 @@ type :: parameters
     integer :: which_iter=0        !< iteration nr
     integer :: workers=0           !< # workers for distributed execution
     integer :: worker_nthr=0       !< # threads per worker for distributed execution
+    integer :: state_assembly=0   !< concurrent independent state assemblies; zero keeps serial assembly{0}
+    integer :: assembly_mem=0     !< explicit memory in MB per concurrent state assembly
+    integer :: assembly_state=0   !< internal private assembly worker state; requires a validated request
+    integer :: node_worker_mem=0   !< memory in MB per standalone tree worker, explicitly required when enabled
     integer :: worker_server_nthr=0 !< # threads per worker of the worker_server (0: not given)
     integer :: xcoord=0            !< x coordinate{0}
     integer :: ycoord=0            !< y coordinate{0}
@@ -613,6 +635,7 @@ type :: parameters
     real    :: phshift_min=0.      !< minimum fitted phase shift(in degrees){0}
     real    :: phshift_step=10.    !< phase-shift grid step(in degrees){10}
     real    :: pole_merge=0.
+    real    :: motion_floor=0.
     real    :: prob_athres=10.     !< angle threshold for prob distribution samplings
     real    :: rec_athres=10.      !< angle threshold for reconstruction
     real    :: regpass_fsc=0.143   !< refine3D_auto: FSC value of the startup pair defining the registration-pass band{0.143}
@@ -627,6 +650,7 @@ type :: parameters
     real    :: scale_movies=1.     !< movie scale factor
     real    :: sherr=0.            !< shift error(in pixels){2}
     real    :: sigma=1.0           !< for gaussian function generation {1.}
+    real    :: pca_eval_sig2=0.     !< externally fixed complex noise variance for held-out predictive evaluation
     real    :: smpd=1.3            !< sampling distance; same as EMANs apix(in A)
     real    :: smpd_downscale      !< sampling distance for movie downscaling; native smpd when omitted
     real    :: smpd_target=0.5     !< target sampling distance; same as EMANs apix(in A) refers to paddep cavg/volume

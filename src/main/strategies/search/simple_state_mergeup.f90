@@ -20,11 +20,14 @@ use simple_stat,          only: avg_ranks
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
-public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles
+public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_zcrit
 private
 #include "simple_local_flags.inc"
 
-integer, parameter :: NSHUF = 20, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+real(dp), parameter :: ALPHA_SPLIT = 1._dp / 21._dp
+integer,  parameter :: NSHUF_STEP = 10
+real,     parameter :: NSHUF_KSIG = 4.
 integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
 real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
@@ -37,6 +40,14 @@ real,    parameter :: SMEAR_DEG(10) = [0., 1., 2., 3., 4., 6., 8., 11., 15., 20.
 type :: ivec
     integer, allocatable :: v(:)
 end type ivec
+
+type :: shuffle_null
+    integer, allocatable :: sjidx(:)
+    real,    allocatable :: nul(:), nul2(:)
+    integer :: ng = 0, neq = 0, nsh = 0, ndone = 0, nstep = 0
+    real    :: zc = 0.
+    logical :: l_z = .false.
+end type shuffle_null
 
 type :: state_mergeup
     private
@@ -54,12 +65,17 @@ type :: state_mergeup
     integer, allocatable :: fsh(:,:,:)
     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
     logical :: l_exists = .false.
+    integer :: audit_calls = 0
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
     real,    allocatable :: nv(:), con(:), cam(:), cse(:), cpj(:)
     real(dp), allocatable :: cb(:,:), cs(:,:)
     real(dp) :: cfit(3) = 0._dp
     integer :: nj = 0, kj = 0, nfit = 0
+    integer, allocatable :: fbhk(:,:), fbsh(:)
+    real,    allocatable :: fbw(:), f2b(:,:), cwb(:)
+    integer :: nfb = 0, nshfb = 0
+    logical :: l_route = .false., l_rband = .false., l_rdir = .false., l_rcho = .false., l_con = .false., l_amp = .false.
   contains
     procedure :: new
     procedure :: focus
@@ -72,13 +88,19 @@ type :: state_mergeup
     procedure :: get_rows
     procedure :: holdout_band
     procedure :: kill
+    procedure :: audit_em_wrapper
     procedure, private :: consensus
     procedure, private :: screen
     procedure, private :: decide
+    procedure, private :: null_upto
+    procedure, private :: null_resolve
     procedure, private :: eqn_stats
     procedure, private :: cross_em
+    procedure, private :: em_maps
+    procedure, private :: write_em_audit
     procedure, private :: estep
     procedure, private :: maps
+    procedure, private :: maps_weighted_shared
     procedure, private :: accumulate
     procedure, private :: accumulate_jobs
     procedure, private :: finish
@@ -98,7 +120,7 @@ end type state_mergeup
 
 contains
 
-    subroutine new( self, params, build, em_lim )
+    subroutine new( self, params, build, em_lim, contrast, amplitude )
         use simple_matcher_3Drec,   only: init_rec, prep_imgs4rec, cleanup_rec_buffers
         use simple_matcher_ptcl_io, only: prepimgbatch, ptcl_read_session
         use simple_imgarr_utils,    only: alloc_imgarr, dealloc_imgarr
@@ -107,16 +129,22 @@ contains
         class(parameters), target, intent(inout) :: params
         class(builder),    target, intent(inout) :: build
         real,                      intent(in)    :: em_lim
+        logical, optional,         intent(in)    :: contrast, amplitude
         type(fplane_type), allocatable :: fdummy(:)
         type(image),       allocatable :: crop_imgs(:)
         real,              allocatable :: ones(:,:,:), sdn(:)
         type(ptcl_read_session) :: reads
         type(image) :: mskimg
         real    :: dirs(3,NVIEW), v(3), t, z, rz, g, e1, e2
-        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie
+        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie, ist
+        character(len=32) :: route
         call self%kill
         self%p => params
         self%b => build
+        if( present(contrast)  ) self%l_con = contrast
+        if( present(amplitude) ) self%l_amp = amplitude
+        if( self%l_con .or. self%l_amp ) write(logfhandle,'(A,L1,A,L1)') '>>> STATE_MERGEUP contrast-aware: maps ', self%l_con, &
+            &', E-step amplitude ', self%l_amp
         !$ call omp_set_max_active_levels(1)
         self%nslots = max(2, nthr_glob)
         !$ self%nslots = max(self%nslots, omp_get_max_threads())
@@ -168,7 +196,7 @@ contains
             end do
             !$omp end parallel do
             call prep_imgs4rec(params, build, b2-b1+1, build%imgbatch(:b2-b1+1), self%rows(b1:b2), self%fpls(b1:b2), &
-                &crop_imgs=crop_imgs, kfromto=[1,self%nyq], observation_model=.true., whiten=.false.)
+                &crop_imgs=crop_imgs, kfromto=[1,self%nyq], observation_model=.true., whiten=.false., contrast=self%l_con)
         end do
         call reads%kill
         call cleanup_rec_buffers(build, fdummy)
@@ -211,6 +239,34 @@ contains
             if( ie == 1 ) allocate(self%jhk(2,self%nj), self%jsh(self%nj), self%jw(self%nj))
         end do
         allocate(self%f2j(self%kj,self%n), source=0.)
+        call get_environment_variable('SIMPLE_SPLIT_ROUTE', route, status=ist)
+        self%l_route = ist == 0 .and. (trim(route) == 'best' .or. trim(route) == 'band' .or. trim(route) == 'band_direct' .or. &
+            &trim(route) == 'choose')
+        self%l_rband = ist == 0 .and. (trim(route) == 'band' .or. trim(route) == 'band_direct')
+        self%l_rdir  = ist == 0 .and. trim(route) == 'band_direct'
+        self%l_rcho  = ist == 0 .and. trim(route) == 'choose'
+        if( self%l_route )then
+            do ie = 1, 2
+                self%nfb = 0
+                do k = lbound(self%fpls(1)%cmplx_plane,2), 0
+                    do h = lbound(self%fpls(1)%cmplx_plane,1), ubound(self%fpls(1)%cmplx_plane,1)
+                        r2 = h*h + k*k
+                        if( r2 < 3 .or. r2 > self%khi*(self%khi+1) ) cycle
+                        self%nfb = self%nfb + 1
+                        if( ie == 1 ) cycle
+                        self%fbhk(:,self%nfb) = [h, k]
+                        self%fbsh(self%nfb)   = nint(sqrt(real(r2))) - 1
+                        self%fbw(self%nfb)    = merge(1., 2., k == 0)
+                    end do
+                end do
+                if( ie == 1 ) allocate(self%fbhk(2,self%nfb), self%fbsh(self%nfb), self%fbw(self%nfb))
+            end do
+            self%nshfb = maxval(self%fbsh)
+            allocate(self%f2b(self%nshfb,self%n), self%cwb(self%nshfb), source=0.)
+            do j = 1, self%nfb
+                self%cwb(self%fbsh(j)) = self%cwb(self%fbsh(j)) + self%fbw(j)
+            end do
+        endif
         !$omp parallel do default(shared) private(i,j,h,k,sh) schedule(static) proc_bind(close)
         do i = 1, self%n
             if( sdn(i) > 0. ) self%fpls(i)%cmplx_plane = sdn(i) * self%fpls(i)%cmplx_plane
@@ -223,6 +279,10 @@ contains
             do j = 1, self%nj
                 self%f2j(self%jsh(j),i) = self%f2j(self%jsh(j),i) + self%jw(j) * &
                     &abs(self%fpls(i)%cmplx_plane(self%jhk(1,j),self%jhk(2,j)))**2
+            end do
+            do j = 1, self%nfb
+                self%f2b(self%fbsh(j),i) = self%f2b(self%fbsh(j),i) + self%fbw(j) * &
+                    &abs(self%fpls(i)%cmplx_plane(self%fbhk(1,j),self%fbhk(2,j)))**2
             end do
             self%fpls(i)%cmplx_plane = real(self%fpls(i)%transfer_plane) * self%fpls(i)%cmplx_plane
             deallocate(self%fpls(i)%transfer_plane)
@@ -578,17 +638,20 @@ contains
 
     end subroutine run
 
-    subroutine test( self, cand, k0, child, kstar, junk )
+    subroutine test( self, cand, k0, child, kstar, junk, ntests )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: cand(:), k0
         integer, allocatable, intent(out)   :: child(:), junk(:)
         integer,              intent(out)   :: kstar
-        complex, allocatable :: cons(:,:,:,:), nm(:,:,:,:)
-        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), jidx(:), joff(:), gcom(:)
+        integer, optional,    intent(in)    :: ntests
+        complex, allocatable :: cons(:,:,:,:)
+        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:)
         integer, allocatable :: plist(:), gof(:), exa(:), exb(:), starta(:), startb(:), sizes(:), order(:), rank(:)
-        real,    allocatable :: eps(:), nul(:), nul2(:), jscale(:), vals(:), vals2(:)
-        real    :: thr, thr2
-        integer :: neq, s, s1, s2, nbatch, g, q, m, npair, ii, jj, nb, npr, ipr, kem, ng
+        real,    allocatable :: eps(:)
+        type(shuffle_null) :: nl
+        real    :: thr, thr2, mu2, sd2, zc, rst
+        integer :: neq, s, g, m, npair, ii, jj, kem, ng, nsh, nsj, nthr
+        nsh = merge(NSHUF_BONF, NSHUF, present(ntests))
         ia = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 0)
         ib = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 1)
         la = cand(ia)
@@ -602,58 +665,45 @@ contains
         sta  = self%strata(ia)
         stb  = self%strata(ib)
         write(logfhandle,'(A)') 'equal N '//int2str(neq)//' per group; band '//int2str(self%klo)//'..'//int2str(self%khi)//&
-            &', re-test band '//int2str(self%kt)//'..'//int2str(self%khi)//'; '//int2str(NSHUF)//&
+            &', re-test band '//int2str(self%kt)//'..'//int2str(self%khi)//'; '//int2str(nsh)//&
             &' shuffles; stratified null: '//int2str(nuniq(sta))//' / '//int2str(nuniq(stb))//&
             &' nuisance strata (view x defocus)'
-        allocate(nul(0), nul2(0))
+        nl%ng  = ng
+        nl%neq = neq
+        nl%nsh = nsh
+        nl%l_z = present(ntests)
+        if( nl%l_z ) nl%zc = split_zcrit(ntests)
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        nl%nstep = max(NSHUF_STEP, ceiling(real(nthr) / real(max(1, 2*ng))))
+        allocate(nl%nul(0), nl%nul2(0))
         if( ng >= 2 )then
-            nbatch = max(1, min(NSHUF, MAXJOBS / max(1, 2*ng)))
-            npr    = ng * (ng - 1) / 2
-            do s1 = 1, NSHUF, nbatch
-                s2 = min(NSHUF, s1 + nbatch - 1)
-                nb = s2 - s1 + 1
-                allocate(jidx(0), joff(1), jscale(0))
-                joff(1) = 1
-                do s = s1, s2
-                    pa = sshuf(la, sta)
-                    pb = sshuf(lb, stb)
-                    call add_subset_jobs(ia, pa)
-                    call add_subset_jobs(ib, pb)
-                end do
-                allocate(nm(self%nh,self%box,self%box,2*ng*nb))
-                call self%maps(jidx, joff, jscale, eps, .true., .false., nm)
-                !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
-                do m = 1, 2*ng*nb
-                    call self%dock(nm(:,:,:,m), cons(:,:,:,2-mod((m-1)/ng,2)), self%kt, self%khi)
-                end do
-                !$omp end parallel do
-                allocate(vals(npr*nb), vals2(npr*nb))
-                !$omp parallel do default(shared) private(ipr,s,g,q,ii) schedule(dynamic) proc_bind(close)
-                do ipr = 1, npr*nb
-                    s  = (ipr - 1) / npr
-                    ii = ipr - s * npr
-                    call pair_index(ii, ng, g, q)
-                    vals(ipr)  = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
-                        &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%klo)
-                    vals2(ipr) = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
-                        &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%kt)
-                end do
-                !$omp end parallel do
-                nul  = [nul, vals]
-                nul2 = [nul2, vals2]
-                deallocate(nm, jidx, joff, jscale, vals, vals2)
+            ! all shuffles' subsets are drawn here, in the original order; maps past NSHUF only when the re-test needs them
+            allocate(nl%sjidx(2*ng*neq*nsh))
+            nsj = 0
+            do s = 1, nsh
+                pa = sshuf(la, sta)
+                pb = sshuf(lb, stb)
+                call add_subset_jobs(ia, pa)
+                call add_subset_jobs(ib, pb)
             end do
+            call self%null_upto(nl, NSHUF, eps, cons)
         endif
         thr  = huge(thr)
         thr2 = huge(thr2)
-        if( size(nul) > 0 )then
-            thr  = maxval(nul)
-            thr2 = maxval(nul2)
-            write(logfhandle,'(A)') 'shuffle null ('//int2str(size(nul))//' pair statistics): median '//&
-                &fmtr(real(medianr(nul),dp),3)//', 95 % '//fmtr(real(quantr(nul,0.95),dp),3)//', max '//&
-                &fmtr(real(thr,dp),3)//' -> threshold '//fmtr(real(thr,dp),3)
-            write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
-                &fmtr(real(medianr(nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//' -> threshold '//fmtr(real(thr2,dp),3)
+        mu2  = 0.
+        sd2  = 0.
+        zc   = nl%zc
+        if( size(nl%nul) > 0 )then
+            thr = maxval(nl%nul)
+            call null_thr(nl, mu2, sd2, thr2)
+            write(logfhandle,'(A)') 'shuffle null ('//int2str(size(nl%nul))//' pair statistics): median '//&
+                &fmtr(real(medianr(nl%nul),dp),3)//', 95 % '//fmtr(real(quantr(nl%nul,0.95),dp),3)//', max '//&
+                &fmtr(real(thr,dp),3)//' -> threshold '//fmtr(real(thr,dp),3)//' (the max of its first '//&
+                &int2str(NSHUF)//' shuffles)'
+            if( .not. nl%l_z ) write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//&
+                &': shuffle null median '//fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//&
+                &' -> threshold '//fmtr(real(thr2,dp),3)
         endif
         call self%decide(ia, ib, la, lb, k0, eps, neq, cons, self%klo, thr, 'board groups', plist, gof, exa, exb, kstar)
         if( kstar >= 2 )then
@@ -666,8 +716,22 @@ contains
             call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
             write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
                 &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
-            call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
-                &exa, exb, kstar)
+            if( nl%l_z .and. ng >= 2 )then
+                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
+                    &exa, exb, kstar, rst, nl)
+                call null_thr(nl, mu2, sd2, thr2)
+                write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
+                    &fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(maxval(nl%nul2),dp),3)//', mean / sd '//&
+                    &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)//'; z_crit '//fmtr(real(zc,dp),2)//&
+                    &' (alpha 1/21 over '//int2str(ntests)//' split tests) -> threshold '//fmtr(real(thr2,dp),3)//&
+                    &' from '//int2str(nl%ndone)//' of '//int2str(nsh)//' shuffles'
+                write(logfhandle,'(A)') 're-test: weakest pair '//fmtr(real(rst,dp),3)//' at z '//&
+                    &fmtr(real((rst - mu2) / max(sd2, 1.e-12),dp),2)//' vs z_crit '//fmtr(real(zc,dp),2)//' (m '//&
+                    &int2str(ntests)//') -> '//merge('PASS', 'FAIL', kstar >= 2)//', K* '//int2str(kstar)
+            else
+                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
+                    &exa, exb, kstar, rst)
+            endif
         endif
         npair = size(plist)
         allocate(sizes(kstar), order(kstar), rank(kstar), source=0)
@@ -693,6 +757,7 @@ contains
         do ii = 1, size(ib)
             child(ib(ii)) = group_of(lb(ii), exb)
         end do
+        if( self%l_route .and. kstar >= 2 ) call route_members
         call junk_report(ia, 1, 'A')
         call junk_report(ib, 2, 'B')
         write(logfhandle,'(A)') 'K* = '//int2str(kstar)//'; sizes '//joined([(count(child == ii), ii=1,kstar)])//&
@@ -714,6 +779,120 @@ contains
             end do
         end function group_of
 
+        ! the K* groups' members from one cross-half pass over shells 2..khi, started from the EM groups and from the stage-B
+        ! states (each to the group holding most of its particles); the higher cross-half log-likelihood decides
+        subroutine route_members
+            integer, allocatable :: ja(:), jb(:), a1(:), b1(:), a2(:), b2(:), smap(:), cnt(:,:), sz(:), rk(:)
+            real(dp), allocatable :: pa1(:), pb1(:), pa2(:), pb2(:), dl(:)
+            real(dp) :: ll1, ll2, lb1(2), lb2(2), dmg, dse
+            integer  :: ss, gg, mm, nchg, k1
+            logical  :: l_two, l_win2
+            k1 = kstar
+            ja = pack(ia, child(ia) > 0)
+            jb = pack(ib, child(ib) > 0)
+            allocate(cnt(k0,k1), source=0)
+            do mm = 1, size(ja)
+                cnt(cand(ja(mm)),child(ja(mm))) = cnt(cand(ja(mm)),child(ja(mm))) + 1
+            end do
+            do mm = 1, size(jb)
+                cnt(cand(jb(mm)),child(jb(mm))) = cnt(cand(jb(mm)),child(jb(mm))) + 1
+            end do
+            allocate(smap(k0), source=0)
+            do ss = 1, k0
+                if( sum(cnt(ss,:)) > 0 ) smap(ss) = maxloc(cnt(ss,:), dim=1)
+            end do
+            l_two = all([(any(smap == gg), gg=1,k1)])
+            if( self%l_rcho )then
+                ! choose: the re-test band decides between the raw label sets, stage-B only when its margin exceeds 3 SE
+                nchg   = 0
+                l_win2 = .false.
+                dmg    = 0._dp
+                dse    = 0._dp
+                if( l_two )then
+                    a1 = child(ja)
+                    b1 = child(jb)
+                    a2 = smap(cand(ja))
+                    b2 = smap(cand(jb))
+                    call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., kcut=self%kt, &
+                        &llband=lb1, niter=1, lpa=pa1, lpb=pb1)
+                    call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., &
+                        &kcut=self%kt, llband=lb2, niter=1, lpa=pa2, lpb=pb2)
+                    a2  = smap(cand(ja))
+                    b2  = smap(cand(jb))
+                    dl  = [pa2 - pa1, pb2 - pb1]
+                    dmg = sum(dl)
+                    dse = sqrt(real(size(dl),dp)) * sqrt(sum((dl - dmg / real(size(dl),dp))**2) / real(max(size(dl) - 1, 1),dp))
+                    l_win2 = dmg > 3._dp * dse
+                    if( l_win2 )then
+                        nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
+                        child(ja) = a2
+                        child(jb) = b2
+                    endif
+                endif
+            else
+                a1 = child(ja)
+                b1 = child(jb)
+                call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., ll=ll1, kcut=self%kt, &
+                    &llband=lb1)
+                ll2    = -huge(ll2)
+                lb2    = -huge(ll2)
+                l_win2 = .false.
+                if( l_two )then
+                    a2 = smap(cand(ja))
+                    b2 = smap(cand(jb))
+                    call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., ll=ll2, &
+                        &kcut=self%kt, llband=lb2)
+                    ! band routing: the start that wins in the re-test band, where the split was validated
+                    l_win2 = merge(lb2(2) > lb1(2), ll2 > ll1, self%l_rband)
+                endif
+                if( l_win2 )then
+                    ! band_direct: the winning stage-B states route their particles whole, without the pass
+                    if( self%l_rdir )then
+                        a2 = smap(cand(ja))
+                        b2 = smap(cand(jb))
+                    endif
+                    nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
+                    child(ja) = a2
+                    child(jb) = b2
+                else
+                    nchg = count(child(ja) /= a1) + count(child(jb) /= b1)
+                    child(ja) = a1
+                    child(jb) = b1
+                endif
+            endif
+            sz = [(count(child == gg), gg=1,k1)]
+            allocate(rk(0:k1), source=0)
+            do gg = 1, k1
+                if( sz(gg) > 0 ) rk(gg) = count(sz > sz(gg)) + count(sz(1:gg-1) == sz(gg)) + 1
+            end do
+            child = rk(child)
+            kstar = count(sz > 0)
+            if( self%l_rcho )then
+                if( l_two )then
+                    write(logfhandle,'(A)') 'membership by the choose rule, re-test band '//int2str(self%kt)//'..'//&
+                        &int2str(self%khi)//': cross-half log-likelihood of the raw stage-B states minus the raw EM groups '//&
+                        &fmtr(dmg,1)//', SE '//fmtr(dse,1)//' (sqrt(N) x the sd of '//int2str(size(dl))//&
+                        &' per-particle deltas), 3 SE '//fmtr(3._dp*dse,1)//' -> '//&
+                        &trim(merge('stage-B states', 'EM groups     ', l_win2))//' (raw); '//int2str(nchg)//' particles change group'
+                else
+                    write(logfhandle,'(A)') 'membership by the choose rule: the stage-B states do not cover the '//int2str(k1)//&
+                        &' groups; the EM groups (raw) stand'
+                endif
+            else if( l_two )then
+                write(logfhandle,'(A)') 'membership over shells 2..'//int2str(self%khi)//': cross-half log-likelihood from the EM '//&
+                    &'groups '//fmtr(ll1,1)//', from the stage-B states '//fmtr(ll2,1)//' (margin '//fmtr(ll2-ll1,1)//'; shells 2..'//&
+                    &int2str(self%kt-1)//' margin '//fmtr(lb2(1)-lb1(1),1)//', re-test band '//int2str(self%kt)//'..'//&
+                    &int2str(self%khi)//' margin '//fmtr(lb2(2)-lb1(2),1)//'; '//trim(merge('band', 'full', self%l_rband))//&
+                    &trim(merge('-direct', '       ', self%l_rdir))//' rule) -> '//&
+                    &trim(merge('stage-B states', 'EM groups     ', l_win2))//'; '//int2str(nchg)//&
+                    &' particles change group'
+            else
+                write(logfhandle,'(A)') 'membership over shells 2..'//int2str(self%khi)//': the stage-B states do not cover the '//&
+                    &int2str(k1)//' groups; from the EM groups, log-likelihood '//fmtr(ll1,1)//'; '//int2str(nchg)//&
+                    &' particles change group'
+            endif
+        end subroutine route_members
+
         subroutine add_subset_jobs( idx, lab )
             integer, intent(in) :: idx(:), lab(:)
             integer, allocatable :: sel(:)
@@ -722,9 +901,8 @@ contains
                 sel = pack(idx, lab == gcom(gg))
                 if( size(sel) < neq ) THROW_HARD('a shuffled group is smaller than the equal N')
                 call rnd_subset(sel, neq)
-                jidx   = [jidx, sel(1:neq)]
-                joff   = [joff, size(jidx) + 1]
-                jscale = [jscale, 1.]
+                nl%sjidx(nsj+1:nsj+neq) = sel(1:neq)
+                nsj = nsj + neq
             end do
         end subroutine add_subset_jobs
 
@@ -800,7 +978,9 @@ contains
         integer, allocatable :: units(:), jidx(:), joff(:), sa(:), sb(:), part(:), js(:)
         real,    allocatable :: jscale(:), met(:,:,:)
         logical, allocatable :: flag(:), keepa(:), keepb(:)
+        character(len=:), allocatable :: tail
         integer :: nu, u, nfl, i
+        logical :: lkeep
         units = pack([(u, u=1,k0)], [(count(la == u) > 0 .and. count(lb == u) > 0, u=1,k0)])
         nu    = size(units)
         allocate(junk(0))
@@ -828,13 +1008,21 @@ contains
         endif
         junk = pack(units, flag)
         part = pack(units, .not. flag .and. min(met(2,2,:), met(2,3,:)) < JUNK_PROJ)
+        ! junk_screen=no reports what the screen flags and sets nothing aside
+        lkeep = self%p%junk_screen .eq. 'no'
         do u = 1, nu
+            tail = ''
+            if( flag(u) .and. lkeep ) tail = ' (kept: junk_screen=no)'
             write(logfhandle,'(A)') '  junk screen unit '//int2str(units(u))//': projection on the screened consensus '//&
                 &fmtr(real(met(2,2,u),dp),2)//' / '//fmtr(real(met(2,3,u),dp),2)//', rel. SSNR '//&
-                &fmtr(real(met(3,2,u),dp),2)//' / '//fmtr(real(met(3,3,u),dp),2)//' -> '//merge('JUNK','ok  ',flag(u))
+                &fmtr(real(met(3,2,u),dp),2)//' / '//fmtr(real(met(3,3,u),dp),2)//' -> '//merge('JUNK','ok  ',flag(u))//tail
         end do
         if( size(part) > 0 ) write(logfhandle,'(A)') '  partial units (projection < '//fmtr(real(JUNK_PROJ,dp),2)//&
             &' with the node signal; tested as composition, not junk): '//joined(part)
+        if( lkeep )then
+            deallocate(junk)
+            allocate(junk(0))
+        endif
         if( size(junk) > 0 .and. size(junk) < nu )then
             keepa = [(.not. any(junk == la(i)), i=1,size(la))]
             keepb = [(.not. any(junk == lb(i)), i=1,size(lb))]
@@ -915,7 +1103,7 @@ contains
 
     end subroutine screen
 
-    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout )
+    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin, nl )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), kmax, neq, kl
         real,                 intent(in)    :: eps(0:), thr
@@ -923,11 +1111,14 @@ contains
         character(len=*),     intent(in)    :: tag
         integer, allocatable, intent(out)   :: plist(:), gof(:), exa(:), exb(:)
         integer,              intent(out)   :: kout
+        real,    optional,    intent(out)   :: rmin
+        type(shuffle_null), optional, intent(inout) :: nl
         complex, allocatable :: allm(:,:,:,:)
         integer, allocatable :: presa(:), presb(:), jidx(:), joff(:), mapa(:), mapb(:), groupof(:), pp(:), qq(:)
         real,    allocatable :: jscale(:), rmat(:,:), merged(:), lowc(:), vals(:)
         logical, allocatable :: l_alive(:)
         real    :: best
+        logical :: l_merge
         integer :: neq_, g, npair, p, q, bp, bq, mm
         presa = pack([(g, g=1,kmax)], [(count(la == g) > 0, g=1,kmax)])
         presb = pack([(g, g=1,kmax)], [(count(lb == g) > 0, g=1,kmax)])
@@ -971,12 +1162,14 @@ contains
                 qq = [qq, q]
             end do
         end do
+        if( present(rmin) ) rmin = huge(rmin)
         if( size(pp) > 0 )then
             allocate(vals(size(pp)))
             call self%eqn_stats(ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals)
             do mm = 1, size(pp)
                 rmat(pp(mm),qq(mm)) = vals(mm)
             end do
+            if( present(rmin) ) rmin = minval(vals)
             deallocate(vals)
         endif
         write(logfhandle,'(A)') 'pair statistics at the start (sorted): '//sorted_upper(rmat, npair)
@@ -997,7 +1190,13 @@ contains
                     endif
                 end do
             end do
-            if( bp == 0 .or. best >= thr ) exit
+            if( bp == 0 ) exit
+            if( present(nl) )then
+                call self%null_resolve(nl, best, eps, cons, l_merge)
+                if( .not. l_merge ) exit
+            else if( best >= thr )then
+                exit
+            endif
             merged = [merged, best]
             l_alive(bq) = .false.
             where( groupof == bq ) groupof = bp
@@ -1057,6 +1256,68 @@ contains
         end subroutine extras
 
     end subroutine decide
+
+    subroutine null_upto( self, nl, n, eps, cons )
+        class(state_mergeup), intent(inout) :: self
+        type(shuffle_null),   intent(inout) :: nl
+        integer,              intent(in)    :: n
+        real,                 intent(in)    :: eps(0:)
+        complex,              intent(in)    :: cons(:,:,:,:)
+        complex, allocatable :: nm(:,:,:,:)
+        integer, allocatable :: joff(:)
+        real,    allocatable :: jscale(:), vals(:), vals2(:)
+        integer :: nbatch, s1, s2, nb, nj, npr, m, ipr, s, ii, g, q, j, ng
+        ng     = nl%ng
+        npr    = ng * (ng - 1) / 2
+        nbatch = max(1, min(nl%nsh, MAXJOBS / max(1, 2*ng)))
+        do s1 = nl%ndone + 1, n, nbatch
+            s2     = min(n, s1 + nbatch - 1)
+            nb     = s2 - s1 + 1
+            nj     = 2 * ng * nb
+            joff   = [(1 + j*nl%neq, j=0,nj)]
+            jscale = [(1., j=1,nj)]
+            allocate(nm(self%nh,self%box,self%box,nj))
+            call self%maps(nl%sjidx((s1-1)*2*ng*nl%neq+1:s2*2*ng*nl%neq), joff, jscale, eps, .true., .false., nm)
+            !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
+            do m = 1, nj
+                call self%dock(nm(:,:,:,m), cons(:,:,:,2-mod((m-1)/ng,2)), self%kt, self%khi)
+            end do
+            !$omp end parallel do
+            allocate(vals(npr*nb), vals2(npr*nb))
+            !$omp parallel do default(shared) private(ipr,s,g,q,ii) schedule(dynamic) proc_bind(close)
+            do ipr = 1, npr*nb
+                s  = (ipr - 1) / npr
+                ii = ipr - s * npr
+                call pair_index(ii, ng, g, q)
+                vals(ipr)  = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
+                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%klo)
+                vals2(ipr) = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
+                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%kt)
+            end do
+            !$omp end parallel do
+            nl%nul  = [nl%nul, vals]
+            nl%nul2 = [nl%nul2, vals2]
+            deallocate(nm, vals, vals2)
+        end do
+        nl%ndone = max(nl%ndone, n)
+    end subroutine null_upto
+
+    ! more shuffles only while r lies within NSHUF_KSIG spreads of the threshold the full nsh shuffles could still reach
+    subroutine null_resolve( self, nl, r, eps, cons, l_merge )
+        class(state_mergeup), intent(inout) :: self
+        type(shuffle_null),   intent(inout) :: nl
+        real,                 intent(in)    :: r, eps(0:)
+        complex,              intent(in)    :: cons(:,:,:,:)
+        logical,              intent(out)   :: l_merge
+        real :: mu, sd, thr
+        do
+            call null_thr(nl, mu, sd, thr)
+            if( nl%ndone >= nl%nsh ) exit
+            if( abs(r - thr) > NSHUF_KSIG * sd * null_spread(nl%ndone, nl%nsh, nl%zc) ) exit
+            call self%null_upto(nl, min(nl%nsh, nl%ndone + nl%nstep), eps, cons)
+        end do
+        l_merge = r < thr
+    end subroutine null_resolve
 
     subroutine eqn_stats( self, ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals )
         class(state_mergeup), intent(inout) :: self
@@ -1119,18 +1380,31 @@ contains
 
     end subroutine eqn_stats
 
-    subroutine cross_em( self, ia, ib, starta, startb, k, eps, neq, la, lb )
+    subroutine cross_em( self, ia, ib, starta, startb, k, eps, neq, la, lb, l_full, ll, kcut, llband, niter, lpa, lpb )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: ia(:), ib(:), starta(:), startb(:), k, neq
         real,                 intent(in)    :: eps(0:)
         integer,              intent(inout) :: la(:), lb(:)
+        logical,  optional,   intent(in)    :: l_full
+        real(dp), optional,   intent(out)   :: ll
+        integer,  optional,   intent(in)    :: kcut
+        real(dp), optional,   intent(out)   :: llband(2)
+        integer,  optional,   intent(in)    :: niter
+        real(dp), allocatable, optional, intent(out) :: lpa(:), lpb(:)
         complex,             allocatable :: ma(:,:,:,:), mb(:,:,:,:)
         type(reconstructor), allocatable :: refa(:), refb(:)
         real,    allocatable :: wa(:,:), wb(:,:), wan(:,:), wbn(:,:), fl(:,:)
         integer, allocatable :: mpa(:), mpb(:), ca(:), cb(:)
         logical, allocatable :: l_alive(:)
         character(len=:), allocatable :: line
-        integer :: it, g, i
+        real(dp) :: lla, llb, lba(2), lbb(2)
+        integer  :: it, g, i, kband, nit
+        logical  :: l_fb
+        l_fb = .false.
+        if( present(l_full) ) l_fb = l_full
+        kband = merge(self%khi, self%kb, l_fb)
+        nit   = NEM_ITERS
+        if( present(niter) ) nit = niter
         allocate(wa(size(ia),k), wb(size(ib),k), source=0.)
         do i = 1, size(ia)
             if( starta(i) > 0 ) wa(i,starta(i)) = 1.
@@ -1145,17 +1419,23 @@ contains
             call refa(g)%new_accumulator(self%p, self%b%spproj, expand=.true., wthreads=.false.)
             call refb(g)%new_accumulator(self%p, self%b%spproj, expand=.true., wthreads=.false.)
         end do
-        write(logfhandle,'(A)') 'cross-half EM: '//int2str(k)//' groups, '//int2str(NEM_ITERS)//' iterations, shells 2..'//&
-            &int2str(self%kb)//', '//int2str(self%nem)//' plane samples per particle'
-        do it = 1, NEM_ITERS
-            call em_maps(ia, wa, ma)
-            call em_maps(ib, wb, mb)
+        write(logfhandle,'(A)') 'cross-half EM: '//int2str(k)//' groups, '//int2str(nit)//' iterations, shells 2..'//&
+            &int2str(kband)//', '//int2str(merge(self%nfb, self%nem, l_fb))//' plane samples per particle'
+        do it = 1, nit
+            if( self%p%merge_insert_audit == 'yes' )then
+                self%audit_calls = self%audit_calls + 1
+                call self%em_maps(ia, wa, eps, neq, l_fb, ma, 'cross_'//int2str(self%audit_calls)//'_a')
+                call self%em_maps(ib, wb, eps, neq, l_fb, mb, 'cross_'//int2str(self%audit_calls)//'_b')
+            else
+                call self%em_maps(ia, wa, eps, neq, l_fb, ma)
+                call self%em_maps(ib, wb, eps, neq, l_fb, mb)
+            endif
             !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
             do g = 1, 2*k
                 if( g <= k )then
-                    call self%dock(ma(:,:,:,g), mb(:,:,:,k+1), 2, self%kb)
+                    call self%dock(ma(:,:,:,g), mb(:,:,:,k+1), 2, kband)
                 else
-                    call self%dock(mb(:,:,:,g-k), ma(:,:,:,k+1), 2, self%kb)
+                    call self%dock(mb(:,:,:,g-k), ma(:,:,:,k+1), 2, kband)
                 endif
             end do
             !$omp end parallel do
@@ -1164,8 +1444,13 @@ contains
                 call filtered_refs(g)
             end do
             !$omp end parallel do
-            call self%estep(ia, wa, refb, l_alive, wan)
-            call self%estep(ib, wb, refa, l_alive, wbn)
+            if( present(kcut) .and. present(llband) )then
+                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla, kcut=kcut, llband=lba, lpp=lpa)
+                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb, kcut=kcut, llband=lbb, lpp=lpb)
+            else
+                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla)
+                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb)
+            endif
             mpa  = maxloc(wa, dim=2)
             mpb  = maxloc(wb, dim=2)
             line = '  iteration '//int2str(it)//': MAP changed A '//&
@@ -1200,6 +1485,8 @@ contains
         end do
         la = maxloc(wa, dim=2, mask=spread(l_alive, 1, size(ia)))
         lb = maxloc(wb, dim=2, mask=spread(l_alive, 1, size(ib)))
+        if( present(ll) ) ll = lla + llb
+        if( present(kcut) .and. present(llband) ) llband = lba + lbb
         do g = 1, k
             call refa(g)%kill
             call refb(g)%kill
@@ -1207,21 +1494,6 @@ contains
         deallocate(ma, mb, refa, refb, wa, wb, fl, l_alive)
 
     contains
-
-        subroutine em_maps( idx, w, m )
-            integer, intent(in)    :: idx(:)
-            real,    intent(in)    :: w(:,:)
-            complex, intent(inout) :: m(:,:,:,:)
-            integer, allocatable :: jidx(:), joff(:)
-            real,    allocatable :: jscale(:), jw(:)
-            integer :: gg, nn
-            nn     = size(idx)
-            jidx   = [[(idx, gg=1,k)], idx]
-            joff   = [(1 + gg*nn, gg=0,k+1)]
-            jw     = [reshape(w, [nn*k]), [(1., gg=1,nn)]]
-            jscale = [[(max(sum(w(:,gg)), 1.)/real(neq), gg=1,k)], real(nn)/real(neq)]
-            call self%maps(jidx, joff, jscale, eps, .false., .true., m, jw)
-        end subroutine em_maps
 
         subroutine filtered_refs( gg )
             integer, intent(in) :: gg
@@ -1257,6 +1529,252 @@ contains
         end subroutine set_ref
 
     end subroutine cross_em
+
+    ! Cross-half EM and its acceptance driver use this same weight-to-map wrapper.
+    subroutine em_maps( self, idx, w, eps, neq, l_full, m, audit_tag )
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in) :: idx(:), neq
+        real,                 intent(in) :: w(:,:), eps(0:)
+        logical,              intent(in) :: l_full
+        complex,              intent(inout) :: m(:,:,:,:)
+        character(len=*), optional, intent(in) :: audit_tag
+        integer, allocatable :: jidx(:), joff(:)
+        real, allocatable :: jscale(:), weights(:)
+        integer :: gg, nn, nk, coverage(3)
+        nn = size(idx)
+        nk = size(w,2)
+        jscale = [[(max(sum(w(:,gg)), 1.)/real(neq), gg=1,nk)], real(nn)/real(neq)]
+        coverage = 0
+        if( self%p%merge_insert_reuse == 'yes' )then
+            call self%maps_weighted_shared(idx, w, jscale, eps, .not. l_full, m, coverage)
+        else
+            jidx = [[(idx, gg=1,nk)], idx]
+            joff = [(1 + gg*nn, gg=0,nk+1)]
+            weights = [reshape(w, [nn*nk]), [(1., gg=1,nn)]]
+            call self%maps(jidx, joff, jscale, eps, .false., .not. l_full, m, weights, coverage(1))
+        endif
+        if( present(audit_tag) ) call self%write_em_audit(audit_tag, idx, w, eps, jscale, l_full, m, coverage)
+    end subroutine em_maps
+
+    ! Diagnostic replay of the production weight-to-map wrapper; source project is read-only.
+    subroutine audit_em_wrapper( self )
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        use simple_syslib, only: dir_exists, simple_mkdir
+        class(state_mergeup), intent(inout) :: self
+        class(parameters), pointer :: params
+        class(builder), pointer :: build
+        integer, allocatable :: ia(:), ib(:), ga(:), gb(:)
+        real, allocatable :: wa(:,:), wb(:,:), eps(:)
+        complex, allocatable :: ma(:,:,:,:), mb(:,:,:,:)
+        character(len=4096) :: line, paths(5)
+        character(len=17), parameter :: lives(3) = ['fresh            ', 'reset_same_object', 'kill_recreate    ']
+        character(len=:), allocatable :: tag
+        integer :: fu, io, na, nb, nk, nthr, slots, nit, band, neq, j, life, it, old_threads, observed
+        logical :: old_dynamic, old_contrast, old_amplitude
+        if( self%p%merge_insert_audit /= 'yes' ) THROW_HARD('EM wrapper audit requires explicit opt-in')
+        if( .not. self%l_exists ) THROW_HARD('EM wrapper audit needs initialized particles')
+        params => self%p
+        build => self%b
+        old_contrast = self%l_con
+        old_amplitude = self%l_amp
+        call fopen(fu, params%merge_audit_request, status='old', action='read', iostat=io)
+        call fileiochk('cannot read EM wrapper request', io)
+        read(fu,'(A)',iostat=io) line
+        if( io /= 0 ) THROW_HARD('invalid EM wrapper request schema')
+        if( trim(line) /= 'simple-em-wrapper-v1' ) THROW_HARD('invalid EM wrapper request schema')
+        read(fu,*,iostat=io) na, nb, nk, nthr, slots, nit, band, neq
+        if( io /= 0 ) THROW_HARD('invalid EM wrapper controls')
+        if( min(na,nb) < 0 .or. max(na,nb) > self%n .or. nk < 1 .or. nk > 8 ) THROW_HARD('invalid EM wrapper dimensions')
+        if( nthr < 1 .or. nthr > 8 .or. slots /= 8 .or. self%nslots /= slots ) THROW_HARD('EM wrapper audit needs eight prepared slots and one to eight threads')
+        if( nit /= 2 .or. band < 0 .or. band > 1 .or. neq < 1 ) THROW_HARD('invalid EM wrapper controls')
+        do j = 1, size(paths)
+            read(fu,'(A)',iostat=io) paths(j)
+            if( io /= 0 .or. len_trim(paths(j)) == 0 ) THROW_HARD('missing EM wrapper input path')
+        end do
+        call fclose(fu)
+        call read_rows(trim(paths(1)), na, 0, ia, ga)
+        call read_rows(trim(paths(2)), nb, 1, ib, gb)
+        call read_weights(trim(paths(3)), na, wa)
+        call read_weights(trim(paths(4)), nb, wb)
+        if( nlines(string(trim(paths(5)))) /= self%nyq+1 ) THROW_HARD('epsilon_shape_mismatch')
+        allocate(eps(0:self%nyq))
+        call fopen(fu, string(trim(paths(5))), status='old', action='read', iostat=io)
+        call fileiochk('cannot read EM epsilon', io)
+        do j = 0, self%nyq
+            read(fu,*,iostat=io) eps(j)
+            if( io /= 0 ) THROW_HARD('invalid EM epsilon')
+        end do
+        call fclose(fu)
+        if( any(.not. ieee_is_finite(eps)) .or. any(eps < 0.) ) THROW_HARD('invalid EM epsilon')
+        if( dir_exists(string('merge_insert_audit')) ) THROW_HARD('EM audit output must be fresh')
+        call simple_mkdir(string('merge_insert_audit'))
+        allocate(ma(self%nh,self%box,self%box,nk+1), mb(self%nh,self%box,self%box,nk+1))
+        old_threads = 1
+        old_dynamic = .false.
+        !$ old_threads = omp_get_max_threads()
+        !$ old_dynamic = omp_get_dynamic()
+        !$ call omp_set_dynamic(.false.)
+        !$ call omp_set_num_threads(nthr)
+        observed = 1
+        !$omp parallel default(shared)
+        !$omp single
+        !$ observed = omp_get_num_threads()
+        !$omp end single
+        !$omp end parallel
+        if( observed /= nthr ) THROW_HARD('EM audit observed thread count differs from request')
+        do life = 1, size(lives)
+            if( life == 3 )then
+                call self%kill()
+                call self%new(params, build, EM_LIM, contrast=old_contrast, amplitude=old_amplitude)
+                if( params%pcg_mskfile%strlen() > 0 ) call self%focus(params%pcg_mskfile)
+                if( self%nslots /= slots ) THROW_HARD('EM audit slot count changed after recreation')
+                if( any(self%rows(ia) /= ga) .or. any(self%rows(ib) /= gb) ) THROW_HARD('EM audit rows changed after recreation')
+            endif
+            do it = 1, nit
+                tag = trim(lives(life))//'_iter_'//int2str(it)
+                call self%em_maps(ia, wa, eps, neq, band == 0, ma, tag//'_a')
+                call self%em_maps(ib, wb, eps, neq, band == 0, mb, tag//'_b')
+            end do
+        end do
+        !$ call omp_set_num_threads(old_threads)
+        !$ call omp_set_dynamic(old_dynamic)
+        call fopen(fu, string('merge_insert_audit/complete.txt'), status='new', action='write', iostat=io)
+        call fileiochk('cannot publish EM wrapper completion', io)
+        write(fu,'(A)') 'simple-em-wrapper-v1'
+        write(fu,'(A)') 'production_path state_mergeup/em_maps'
+        write(fu,'(A,I0)') 'observed_threads ', observed
+        write(fu,'(A)') 'iterations repeat frozen wrapper inputs; no E-step or docking in stress replay'
+        call fclose(fu)
+
+    contains
+
+        subroutine read_rows( path, n, half, idx, global_rows )
+            character(len=*), intent(in) :: path
+            integer, intent(in) :: n, half
+            integer, allocatable, intent(out) :: idx(:), global_rows(:)
+            integer :: f, status, r
+            if( nlines(string(path)) /= n ) THROW_HARD('row_shape_mismatch')
+            allocate(idx(n), global_rows(n))
+            call fopen(f, string(path), status='old', action='read', iostat=status)
+            call fileiochk('cannot read EM row input', status)
+            do r = 1, n
+                read(f,*,iostat=status) global_rows(r)
+                if( status /= 0 ) THROW_HARD('out_of_range_row')
+                idx(r) = findloc(self%rows, global_rows(r), dim=1)
+                if( idx(r) == 0 ) THROW_HARD('out_of_range_row')
+                if( self%eo(idx(r)) /= half ) THROW_HARD('row_half_mismatch')
+                if( any(idx(:r-1) == idx(r)) ) THROW_HARD('duplicate_row')
+            end do
+            call fclose(f)
+        end subroutine read_rows
+
+        subroutine read_weights( path, n, w )
+            character(len=*), intent(in) :: path
+            integer, intent(in) :: n
+            real, allocatable, intent(out) :: w(:,:)
+            character(len=4096) :: record
+            real :: extra
+            integer :: f, status, r
+            if( nlines(string(path)) /= n ) THROW_HARD('weight_shape_mismatch')
+            allocate(w(n,nk))
+            call fopen(f, string(path), status='old', action='read', iostat=status)
+            call fileiochk('cannot read EM weight input', status)
+            do r = 1, n
+                read(f,'(A)',iostat=status) record
+                if( status /= 0 ) THROW_HARD('weight_shape_mismatch')
+                read(record,*,iostat=status) w(r,:)
+                if( status /= 0 ) THROW_HARD('weight_shape_mismatch')
+                read(record,*,iostat=status) w(r,:), extra
+                if( status >= 0 ) THROW_HARD('weight_shape_mismatch')
+            end do
+            call fclose(f)
+            if( any(.not. ieee_is_finite(w)) .or. any(w < 0.) ) THROW_HARD('invalid_weights')
+        end subroutine read_weights
+
+    end subroutine audit_em_wrapper
+
+    ! Native-order arrays after compression/reduction/finish and before docking; no project writes.
+    subroutine write_em_audit( self, tag, idx, w, eps, jscale, l_full, m, coverage )
+        use simple_syslib, only: dir_exists, simple_mkdir
+        class(state_mergeup), intent(in) :: self
+        character(len=*), intent(in) :: tag
+        integer, intent(in) :: idx(:), coverage(3)
+        real, intent(in) :: w(:,:), eps(0:), jscale(:)
+        logical, intent(in) :: l_full
+        complex, intent(in) :: m(:,:,:,:)
+        character(len=:), allocatable :: prefix
+        character(len=4) :: order
+        integer :: fu, io, j, p, nthr
+        order = transfer(1, order)
+        if( storage_size(1) /= 32 .or. storage_size(1.) /= 32 .or. storage_size(cmplx(0.,0.)) /= 64 ) &
+            THROW_HARD('EM audit requires int32, float32 and complex64 storage')
+        if( iachar(order(1:1)) /= 1 ) THROW_HARD('EM audit requires little-endian storage')
+        if( tag == 'cross_1_a' .and. dir_exists(string('merge_insert_audit')) ) THROW_HARD('EM audit output must be fresh')
+        if( .not. dir_exists(string('merge_insert_audit')) ) call simple_mkdir(string('merge_insert_audit'))
+        prefix = 'merge_insert_audit/'//tag
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        call fopen(fu, string(prefix//'.meta'), status='new', action='write', iostat=io)
+        call fileiochk('cannot write EM audit metadata', io)
+        write(fu,'(A)') 'simple-em-wrapper-v1'
+        write(fu,'(A)') 'phase post_finish_pre_dock'
+        write(fu,'(A)') 'storage little_endian Fortran_order int32 float32 complex64'
+        write(fu,'(A,4(1X,I0))') 'shape', shape(m)
+        write(fu,'(A,2(1X,I0))') 'weights_shape', shape(w)
+        write(fu,'(A,2(1X,I0))') 'threads_slots', nthr, self%nslots
+        write(fu,'(A,3(1X,I0))') 'chunks_tiles_batches', coverage
+        write(fu,'(A,I0)') 'full_band ', merge(1,0,l_full)
+        write(fu,'(A)') 'insert_reuse '//self%p%merge_insert_reuse
+        write(fu,'(A)') 'pgrp '//trim(self%p%pgrp)
+        call fclose(fu)
+        call open_raw('.maps.c64')
+        write(fu,iostat=io) m
+        call close_raw()
+        call open_raw('.weights.f32')
+        write(fu,iostat=io) w
+        call close_raw()
+        call open_raw('.eps.f32')
+        write(fu,iostat=io) eps
+        call close_raw()
+        call open_raw('.jscale.f32')
+        write(fu,iostat=io) jscale
+        call close_raw()
+        call open_raw('.rows.i32')
+        write(fu,iostat=io) self%rows(idx)
+        call close_raw()
+        call open_raw('.halves.i32')
+        write(fu,iostat=io) self%eo(idx)
+        call close_raw()
+        call open_raw('.operators.bin')
+        write(fu,iostat=io) self%p%box, self%box, self%p%smpd, self%p%smpd_crop, OSMPL_PAD_FAC, &
+            &self%kb, self%emhk, self%eul(:,idx)
+        call close_raw()
+        call open_raw('.planes.bin')
+        do j = 1, size(idx)
+            p = idx(j)
+            write(fu,iostat=io) lbound(self%fpls(p)%cmplx_plane), ubound(self%fpls(p)%cmplx_plane), &
+                &self%fpls(p)%nyq, self%fpls(p)%frlims, self%fpls(p)%shconst, &
+                &self%fpls(p)%cmplx_plane, self%fpls(p)%ctfsq_plane
+            call fileiochk('cannot write EM input plane', io)
+        end do
+        io = 0
+        call close_raw()
+
+    contains
+
+        subroutine open_raw( suffix )
+            character(len=*), intent(in) :: suffix
+            open(newunit=fu, file=prefix//suffix, status='new', action='write', access='stream', form='unformatted', iostat=io)
+            call fileiochk('cannot create EM audit array', io)
+        end subroutine open_raw
+
+        subroutine close_raw()
+            call fileiochk('cannot write EM audit array', io)
+            close(fu,iostat=io)
+            call fileiochk('cannot close EM audit array', io)
+        end subroutine close_raw
+
+    end subroutine write_em_audit
 
     subroutine site_em( self, seed, sel, mfile, post, nstar, curve, devs, score, l_all )
         use simple_srch_sort_loc, only: hpsort
@@ -2549,11 +3067,12 @@ contains
 
     ! groups merge, closest pair first, when every cross pair of candidates is within HALVES_KSIG SEs (floored at self-match SEs); a
     ! group counts when each member beats its best outside partner by HALVES_KSIG SEs; solo ones never merge, tested last vs poles
-    subroutine merge_poles_halves( posts, craw, rel1, rel2, cq, r1q, r2q, minseed, l_rest, solo, grp, seeds, ok, twin, gm )
+    subroutine merge_poles_halves( posts, craw, rel1, rel2, cq, r1q, r2q, minseed, l_rest, solo, grp, seeds, ok, twin, gm, lpool )
         use simple_srch_sort_loc, only: hpsort
         real,                 intent(in)  :: posts(:,:), craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:)
         integer,              intent(in)  :: minseed
         logical,              intent(in)  :: l_rest, solo(:)
+        logical, optional,    intent(in)  :: lpool(:)
         integer, allocatable, intent(out) :: grp(:), seeds(:), twin(:), gm(:)
         logical, allocatable, intent(out) :: ok(:)
         real(dp), allocatable :: gpost(:,:)
@@ -2615,6 +3134,7 @@ contains
         do a = 1, ne
             ok(a) = all(pack(cons, grp == grp(a)))
         end do
+        if( present(lpool) ) ok = ok .or. lpool
         part = ok .and. .not. solo
         do a = 1, ne
             if( solo(a) ) ok(a) = cand(a) .and. strong(a, .true.) .and. strong(a, .false.)
@@ -2653,26 +3173,66 @@ contains
 
     end subroutine merge_poles_halves
 
-    subroutine estep( self, idx, w, refs, l_alive, wnew )
-        class(state_mergeup), intent(inout) :: self
+    subroutine estep( self, idx, w, refs, l_alive, wnew, l_full, ll, kcut, llband, lpp )
+        class(state_mergeup), target, intent(inout) :: self
         integer,              intent(in)    :: idx(:)
         real,                 intent(in)    :: w(:,:)
         type(reconstructor),  intent(in)    :: refs(:)
         logical,              intent(in)    :: l_alive(:)
         real, allocatable,    intent(out)   :: wnew(:,:)
+        logical,  optional,   intent(in)    :: l_full
+        real(dp), optional,   intent(out)   :: ll
+        integer,  optional,   intent(in)    :: kcut
+        real(dp), optional,   intent(out)   :: llband(2)
+        real(dp), allocatable, optional, intent(out) :: lpp(:)
+        real(dp), allocatable :: lpl(:)
         real,    allocatable :: aa(:,:,:), bb(:,:,:)
+        complex, allocatable :: projected(:,:)
         integer, allocatable :: mp(:)
-        real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem), scl(self%nshem), sig2(self%nshem)
-        real(dp) :: prior(size(refs)), s(size(refs)), smax
+        integer, pointer :: bhk(:,:), bsh(:)
+        real,    pointer :: bw(:), bf2(:,:), bcw(:)
+        real(dp) :: sa(max(self%nshem,self%nshfb)), sb(max(self%nshem,self%nshfb)), sf(max(self%nshem,self%nshfb)), &
+            &sc(max(self%nshem,self%nshfb)), scl(max(self%nshem,self%nshfb)), sig2(max(self%nshem,self%nshfb))
+        real(dp) :: prior(size(refs)), s(size(refs)), smax, lse, num, sbd(size(refs),2), lseb(2), bmax
         complex  :: pv, wv
-        integer  :: n, k, i, ip, g, j, h, kk, sh, it, nyq_save
+        integer  :: n, k, i, ip, g, j, h, kk, sh, it, nyq_save, nsb, nsmp, kband, ic, ib, nthr
+        logical  :: l_fb, l_bd, l_reuse
+        l_fb = .false.
+        if( present(l_full) ) l_fb = l_full
+        if( l_fb )then
+            bhk => self%fbhk
+            bsh => self%fbsh
+            bw  => self%fbw
+            bf2 => self%f2b
+            bcw => self%cwb
+            nsb   = self%nshfb
+            nsmp  = self%nfb
+            kband = self%khi
+        else
+            bhk => self%emhk
+            bsh => self%emsh
+            bw  => self%emw
+            bf2 => self%f2s
+            bcw => self%cw
+            nsb   = self%nshem
+            nsmp  = self%nem
+            kband = self%kb
+        endif
         n  = size(idx)
         k  = size(refs)
         mp = maxloc(w, dim=2)
         do g = 1, k
             prior(g) = log(max(real(sum(w(:,g)),dp) / real(n,dp), 1.e-6_dp))
         end do
-        allocate(aa(self%nshem,k,n), bb(self%nshem,k,n), source=0.)
+        allocate(aa(nsb,k,n), bb(nsb,k,n), source=0.)
+        l_reuse = self%p%merge_geom_reuse == 'yes'
+        if( l_reuse )then
+            nthr = 1
+            !$ nthr = omp_get_max_threads()
+            if( nthr > size(self%smps) ) THROW_HARD('projection geometry scratch is smaller than the OpenMP team')
+            ! The half-disc fits inside this rectangle, including unscored low shells.
+            allocate(projected((2*kband+1)*(kband+1),nthr))
+        endif
         sa = 0._dp
         sb = 0._dp
         sf = 0._dp
@@ -2684,38 +3244,61 @@ contains
             ip = idx(i)
             call self%os(it)%set_euler(self%eul(:,ip))
             nyq_save = self%fpls(ip)%nyq
-            self%fpls(ip)%nyq = OSMPL_PAD_FAC * self%kb
+            self%fpls(ip)%nyq = OSMPL_PAD_FAC * kband
+            ! cross_em creates all refs on one lattice with one kernel; only their values differ.
+            if( l_reuse ) call self%smps(it)%new_plane(refs(1), self%os(it), self%fpls(ip))
             do g = 1, k
                 if( .not. l_alive(g) .and. g /= mp(i) ) cycle
-                call refs(g)%project_fplane(self%os(it), self%fpls(ip), self%pouts(it), apply_ctf_amp=.false., &
-                    &samples=self%smps(it))
-                do j = 1, self%nem
-                    h  = self%emhk(1,j)
-                    kk = self%emhk(2,j)
-                    sh = self%emsh(j)
+                if( l_reuse )then
+                    call self%smps(it)%gather(refs(g), projected(:,it))
+                    call self%smps(it)%put_plane(projected(:,it), self%fpls(ip), self%pouts(it), .false.)
+                else
+                    call refs(g)%project_fplane(self%os(it), self%fpls(ip), self%pouts(it), apply_ctf_amp=.false., &
+                        &samples=self%smps(it))
+                endif
+                do j = 1, nsmp
+                    h  = bhk(1,j)
+                    kk = bhk(2,j)
+                    sh = bsh(j)
                     pv = self%pouts(it)%cmplx_plane(h,kk)
                     wv = self%fpls(ip)%cmplx_plane(h,kk)
-                    aa(sh,g,i) = aa(sh,g,i) + self%emw(j) * (real(pv)*real(wv) + aimag(pv)*aimag(wv))
-                    bb(sh,g,i) = bb(sh,g,i) + self%emw(j) * self%fpls(ip)%ctfsq_plane(h,kk) * abs(pv)**2
+                    aa(sh,g,i) = aa(sh,g,i) + bw(j) * (real(pv)*real(wv) + aimag(pv)*aimag(wv))
+                    bb(sh,g,i) = bb(sh,g,i) + bw(j) * self%fpls(ip)%ctfsq_plane(h,kk) * abs(pv)**2
                 end do
             end do
             self%fpls(ip)%nyq = nyq_save
-            sa = sa + real(aa(:,mp(i),i),dp)
-            sb = sb + real(bb(:,mp(i),i),dp)
-            sf = sf + real(self%f2s(:,ip),dp)
-            sc = sc + real(self%cw,dp)
+            sa(:nsb) = sa(:nsb) + real(aa(:,mp(i),i),dp)
+            sb(:nsb) = sb(:nsb) + real(bb(:,mp(i),i),dp)
+            sf(:nsb) = sf(:nsb) + real(bf2(:,ip),dp)
+            sc(:nsb) = sc(:nsb) + real(bcw,dp)
         end do
         !$omp end parallel do
-        scl  = sa / max(sb, 1.e-30_dp)
-        sig2 = max((sf - 2._dp*scl*sa + scl*scl*sb) / max(sc, 1._dp), 1.e-12_dp)
+        scl(:nsb)  = sa(:nsb) / max(sb(:nsb), 1.e-30_dp)
+        sig2(:nsb) = max((sf(:nsb) - 2._dp*scl(:nsb)*sa(:nsb) + scl(:nsb)*scl(:nsb)*sb(:nsb)) / max(sc(:nsb), 1._dp), 1.e-12_dp)
         allocate(wnew(n,k))
-        !$omp parallel do default(shared) private(i,g,s,smax) schedule(static) proc_bind(close)
+        ! with kcut, the same model's log-likelihood also over the shells below kcut and from kcut up (sh = shell - 1)
+        l_bd = present(kcut) .and. present(llband)
+        ic   = nsb + 1
+        if( l_bd ) ic = min(max(kcut - 1, 1), nsb + 1)
+        lse  = 0._dp
+        lseb = 0._dp
+        allocate(lpl(n), source=0._dp)
+        !$omp parallel do default(shared) private(i,g,s,smax,num,sbd,ib,bmax) schedule(static) reduction(+:lse,lseb) proc_bind(close)
         do i = 1, n
             do g = 1, k
-                if( l_alive(g) )then
-                    s(g) = 0.5_dp * sum((2._dp*scl*real(aa(:,g,i),dp) - scl*scl*real(bb(:,g,i),dp)) / sig2) + prior(g)
+                if( l_alive(g) .and. self%l_amp )then
+                    ! l_amp: the particle's amplitude in the group is fitted (at least 0), so a group cannot win on brightness
+                    num  = sum(scl(:nsb)*real(aa(:,g,i),dp) / sig2(:nsb))
+                    s(g) = 0.5_dp * max(num, 0._dp)**2 / max(sum(scl(:nsb)**2*real(bb(:,g,i),dp) / sig2(:nsb)), 1.e-30_dp) + prior(g)
+                else if( l_alive(g) )then
+                    s(g) = 0.5_dp * sum((2._dp*scl(:nsb)*real(aa(:,g,i),dp) - scl(:nsb)*scl(:nsb)*real(bb(:,g,i),dp)) / &
+                        &sig2(:nsb)) + prior(g)
                 else
                     s(g) = -huge(1._dp)
+                endif
+                if( l_bd .and. l_alive(g) )then
+                    sbd(g,1) = band_score(g, i, 1, ic - 1)
+                    sbd(g,2) = band_score(g, i, ic, nsb)
                 endif
             end do
             smax = maxval(s)
@@ -2724,15 +3307,50 @@ contains
                 if( l_alive(g) ) wnew(i,g) = real(exp(s(g) - smax))
             end do
             if( sum(wnew(i,:)) > 0. )then
+                lse = lse + smax + log(real(sum(wnew(i,:)),dp))
                 wnew(i,:) = wnew(i,:) / sum(wnew(i,:))
             else
                 wnew(i,:) = w(i,:)
             endif
+            if( l_bd )then
+                do ib = 1, 2
+                    bmax = maxval(sbd(:,ib), mask=l_alive)
+                    num  = 0._dp
+                    do g = 1, k
+                        if( l_alive(g) ) num = num + exp(sbd(g,ib) - bmax)
+                    end do
+                    lseb(ib) = lseb(ib) + bmax + log(num)
+                end do
+                lpl(i) = bmax + log(num) - 0.5_dp * sum(real(bf2(ic:nsb,idx(i)),dp) / sig2(ic:nsb) + real(bcw(ic:nsb),dp) * &
+                    &log(sig2(ic:nsb)))
+            endif
         end do
         !$omp end parallel do
-        write(logfhandle,'(A)') '  cross-half E-step: model scale at shells 2 / '//int2str(self%kb)//' '//&
-            &fmtr(scl(1),4)//' / '//fmtr(scl(self%nshem),4)
+        if( present(ll) ) ll = lse - 0.5_dp * sum(sf(:nsb) / sig2(:nsb) + sc(:nsb) * log(sig2(:nsb)))
+        if( l_bd )then
+            llband(1) = lseb(1) - 0.5_dp * sum(sf(:ic-1) / sig2(:ic-1) + sc(:ic-1) * log(sig2(:ic-1)))
+            llband(2) = lseb(2) - 0.5_dp * sum(sf(ic:nsb) / sig2(ic:nsb) + sc(ic:nsb) * log(sig2(ic:nsb)))
+        endif
+        if( present(lpp) ) call move_alloc(lpl, lpp)
+        write(logfhandle,'(A)') '  cross-half E-step: model scale at shells 2 / '//int2str(kband)//' '//&
+            &fmtr(scl(1),4)//' / '//fmtr(scl(nsb),4)
         deallocate(aa, bb, mp)
+
+    contains
+
+        real(dp) function band_score( gg, ii, s0, s1 )
+            integer, intent(in) :: gg, ii, s0, s1
+            real(dp) :: nm
+            if( self%l_amp )then
+                nm = sum(scl(s0:s1)*real(aa(s0:s1,gg,ii),dp) / sig2(s0:s1))
+                band_score = 0.5_dp * max(nm, 0._dp)**2 / max(sum(scl(s0:s1)**2*real(bb(s0:s1,gg,ii),dp) / sig2(s0:s1)), 1.e-30_dp)
+            else
+                band_score = 0.5_dp * sum((2._dp*scl(s0:s1)*real(aa(s0:s1,gg,ii),dp) - scl(s0:s1)**2*real(bb(s0:s1,gg,ii),dp)) / &
+                    &sig2(s0:s1))
+            endif
+            band_score = band_score + prior(gg)
+        end function band_score
+
     end subroutine estep
 
     subroutine accumulate( self, idx, it, l_band, w )
@@ -2770,18 +3388,20 @@ contains
     end subroutine accumulate
 
     ! job j's particles jidx(joff(j):joff(j+1)-1) cut into chunks accumulated in parallel; its sum ends in slot js(j)
-    subroutine accumulate_jobs( self, jidx, joff, l_band, js, jw )
+    subroutine accumulate_jobs( self, jidx, joff, l_band, js, jw, nc_used )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: jidx(:), joff(:)
         logical,              intent(in)    :: l_band
         integer, allocatable, intent(out)   :: js(:)
         real, optional,       intent(in)    :: jw(:)
+        integer, optional,    intent(out)   :: nc_used
         integer, allocatable :: cfrom(:), cto(:)
         integer :: nj, nc, nthr, j, c, ic
         nj   = size(joff) - 1
         nthr = 1
         !$ nthr = omp_get_max_threads()
         nc = max(1, min(self%nslots, max(nthr, nj)) / nj)
+        if( present(nc_used) ) nc_used = nc
         if( nj * nc > self%nslots ) THROW_HARD('more jobs than slots; accumulate_jobs')
         allocate(cfrom(nj*nc), cto(nj*nc), js(nj))
         do j = 1, nj
@@ -2830,19 +3450,21 @@ contains
         cm = self%wimgs(it)%get_cmat()
     end subroutine finish
 
-    subroutine maps( self, jidx, joff, jscale, eps, l_mask, l_band, cms, jw )
+    subroutine maps( self, jidx, joff, jscale, eps, l_mask, l_band, cms, jw, nc_used )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: jidx(:), joff(:)
         real,                 intent(in)    :: jscale(:), eps(0:)
         logical,              intent(in)    :: l_mask, l_band
         complex,              intent(inout) :: cms(:,:,:,:)
         real, optional,       intent(in)    :: jw(:)
+        integer, optional,    intent(out)   :: nc_used
         integer, allocatable :: js(:)
         integer :: j, it, nthr
         nthr = 1
         !$ nthr = omp_get_max_threads()
+        if( present(nc_used) ) nc_used = 1
         if( size(jscale) < nthr .and. size(jscale) <= self%nslots )then
-            call self%accumulate_jobs(jidx, joff, l_band, js, jw)
+            call self%accumulate_jobs(jidx, joff, l_band, js, jw, nc_used)
             !$omp parallel do default(shared) private(j) schedule(static,1) proc_bind(close)
             do j = 1, size(jscale)
                 call self%finish(js(j), eps * jscale(j), l_mask, cms(:,:,:,j))
@@ -2862,6 +3484,93 @@ contains
         end do
         !$omp end parallel do
     end subroutine maps
+
+    ! EM targets share an ordered row list. Keep the original per-map chunks and reduction order.
+    subroutine maps_weighted_shared( self, idx, w, jscale, eps, l_band, cms, coverage )
+        use simple_reconstructor, only: insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: idx(:)
+        real,                 intent(in)    :: w(:,:), jscale(:), eps(0:)
+        logical,              intent(in)    :: l_band
+        complex,              intent(inout) :: cms(:,:,:,:)
+        integer, optional,    intent(out) :: coverage(3)
+        class(ori), allocatable :: poses(:)
+        type(fplane_type), allocatable :: planes(:)
+        integer :: slots(MAX_INSERT_TARGETS), nj, nc, nthr, first, nt, q, c, i, j, h, kk, lo, hi, it, ib, nr, begin
+        real :: weights(MAX_INSERT_TARGETS,MAX_INSERT_PLANES)
+        nj = size(jscale)
+        if( size(w,1) /= size(idx) .or. size(w,2)+1 /= nj ) THROW_HARD('EM weight shape; maps_weighted_shared')
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        nc = 1
+        if( nj < nthr .and. nj <= self%nslots ) nc = max(1, min(self%nslots, max(nthr,nj)) / nj)
+        if( present(coverage) ) coverage = [nc, 0, 0]
+        allocate(poses(MAX_INSERT_PLANES), planes(MAX_INSERT_PLANES))
+        do ib = 1, MAX_INSERT_PLANES
+            call poses(ib)%new(is_ptcl=.true.)
+            if( l_band )then
+                planes(ib) = self%fpls(1)
+                planes(ib)%cmplx_plane = cmplx(0.,0.)
+                planes(ib)%ctfsq_plane = 0.
+            endif
+        end do
+        first = 1
+        do while( first <= nj )
+            if( present(coverage) ) coverage(2) = coverage(2) + 1
+            nt = min(MAX_INSERT_TARGETS, self%nslots/nc, nj-first+1)
+            if( nt < 1 ) THROW_HARD('no target slots; maps_weighted_shared')
+            do it = 1, nt*nc
+                call self%recs(it)%reset
+                call self%recs(it)%reset_exp
+            end do
+            do c = 1, nc
+                slots(:nt) = [((q-1)*nc+c, q=1,nt)]
+                it = slots(1)
+                lo = ((c-1)*size(idx))/nc + 1
+                hi = (c*size(idx))/nc
+                do begin = lo, hi, MAX_INSERT_PLANES
+                    nr = min(MAX_INSERT_PLANES,hi-begin+1)
+                    do ib = 1, nr
+                        i = begin+ib-1
+                        do q = 1, nt
+                            j = first+q-1
+                            weights(q,ib) = 1.
+                            if( j < nj ) weights(q,ib) = w(i,j)
+                        end do
+                        call poses(ib)%set_euler(self%eul(:,idx(i)))
+                        if( l_band )then
+                            do j = 1, self%nem
+                                h  = self%emhk(1,j)
+                                kk = self%emhk(2,j)
+                                planes(ib)%cmplx_plane(h,kk) = self%fpls(idx(i))%cmplx_plane(h,kk)
+                                planes(ib)%ctfsq_plane(h,kk) = self%fpls(idx(i))%ctfsq_plane(h,kk)
+                            end do
+                        else
+                            planes(ib) = self%fpls(idx(i))
+                        endif
+                    end do
+                    call insert_planes_targets(self%recs, slots(:nt), self%syms(it), poses, planes, weights(:nt,:nr), nr)
+                    if( present(coverage) ) coverage(3) = coverage(3) + 1
+                end do
+            end do
+            !$omp parallel do default(shared) private(q,c,it) schedule(static,1) proc_bind(close)
+            do q = 1, nt
+                it = (q-1)*nc+1
+                do c = 0, nc-1
+                    call self%recs(it+c)%compress_exp
+                end do
+                do c = 1, nc-1
+                    call self%recs(it)%sum_reduce(self%recs(it+c))
+                end do
+                call self%finish(it, eps*jscale(first+q-1), .false., cms(:,:,:,first+q-1))
+            end do
+            !$omp end parallel do
+            first = first + nt
+        end do
+        do ib = 1, MAX_INSERT_PLANES
+            call poses(ib)%kill()
+        end do
+    end subroutine maps_weighted_shared
 
     function strata( self, idx ) result( st )
         use simple_srch_sort_loc, only: hpsort
@@ -3071,6 +3780,13 @@ contains
         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
+        if( allocated(self%fbhk) ) deallocate(self%fbhk, self%fbsh, self%fbw, self%f2b, self%cwb)
+        self%nfb     = 0
+        self%nshfb   = 0
+        self%l_route = .false.
+        self%l_rband = .false.
+        self%l_rdir  = .false.
+        self%l_rcho  = .false.
         if( allocated(self%nv)  ) deallocate(self%nv)
         if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
         if( allocated(self%cb)  ) deallocate(self%cb, self%cs)
@@ -3083,6 +3799,7 @@ contains
         self%b => null()
         self%n = 0
         self%l_exists = .false.
+        self%audit_calls = 0
     end subroutine kill
 
     integer function omp_thread()
@@ -3318,6 +4035,45 @@ contains
         lo  = int(pos)
         quantr = w(lo+1) + (pos - real(lo)) * (w(min(lo+2,size(w))) - w(lo+1))
     end function quantr
+
+    subroutine null_thr( nl, mu, sd, thr )
+        type(shuffle_null), intent(in)  :: nl
+        real,               intent(out) :: mu, sd, thr
+        mu  = sum(nl%nul2) / real(size(nl%nul2))
+        sd  = sqrt(sum((nl%nul2 - mu)**2) / real(max(1, size(nl%nul2) - 1)))
+        thr = maxval(nl%nul2)
+        if( nl%l_z ) thr = mu + nl%zc * sd
+    end subroutine null_thr
+
+    real function null_spread( n, nmax, zc )
+        integer, intent(in) :: n, nmax
+        real,    intent(in) :: zc
+        real :: m
+        null_spread = 0.
+        if( n >= nmax ) return
+        m = real(nmax - n)
+        null_spread = sqrt(m / real(nmax * n) + zc * zc * (m - 1.) * real(nmax - 2) / &
+            &(2. * real(nmax - 1)**2 * real(max(1, n - 1))))
+    end function null_spread
+
+    ! the split re-test's Bonferroni threshold over m split tests: the one-sided normal quantile at ALPHA_SPLIT / m
+    real function split_zcrit( m )
+        integer, intent(in) :: m
+        real(dp) :: a, lo, hi, mid
+        integer  :: it
+        a  = ALPHA_SPLIT / real(max(1, m), dp)
+        lo = 0._dp
+        hi = 12._dp
+        do it = 1, 80
+            mid = 0.5_dp * (lo + hi)
+            if( 0.5_dp * erfc(mid / sqrt(2._dp)) > a )then
+                lo = mid
+            else
+                hi = mid
+            endif
+        end do
+        split_zcrit = real(0.5_dp * (lo + hi))
+    end function split_zcrit
 
     function sorted_upper( r, n ) result( str )
         use simple_srch_sort_loc, only: hpsort

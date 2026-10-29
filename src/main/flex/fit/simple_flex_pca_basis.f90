@@ -932,7 +932,7 @@ contains
     !> Orthonormalize the real column representatives into the column subspace Utilde by Gram
     !! eigendecomposition, keeping every direction above a relative energy floor.
     subroutine orthonormalize_representatives( params, build, realvols, nreal, utilde, utilde_real, d_tilde, svals, &
-        &nptcls_basis )
+        &nptcls_basis, frame_transform, frame_residual )
         class(parameters),                intent(inout) :: params
         type(builder),                    intent(inout) :: build
         type(image),                      intent(inout) :: realvols(:)
@@ -945,6 +945,12 @@ contains
         !> particles that actually reached the basis stages. Only used to REPORT the
         !! samples-per-parameter rank bound; it selects nothing.
         integer,             optional,    intent(in)    :: nptcls_basis
+        !> Exact raw-column coordinate map, Wraw = Worth * frame_transform, with a measured
+        !! physical residual. Both outputs are supplied together by the private-mixture fit.
+        real(dp), allocatable, optional, intent(out) :: frame_transform(:,:)
+        real(dp), optional, intent(out) :: frame_residual
+        real(dp), allocatable :: frame_work(:,:,:)
+        real(dp) :: frame_error, frame_norm
         real(dp), allocatable :: gram(:,:), evec(:,:), eval(:)
         real, pointer :: rmat_i(:,:,:), rmat_j(:,:,:)
         integer :: i, q, nrot, keep, d_budget, d_cap, d_signal, d_samples, nbasis
@@ -1027,6 +1033,27 @@ contains
             do q = 1, d_tilde
                 svals(q) = max(eval(q), DTINY)
             end do
+        endif
+        if( present(frame_transform) .neqv. present(frame_residual) ) THROW_HARD('both basis-frame outputs are required')
+        if( present(frame_transform) )then
+            allocate(frame_transform(d_tilde,nreal))
+            do q = 1, d_tilde
+                frame_transform(q,:) = sqrt(max(eval(q),DTINY))*evec(:,q)
+            enddo
+            call realvols(1)%get_rmat_ptr(rmat_i)
+            allocate(frame_work(size(rmat_i,1),size(rmat_i,2),size(rmat_i,3)))
+            frame_error = 0.d0; frame_norm = 0.d0
+            do i = 1, nreal
+                call realvols(i)%get_rmat_ptr(rmat_i)
+                frame_work = real(rmat_i,dp)
+                frame_norm = frame_norm + sum(frame_work*frame_work)
+                do q = 1, d_tilde
+                    call utilde_real(q)%get_rmat_ptr(rmat_j)
+                    frame_work = frame_work-frame_transform(q,i)*real(rmat_j,dp)
+                enddo
+                frame_error = frame_error+sum(frame_work*frame_work)
+            enddo
+            frame_residual = sqrt(frame_error/max(frame_norm,DTINY))
         endif
         deallocate(gram, evec, eval)
     end subroutine orthonormalize_representatives

@@ -18,8 +18,19 @@ particle poses:
   continuing refinement.
 - `hetero_tree` grows a tree of discrete states: every node runs flex_pca, site
   ranking, two refinement stages and a cross-half split test, and its children
-  are the groups the test keeps. It has no algorithm chapter yet; its
-  distribution options are below.
+  are the groups the test keeps. The test's re-test beyond the EM band is
+  Bonferroni-corrected over the tree's 2 N_root / minpop - 1 possible splits
+  (alpha 1/21, z against the mean and sd of a shuffle null of 20 shuffles,
+  extended in steps of 10 up to 50 while a merge decision is within the
+  null's Monte-Carlo uncertainty); the board test
+  and the merge-up of the leaves keep the max of 20 shuffles. It has no
+  algorithm chapter yet; its distribution options are below.
+  - A node's split starts from a site's seed states (`site_seeds.txt`). When
+    site_rank's pole rule rejects a pole, it re-seeds the kept poles from their
+    posteriors at >= 0.5 against a rest state, so the seed state stage A starts
+    from can be much narrower than the pole the rule tested (cdisc toy r1 site
+    3: 182 seeds where the rule kept 32,263). `site_pole_rule.txt` gives each
+    pole's state and seeds after the rule.
 - `ptcl3D_state_consensus` is a metadata utility in the same category: it
   combines the per-particle state assignments from a file table of projects
   (for example several `refine3D_states` runs) into one consensus `ptcl3D`

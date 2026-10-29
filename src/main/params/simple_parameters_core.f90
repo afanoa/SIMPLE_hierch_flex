@@ -61,6 +61,7 @@ contains
         self%pdbfiles=''          !< list of PDB files
         self%pdbout=''            !< PDB output file
         self%pickrefs=''          !< picking references
+        self%pca_eval_pindfile=''
         self%plaintexttab=''      !< plain text file of input parameters
         self%prg=''               !< SIMPLE program being executed
         self%projfile=''          !< SIMPLE *.simple project file

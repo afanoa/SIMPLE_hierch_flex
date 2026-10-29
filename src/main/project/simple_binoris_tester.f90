@@ -6,7 +6,7 @@ module simple_binoris_tester
 use simple_test_utils    ! assertions etc.
 use simple_defs_ori,     only: N_PTCL_ORIPARAMS, N_PTCL_RECORD_REALS, I_CORR_CART, I_POSE_CONT_IMPROVED, I_CFAR, &
     &I_POSE_CONT_STATUS, I_LAST_NAMED_ORIPARAM, oriparam_is_spare, oriparam_isthere
-use simple_type_defs,    only: MIC_SEG, STK_SEG, PTCL2D_SEG
+use simple_type_defs,    only: MIC_SEG, STK_SEG, PTCL2D_SEG, PTCL3D_SEG, OUT_SEG
 use simple_string,       only: string
 use simple_string_utils, only: int2str
 use simple_syslib,       only: del_file, file_exists
@@ -41,6 +41,7 @@ contains
         call test_particle_segment_roundtrip()
         call test_cartesian_record_slots()
         call test_earlier_release_particle_records()
+        call test_selected_project_copy()
         call test_write_segment_inside()
         call test_write_segment_inside_strings()
         call test_project_write_segment_inside()
@@ -49,6 +50,106 @@ contains
         call test_binoris_io_project_dispatch()
         call cleanup()
     end subroutine run_all_binoris_tests
+
+    ! Selected-row project creation preserves bytes across record widths and buffer boundaries.
+    subroutine test_selected_project_copy()
+        class(sp_project), allocatable :: project
+        class(oris),       allocatable :: metadata
+        type(binoris) :: bos
+        type(binoris_seginfo) :: before(20), after(20)
+        character(len=1), allocatable :: original(:), current(:), selected(:)
+        real, allocatable :: records(:,:)
+        integer, allocatable :: rows(:)
+        integer :: widths(3), iw, width, n, i, j, seg, fu, mode, offset, target, countbytes
+        integer(kind=8) :: pos2, pos3, size_in, size_out
+        character(len=*), parameter :: DEST = 'tmp_binoris_selected.simple'
+        allocate(project, metadata)
+        call make_mic_oris(metadata, 2)
+        widths = [N_PTCL_RECORD_REALS, NRELEASE3_VALUES, NOLDER_VALUES]
+        do iw = 1, size(widths)
+            width = widths(iw)
+            n = merge(20003, 11, iw == 1)
+            allocate(records(width,n))
+            do j = 1, n
+                records(:,j) = [(real(i+100*j), i=1,width)]
+            end do
+            call bos%open(string(BIN_FILE), del_if_exists=.true.)
+            call bos%write_segment(MIC_SEG, metadata)
+            call bos%add_segment(PTCL2D_SEG, [1,n], width*4)
+            call bos%add_segment(PTCL3D_SEG, [1,n], width*4)
+            call bos%write_segment(OUT_SEG, metadata)
+            call bos%update_byte_ranges
+            call bos%write_header
+            pos2 = bos%get_first_data_byte(PTCL2D_SEG)
+            pos3 = bos%get_first_data_byte(PTCL3D_SEG)
+            size_in = bos%get_n_bytes_tot()
+            call bos%close
+            open(newunit=fu, file=BIN_FILE, access='stream', form='unformatted', status='old')
+            write(fu,pos=pos2) records
+            write(fu,pos=pos3) -records
+            write(fu,pos=size_in+1) 'unused trailing bytes'
+            close(fu)
+            inquire(file=BIN_FILE, size=size_in)
+            allocate(original(size_in), current(size_in))
+            open(newunit=fu, file=BIN_FILE, access='stream', form='unformatted', status='old', action='read')
+            read(fu,pos=1) original
+            read(fu,pos=1) before
+            close(fu)
+            do mode = 1, 4
+                select case(mode)
+                    case(1)
+                        rows = [1, 2, n/2, n-1, n]
+                    case(2)
+                        rows = [(i, i=1,n)]
+                    case(3)
+                        rows = [n]
+                    case(4)
+                        if( allocated(rows) ) deallocate(rows)
+                        allocate(rows(0))
+                end select
+                call project%write_selected_particles(string(BIN_FILE), string(DEST), rows)
+                inquire(file=DEST, size=size_out)
+                allocate(selected(size_out))
+                open(newunit=fu, file=DEST, access='stream', form='unformatted', status='old', action='read')
+                read(fu,pos=1) selected
+                read(fu,pos=1) after
+                close(fu)
+                call assert_true(size_out == after(OUT_SEG)%first_data_byte + &
+                    &after(OUT_SEG)%n_records*after(OUT_SEG)%n_bytes_per_record-1, 'selected project has no unused tail')
+                do seg = 1, 20
+                    if( before(seg)%n_records == 0 ) cycle
+                    if( seg == PTCL2D_SEG .or. seg == PTCL3D_SEG )then
+                        call assert_int(size(rows), int(after(seg)%n_records), 'selected particle count')
+                        if( size(rows) == 0 ) cycle
+                        call assert_int(width*4, int(after(seg)%n_bytes_per_record), 'original record width retained')
+                        call assert_true(all(after(seg)%fromto == [1,size(rows)]), 'selected rows start at one')
+                        do j = 1, size(rows)
+                            offset = int(before(seg)%first_data_byte) + (rows(j)-1)*width*4
+                            target = int(after(seg)%first_data_byte) + (j-1)*width*4
+                            call assert_true(all(original(offset:offset+width*4-1) == &
+                                &selected(target:target+width*4-1)), 'particle record preserved bit for bit')
+                        end do
+                    else
+                        countbytes = int(before(seg)%n_records*before(seg)%n_bytes_per_record)
+                        offset = int(before(seg)%first_data_byte)
+                        target = int(after(seg)%first_data_byte)
+                        call assert_true(all(original(offset:offset+countbytes-1) == &
+                            &selected(target:target+countbytes-1)), 'metadata preserved bit for bit')
+                    endif
+                end do
+                deallocate(selected)
+                open(newunit=fu, file=BIN_FILE, access='stream', form='unformatted', status='old', action='read')
+                read(fu,pos=1) current
+                close(fu)
+                call assert_true(all(original == current), 'source unchanged including its unused tail')
+            end do
+            deallocate(records, original, current)
+        end do
+        call project%kill
+        call metadata%kill
+        call del_file(string(DEST))
+        call del_file(string(BIN_FILE))
+    end subroutine test_selected_project_copy
 
     !---------------- header bookkeeping ----------------
 

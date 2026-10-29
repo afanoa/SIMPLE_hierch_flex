@@ -24,7 +24,26 @@ implicit none
 private
 #include "simple_local_flags.inc"
 
-public :: embed_latents_with_contrast
+public :: embed_latents_with_contrast, evaluate_predictive_rows, infer_fixed_rows, predictive_score_row, predictive_statistics_row
+
+abstract interface
+    subroutine predictive_score_row( pind, G, b, s, logdet_noise, ndof, logp, valid )
+        import :: dp
+        integer,  intent(in)  :: pind, ndof
+        real(dp), intent(in)  :: G(:,:), b(:), s, logdet_noise
+        real(dp), intent(out) :: logp
+        logical,  intent(out) :: valid
+    end subroutine predictive_score_row
+end interface
+
+abstract interface
+    subroutine predictive_statistics_row( pind, half, G, b, s, nu, logdet_noise, ndof, status )
+        import :: dp
+        integer, intent(in) :: pind, half, ndof
+        real(dp), intent(in) :: G(:,:), b(:), s, nu, logdet_noise
+        integer, intent(out) :: status
+    end subroutine predictive_statistics_row
+end interface
 
 logical, parameter :: COV_EMBED_CONTRAST_GRID = .false.
 integer, parameter :: GRAM_DIAG_STRIDE        = 200   ! subsample for the projected-Gram spectrum
@@ -431,6 +450,406 @@ contains
         if( allocated(Ghf)    ) deallocate(Ghf, bhf, chf)
         if( allocated(gwork)  ) deallocate(gwork, gvec, gev, gspec_thr, gcnt_thr)
     end subroutine embed_latents_with_contrast
+
+    !> Held-out entry: fitting rows are always excluded.
+    subroutine evaluate_predictive_rows( params, build, model, train_sel, eval_pinds, fixed_sig2, logp, ndof, valid, &
+        &score_row, audit_prefix, score_model_id, statistics_row, statistics_status )
+        class(parameters), intent(inout) :: params
+        type(builder), intent(inout) :: build
+        type(flex_fit_model), intent(in) :: model
+        type(flex_selection), intent(in) :: train_sel
+        integer, intent(in) :: eval_pinds(:)
+        real(dp), intent(in) :: fixed_sig2
+        real(dp), allocatable, intent(out) :: logp(:)
+        integer, allocatable, intent(out) :: ndof(:)
+        logical, allocatable, intent(out) :: valid(:)
+        procedure(predictive_score_row), optional :: score_row
+        character(len=*), optional, intent(in) :: audit_prefix, score_model_id
+        procedure(predictive_statistics_row), optional :: statistics_row
+        integer, optional, intent(out) :: statistics_status
+        call evaluate_fixed_rows(params, build, model, train_sel, eval_pinds, fixed_sig2, logp, ndof, valid, &
+            &.true., score_row, audit_prefix, score_model_id, statistics_row, statistics_status)
+    end subroutine evaluate_predictive_rows
+
+    !> Explicit non-heldout entry: frozen-model inference includes all fitting rows; no refitting.
+    subroutine infer_fixed_rows( params, build, model, train_sel, eval_pinds, fixed_sig2, logp, ndof, valid, &
+        &score_row, audit_prefix, score_model_id, statistics_row, statistics_status )
+        class(parameters), intent(inout) :: params
+        type(builder), intent(inout) :: build
+        type(flex_fit_model), intent(in) :: model
+        type(flex_selection), intent(in) :: train_sel
+        integer, intent(in) :: eval_pinds(:)
+        real(dp), intent(in) :: fixed_sig2
+        real(dp), allocatable, intent(out) :: logp(:)
+        integer, allocatable, intent(out) :: ndof(:)
+        logical, allocatable, intent(out) :: valid(:)
+        procedure(predictive_score_row), optional :: score_row
+        character(len=*), optional, intent(in) :: audit_prefix, score_model_id
+        procedure(predictive_statistics_row), optional :: statistics_row
+        integer, optional, intent(out) :: statistics_status
+        call evaluate_fixed_rows(params, build, model, train_sel, eval_pinds, fixed_sig2, logp, ndof, valid, &
+            &.false., score_row, audit_prefix, score_model_id, statistics_row, statistics_status)
+    end subroutine infer_fixed_rows
+
+    ! Reads caller-owned project rows and fixed model; writes only diagnostic arrays and temporary read buffers.
+    ! This is a conditional assumed transformed-noise Gaussian diagnostic, with unit amplitude and no refitting.
+    subroutine evaluate_fixed_rows( params, build, model, train_sel, eval_pinds, fixed_sig2, logp, ndof, valid, &
+        &l_heldout, score_row, audit_prefix, score_model_id, statistics_row, statistics_status )
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_value, ieee_quiet_nan
+        use simple_defs,                         only: OSMPL_PAD_FAC
+        use simple_ftiter,                       only: ftiter
+        use simple_flex_predictive,              only: flex_predictive_score
+        use simple_flex_reconstructor_latent_ops, only: projected_model_kfromto
+        class(parameters),              intent(inout) :: params
+        type(builder),                  intent(inout) :: build
+        type(flex_fit_model),           intent(in)    :: model
+        type(flex_selection),           intent(in)    :: train_sel
+        integer,                        intent(in)    :: eval_pinds(:)
+        real(dp),                       intent(in)    :: fixed_sig2
+        real(dp), allocatable,          intent(out)   :: logp(:)
+        integer, allocatable,           intent(out)   :: ndof(:)
+        logical, allocatable,           intent(out)   :: valid(:)
+        logical, intent(in) :: l_heldout
+        procedure(predictive_score_row), optional     :: score_row
+        character(len=*), optional,     intent(in)    :: audit_prefix, score_model_id
+        procedure(predictive_statistics_row), optional :: statistics_row
+        integer, optional,              intent(out)   :: statistics_status
+        class(flex_plane_store), allocatable :: eval_store
+        type(ptcl_read_session) :: reads
+        type(fplane_type), allocatable :: fpls(:), basis_fpls(:)
+        type(fplane_type) :: mean_fpl
+        type(ftiter) :: plane_iterator
+        type(ori) :: orientation
+        integer, allocatable :: hk(:,:)
+        logical, allocatable :: seen(:)
+        real(dp), allocatable :: gram(:,:), rhs(:), latent_chol(:,:)
+        complex(dp), allocatable :: projected(:)
+        complex(dp) :: residual
+        real(dp) :: s, weight, logdet_noise, radius_sq
+        integer :: nrows, n_eval, rank, q, r, i, j, h, k, band, ns, pass, row, batchsz
+        integer :: audit_unit, audit_status, audit_length, row_statistics_status
+        integer :: batchlims(2), kfromto(2), expected_lims(3,2), model_dims(3), plane_lb(2), plane_ub(2)
+        logical :: row_valid, l_audit
+        character(len=8) :: audit_env
+        character(len=:), allocatable :: audit_filename
+        ! Keep export errors separate from numerical row validity so the owner can close and retain diagnostics.
+        if( present(statistics_status) ) statistics_status = 0
+        if( present(statistics_row) )then
+            if( .not. present(statistics_status) ) THROW_HARD('predictive statistics observer requires an export status sink')
+        endif
+        if( params%nparts /= 1 ) THROW_HARD('predictive evaluation supports shared-memory execution only')
+        if( trim(params%oritype) /= 'ptcl3D' ) THROW_HARD('predictive evaluation requires ptcl3D rows')
+        if( .not. ieee_is_finite(fixed_sig2) ) THROW_HARD('predictive evaluation noise must be finite')
+        if( fixed_sig2 <= 2._dp/huge(1._dp) ) THROW_HARD('predictive evaluation noise must be positive and representable')
+        n_eval = size(eval_pinds)
+        nrows = build%spproj_field%get_noris()
+        if( n_eval < 1 .or. nrows < 1 ) THROW_HARD('predictive evaluation requires nonempty project and evaluation rows')
+        if( .not. allocated(train_sel%pinds) ) THROW_HARD('predictive evaluation needs the explicit fitting selection')
+        if( train_sel%nptcls < 1 ) THROW_HARD('predictive evaluation needs a nonempty fitting selection')
+        if( size(train_sel%pinds) /= train_sel%nptcls ) THROW_HARD('predictive fitting selection size mismatch')
+        if( any(train_sel%pinds < 1) .or. any(train_sel%pinds > nrows) ) THROW_HARD('predictive fitting row outside project')
+        if( any(eval_pinds < 1) .or. any(eval_pinds > nrows) ) THROW_HARD('predictive evaluation row outside project')
+        allocate(seen(nrows), source=.false.)
+        do i = 1, train_sel%nptcls
+            if( seen(train_sel%pinds(i)) ) THROW_HARD('duplicate predictive fitting row')
+            seen(train_sel%pinds(i)) = .true.
+        enddo
+        ! Only the explicit inference entry permits fitting rows; it still rejects duplicate inference IDs.
+        if( .not. l_heldout ) seen = .false.
+        do i = 1, n_eval
+            if( seen(eval_pinds(i)) ) THROW_HARD('predictive evaluation overlaps fitting rows or contains duplicates')
+            seen(eval_pinds(i)) = .true.
+            call build%spproj_field%get_ori(eval_pinds(i), orientation)
+            if( l_heldout )then
+                if( orientation%get_state() <= 0 ) THROW_HARD('predictive evaluation requires active rows selected by pindfile')
+            endif
+            if( .not. all(ieee_is_finite(orientation%get_euler())) ) THROW_HARD('nonfinite predictive evaluation pose')
+            if( .not. all(ieee_is_finite(orientation%get_2Dshift())) ) THROW_HARD('nonfinite predictive evaluation shift')
+            if( orientation%get_eo() /= 0 .and. orientation%get_eo() /= 1 ) THROW_HARD('invalid predictive even/odd half')
+        enddo
+        if( .not. l_heldout )then
+            if( .not. all(seen(train_sel%pinds)) ) THROW_HARD('inference selection must include every fitting row')
+        endif
+        call orientation%kill
+        deallocate(seen)
+        rank = model%ncomp
+        if( rank < 0 ) THROW_HARD('negative predictive model rank')
+        if( .not. allocated(model%basis_recs) ) THROW_HARD('predictive model has no frozen basis')
+        if( size(model%basis_recs) /= rank ) THROW_HARD('predictive model rank mismatch')
+        if( .not. present(score_row) )then
+            if( .not. allocated(model%eigvals) ) THROW_HARD('predictive model has no frozen prior variances')
+            if( size(model%eigvals) /= rank ) THROW_HARD('predictive model prior rank mismatch')
+            if( .not. all(ieee_is_finite(model%eigvals)) ) THROW_HARD('nonfinite predictive prior variance')
+            if( any(model%eigvals <= 0._dp) ) THROW_HARD('predictive prior variances must be positive without flooring')
+        endif
+        if( .not. allocated(model%mean_rec%cmat_exp) ) THROW_HARD('predictive evaluation requires an expanded frozen mean')
+        model_dims = model%mean_rec%get_ldim()
+        if( params%box_crop < 4 .or. params%box < params%box_crop ) THROW_HARD('unsupported predictive evaluation box')
+        if( params%boxpd /= OSMPL_PAD_FAC*params%box ) THROW_HARD('unsupported predictive padded observation box')
+        if( any(model_dims /= params%box_crop) ) THROW_HARD('predictive mean and evaluation crop differ')
+        if( abs(model%mean_rec%get_smpd()-params%smpd_crop) > epsilon(1.)*max(1.,params%smpd_crop) ) &
+            &THROW_HARD('predictive mean and evaluation sampling differ')
+        do q = 1, rank
+            if( .not. allocated(model%basis_recs(q)%cmat_exp) ) THROW_HARD('predictive evaluation requires an expanded basis')
+            if( any(model%basis_recs(q)%get_ldim() /= model_dims) ) THROW_HARD('predictive basis and mean dimensions differ')
+            if( abs(model%basis_recs(q)%get_smpd()-params%smpd_crop) > epsilon(1.)*max(1.,params%smpd_crop) ) &
+                &THROW_HARD('predictive basis and evaluation sampling differ')
+            if( any(lbound(model%basis_recs(q)%cmat_exp) /= lbound(model%mean_rec%cmat_exp)) ) &
+                &THROW_HARD('predictive basis and mean expanded bounds differ')
+            if( any(ubound(model%basis_recs(q)%cmat_exp) /= ubound(model%mean_rec%cmat_exp)) ) &
+                &THROW_HARD('predictive basis and mean expanded bounds differ')
+        enddo
+        kfromto = projected_model_kfromto(params%box_crop, params%smpd_crop, params%lp)
+        band = min(kfromto(2), params%box_crop/2, params%box/2)
+        if( band < 2 ) THROW_HARD('predictive evaluation has no strictly interior nonzero Fourier support')
+        ! Strictly interior coordinates exclude DC, both Nyquist lines and all Friedel duplicates.
+        do pass = 1, 2
+            ns = 0
+            do k = -band+1, 0
+                do h = -band+1, band-1
+                    if( k == 0 .and. h >= 0 ) cycle
+                    radius_sq = real(h,dp)**2 + real(k,dp)**2
+                    if( radius_sq >= real(band,dp)**2 ) cycle
+                    if( radius_sq < real(kfromto(1),dp)**2 ) cycle
+                    ns = ns + 1
+                    if( pass == 2 ) hk(:,ns) = [h,k]
+                enddo
+            enddo
+            if( pass == 1 ) allocate(hk(2,ns))
+        enddo
+        if( ns < 1 ) THROW_HARD('predictive evaluation Fourier support is empty')
+        ! Use the plane producer's redundant limits, including its positive first-axis Nyquist endpoint.
+        call plane_iterator%new([params%boxpd,params%boxpd,1], params%smpd_crop)
+        expected_lims = plane_iterator%loop_lims(3)
+        call plane_iterator%reset
+        allocate(logp(n_eval), source=ieee_value(0._dp,ieee_quiet_nan))
+        allocate(ndof(n_eval), source=2*ns)
+        allocate(valid(n_eval), source=.false.)
+        allocate(gram(rank,rank), rhs(rank), projected(rank), basis_fpls(rank))
+        if( .not. present(score_row) )then
+            allocate(latent_chol(rank,rank), source=0._dp)
+            do q = 1, rank
+                latent_chol(q,q) = sqrt(model%eigvals(q))
+            enddo
+        endif
+        weight = 2._dp/fixed_sig2
+        logdet_noise = real(2*ns,dp)*(log(fixed_sig2)-log(2._dp))
+        ! The opt-in two-row artifact records the actual caller arrays, without changing fitting or scores.
+        call get_environment_variable('SIMPLE_PCA_EVAL_AUDIT', audit_env, length=audit_length, status=audit_status)
+        l_audit = .false.
+        if( audit_status == 0 ) l_audit = audit_length == 3 .and. audit_env == 'yes'
+        if( l_audit )then
+            audit_filename = 'flex_pca_predictive_audit.txt'
+            if( .not. l_heldout ) audit_filename = 'flex_pca_inference_audit.txt'
+            if( present(audit_prefix) )then
+                if( len_trim(audit_prefix) < 1 ) THROW_HARD('predictive audit prefix must be nonempty')
+                if( verify(trim(audit_prefix),'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.') /= 0 ) &
+                    &THROW_HARD('predictive audit prefix must be a local filename prefix')
+                audit_filename = trim(audit_prefix)//'_predictive_audit.txt'
+            endif
+            if( present(score_row) )then
+                if( .not. present(score_model_id) ) THROW_HARD('predictive callback audit needs its model identity')
+                if( len_trim(score_model_id) < 1 ) THROW_HARD('predictive callback model identity must be nonempty')
+                if( scan(score_model_id,achar(10)//achar(13)) /= 0 ) THROW_HARD('predictive model identity must be one line')
+            endif
+            call fopen(audit_unit, file=string(audit_filename), action='WRITE', &
+                &status='NEW', iostat=audit_status)
+            call fileiochk('predictive audit; open fresh artifact', audit_status)
+            if( l_heldout )then
+                write(audit_unit,'(A)',iostat=audit_status) 'SCHEMA SIMPLE_PCA_EVAL_AUDIT_V1'
+            else
+                write(audit_unit,'(A)',iostat=audit_status) 'SCHEMA SIMPLE_PCA_INFERENCE_AUDIT_V1'
+            endif
+            call fileiochk('predictive audit; schema', audit_status)
+            if( present(score_row) )then
+                write(audit_unit,'(A)',iostat=audit_status) 'CLASS conditional_assumed_transformed_noise_external_prior'
+            else
+                write(audit_unit,'(A)',iostat=audit_status) 'CLASS conditional_assumed_transformed_noise_gaussian'
+            endif
+            call fileiochk('predictive audit; score class', audit_status)
+            write(audit_unit,'(A)',iostat=audit_status) 'CONVENTION unique_complex_interior_real_imag_noise_nu_over_2_amplitude_1', &
+                &'SAMPLE_COLUMNS index h k observed_real observed_imag mean_real mean_imag', &
+                &'BASIS_COLUMNS index component real imag'
+            call fileiochk('predictive audit; header', audit_status)
+            write(audit_unit,'(A,*(1X,I0))',iostat=audit_status) 'COUNTS', n_eval, min(2,n_eval), &
+                &rank, ns, 2*ns, train_sel%nptcls
+            call fileiochk('predictive audit; counts', audit_status)
+            write(audit_unit,'(A,*(1X,I0))',iostat=audit_status) 'GEOMETRY', params%box, params%box_crop, &
+                &params%boxpd, OSMPL_PAD_FAC, band, kfromto, model_dims
+            call fileiochk('predictive audit; geometry', audit_status)
+            write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'SAMPLING', &
+                &real(params%smpd,dp), real(params%smpd_crop,dp), real(params%lp,dp)
+            call fileiochk('predictive audit; sampling', audit_status)
+            write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'NOISE', fixed_sig2, weight, logdet_noise
+            call fileiochk('predictive audit; noise', audit_status)
+            if( present(score_row) )then
+                write(audit_unit,'(A)',iostat=audit_status) 'SCORE_MODE external_full_prior_callback'
+                call fileiochk('predictive audit; callback score mode', audit_status)
+                write(audit_unit,'(2A)',iostat=audit_status) 'SCORE_MODEL_ID ', trim(score_model_id)
+                call fileiochk('predictive audit; callback model identity', audit_status)
+                write(audit_unit,'(A)',iostat=audit_status) 'PRIOR external_callback_full_covariance'
+                call fileiochk('predictive audit; external prior', audit_status)
+            else
+                write(audit_unit,'(A)',iostat=audit_status) 'PRIOR model_diagonal_eigenvalues'
+                call fileiochk('predictive audit; diagonal prior', audit_status)
+                write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'EIGVALS', real(model%eigvals,dp)
+                call fileiochk('predictive audit; prior', audit_status)
+                do q = 1, rank
+                    write(audit_unit,'(A,1X,I0,*(1X,ES26.17E3))',iostat=audit_status) 'LATENT_CHOL', q, latent_chol(q,:)
+                    call fileiochk('predictive audit; prior Cholesky', audit_status)
+                enddo
+            endif
+        endif
+        write(logfhandle,'(A)') '>>> FLEX_PCA CONDITIONAL ASSUMED TRANSFORMED-NOISE GAUSSIAN DIAGNOSTIC'
+        if( l_heldout )then
+            write(logfhandle,'(A,I0,A,I0,A,I0,A,ES16.8)') '>>> fitting rows=',train_sel%nptcls, &
+                &' disjoint evaluation rows=',n_eval,' real degrees=',2*ns,' fixed complex noise=',fixed_sig2
+        else
+            write(logfhandle,'(A,I0,A,I0,A,I0,A,ES16.8)') '>>> fitting rows=',train_sel%nptcls, &
+                &' NON-HELDOUT inference rows=',n_eval,' real degrees=',2*ns,' reference complex variance=',fixed_sig2
+        endif
+        call flush(logfhandle)
+        ! A disabled private store forces the native observation path and leaves training caches untouched.
+        allocate(eval_store)
+        batchsz = min(MAXIMGBATCHSZ,n_eval)
+        call init_rec(params, build, batchsz, fpls, cropped=.false.)
+        call prepimgbatch(params, build, batchsz)
+        call reads%new(params)
+        do i = 1, n_eval, batchsz
+            batchlims = [i,min(n_eval,i+batchsz-1)]
+            call planes_batch_load(eval_store, params, build, n_eval, eval_pinds, batchlims, fpls, .false., reads)
+            do j = 1, batchlims(2)-batchlims(1)+1
+                row = batchlims(1)+j-1
+                plane_lb = 0
+                plane_ub = -1
+                if( allocated(fpls(j)%cmplx_plane) )then
+                    plane_lb = lbound(fpls(j)%cmplx_plane)
+                    plane_ub = ubound(fpls(j)%cmplx_plane)
+                endif
+                row_valid = allocated(fpls(j)%cmplx_plane) .and. allocated(fpls(j)%transfer_plane)
+                row_valid = row_valid .and. all(fpls(j)%frlims == expected_lims)
+                row_valid = row_valid .and. fpls(j)%nyq >= OSMPL_PAD_FAC*band
+                row_valid = row_valid .and. minval(hk(1,:)) >= plane_lb(1) .and. maxval(hk(1,:)) <= plane_ub(1)
+                row_valid = row_valid .and. minval(hk(2,:)) >= plane_lb(2) .and. maxval(hk(2,:)) <= plane_ub(2)
+                if( .not. row_valid )then
+                    if( row <= 2 )then
+                        write(logfhandle,'(A,I0,A,I0)') '>>> FLEX_PCA predictive plane precheck failed: row=',row, &
+                            &' project_row=',eval_pinds(row)
+                        write(logfhandle,'(A,6(1X,I0))') '>>> expected padded Fourier limits:',expected_lims
+                        write(logfhandle,'(A,6(1X,I0),A,I0,A,I0)') '>>> actual padded Fourier limits:',fpls(j)%frlims, &
+                            &' Nyquist=',fpls(j)%nyq,' required=',OSMPL_PAD_FAC*band
+                        write(logfhandle,'(A,2(1X,L1),A,4(1X,I0))') '>>> allocated observation/transfer:', &
+                            &allocated(fpls(j)%cmplx_plane),allocated(fpls(j)%transfer_plane), &
+                            &' stored lower/upper bounds:',plane_lb,plane_ub
+                        call flush(logfhandle)
+                    endif
+                    cycle
+                endif
+                call build%spproj_field%get_ori(eval_pinds(row), orientation)
+                call project_fplanes_mean_basis(model%mean_rec, model%basis_recs, orientation, fpls(j), &
+                    &mean_fpl, basis_fpls, apply_ctf_amp=.true.)
+                gram = 0._dp
+                rhs = 0._dp
+                s = 0._dp
+                row_valid = .true.
+                do k = 1, ns
+                    h = hk(1,k)
+                    residual = cmplx(fpls(j)%cmplx_plane(h,hk(2,k)),kind=dp) &
+                        &- cmplx(mean_fpl%cmplx_plane(h,hk(2,k)),kind=dp)
+                    do q = 1, rank
+                        projected(q) = cmplx(basis_fpls(q)%cmplx_plane(h,hk(2,k)),kind=dp)
+                    enddo
+                    if( .not. ieee_is_finite(real(residual,dp)) .or. .not. ieee_is_finite(aimag(residual)) )then
+                        row_valid = .false.
+                        exit
+                    endif
+                    if( .not. all(ieee_is_finite(real(projected,dp))) .or. &
+                        &.not. all(ieee_is_finite(aimag(projected))) )then
+                        row_valid = .false.
+                        exit
+                    endif
+                    s = s + weight*real(conjg(residual)*residual,dp)
+                    do q = 1, rank
+                        rhs(q) = rhs(q) + weight*real(conjg(projected(q))*residual,dp)
+                        do r = q, rank
+                            gram(q,r) = gram(q,r) + weight*real(conjg(projected(q))*projected(r),dp)
+                            gram(r,q) = gram(q,r)
+                        enddo
+                    enddo
+                enddo
+                if( row_valid )then
+                    if( present(statistics_row) )then
+                        call statistics_row(eval_pinds(row), orientation%get_eo(), gram, rhs, s, fixed_sig2, &
+                            &logdet_noise, 2*ns, row_statistics_status)
+                        if( row_statistics_status /= 0 )then
+                            if( statistics_status == 0 ) statistics_status = row_statistics_status
+                        endif
+                    endif
+                    if( present(score_row) )then
+                        ! The callback owns its full prior and the normalized conditional density.
+                        call score_row(eval_pinds(row), gram, rhs, s, logdet_noise, 2*ns, logp(row), valid(row))
+                        if( .not. ieee_is_finite(logp(row)) ) valid(row) = .false.
+                    else
+                        call flex_predictive_score(gram, rhs, s, logdet_noise, 2*ns, &
+                            &latent_chol, logp(row), valid(row))
+                    endif
+                endif
+                if( l_audit .and. row <= 2 )then
+                    write(audit_unit,'(A,*(1X,I0))',iostat=audit_status) 'ROW_BEGIN', row, eval_pinds(row), orientation%get_eo()
+                    call fileiochk('predictive audit; row', audit_status)
+                    write(audit_unit,'(A,*(1X,I0))',iostat=audit_status) 'PLANE_GEOMETRY', &
+                        &fpls(j)%nyq, fpls(j)%frlims, plane_lb, plane_ub
+                    call fileiochk('predictive audit; plane geometry', audit_status)
+                    write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'POSE_SHIFT', &
+                        &real(orientation%get_euler(),dp), real(orientation%get_2Dshift(),dp)
+                    call fileiochk('predictive audit; pose and shift', audit_status)
+                    do k = 1, ns
+                        h = hk(1,k)
+                        write(audit_unit,'(A,3(1X,I0),4(1X,ES26.17E3))',iostat=audit_status) 'SAMPLE', k, hk(:,k), &
+                            &real(fpls(j)%cmplx_plane(h,hk(2,k)),dp), real(aimag(fpls(j)%cmplx_plane(h,hk(2,k))),dp), &
+                            &real(mean_fpl%cmplx_plane(h,hk(2,k)),dp), real(aimag(mean_fpl%cmplx_plane(h,hk(2,k))),dp)
+                        call fileiochk('predictive audit; observed and mean sample', audit_status)
+                        do q = 1, rank
+                            write(audit_unit,'(A,2(1X,I0),2(1X,ES26.17E3))',iostat=audit_status) 'BASIS', k, q, &
+                                &real(basis_fpls(q)%cmplx_plane(h,hk(2,k)),dp), &
+                                &real(aimag(basis_fpls(q)%cmplx_plane(h,hk(2,k))),dp)
+                            call fileiochk('predictive audit; projected basis sample', audit_status)
+                        enddo
+                    enddo
+                    do q = 1, rank
+                        write(audit_unit,'(A,1X,I0,*(1X,ES26.17E3))',iostat=audit_status) 'GRAM', q, gram(q,:)
+                        call fileiochk('predictive audit; Gram row', audit_status)
+                    enddo
+                    write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'RHS', rhs
+                    call fileiochk('predictive audit; right hand side', audit_status)
+                    write(audit_unit,'(A,*(1X,ES26.17E3))',iostat=audit_status) 'SCORE', s, logdet_noise, logp(row)
+                    call fileiochk('predictive audit; score', audit_status)
+                    write(audit_unit,'(A,1X,I0,2(1X,L1))',iostat=audit_status) 'ROW_END', row, row_valid, valid(row)
+                    call fileiochk('predictive audit; row end', audit_status)
+                endif
+            enddo
+        enddo
+        if( l_audit )then
+            ! Rows skipped by geometry checks still receive an explicit invalid status.
+            do row = 1, min(2,n_eval)
+                write(audit_unit,'(A,3(1X,I0),1X,L1,1X,ES26.17E3)',iostat=audit_status) &
+                    &'ROW_STATUS', row, eval_pinds(row), ndof(row), valid(row), logp(row)
+                call fileiochk('predictive audit; final row status', audit_status)
+            enddo
+            call fclose(audit_unit)
+        endif
+        call reads%kill
+        call orientation%kill
+        call cleanup_plane(mean_fpl)
+        do q = 1, rank
+            call cleanup_plane(basis_fpls(q))
+        enddo
+        call cleanup_rec_buffers(build, fpls)
+        call eval_store%kill
+        deallocate(eval_store)
+        write(logfhandle,'(A,I0,A,I0)') '>>> FLEX_PCA conditional diagnostic valid rows=',count(valid),' / ',n_eval
+        call flush(logfhandle)
+    end subroutine evaluate_fixed_rows
 
     !> One part's embedding sufficient statistics (per-particle scalars, split-half latents, G/b/c
     !! blocks). The master reduces zhalf over every particle, forms the prior once, then re-solves

@@ -17,11 +17,14 @@ use simple_flex_pca_rounds,    only: flex_pca_rounds
 use simple_state_weight_set,   only: state_weight_set, STATE_WEIGHTS_KIND_PARTITION
 use simple_eo_partition,       only: ensure_field_halves
 use simple_flex_pca_stages,    only: set_flex_half_keys
+use simple_srch_sort_loc,      only: hpsort
+use simple_syslib,             only: simple_abspath
 implicit none
 private
 #include "simple_local_flags.inc"
 
 public :: validate_covariance_inputs, ensure_canonical_sigma_state, load_and_validate_sigma
+public :: read_pind_list, validate_distinct_physical_rows
 public :: write_state_weight_set, write_discrete_state_project, register_embedding_artifact
 public :: deliver_state_maps
 
@@ -51,6 +54,62 @@ contains
         call fn%kill
         nptcls = n
     end subroutine read_pind_list
+
+    !> Canonical stack/image identities must be unique across the entire experimental selection.
+    subroutine validate_distinct_physical_rows( build, rows )
+        type(builder), intent(inout) :: build
+        integer,       intent(in)    :: rows(:)
+        integer, allocatable :: stacks(:), indices(:), order(:), stack_order(:), canonical(:)
+        type(string), allocatable :: stack_paths(:)
+        integer :: i, a, b, nstacks, status, group
+        allocate(stacks(size(rows)), indices(size(rows)))
+        order = [(i,i=1,size(rows))]
+        do i = 1, size(rows)
+            call build%spproj%map_ptcl_ind2stk_ind('ptcl3D', rows(i), stacks(i), indices(i))
+        end do
+        nstacks = build%spproj%os_stk%get_noris()
+        allocate(canonical(nstacks), source=0)
+        do i = 1, size(stacks)
+            canonical(stacks(i)) = 1
+        end do
+        stack_order = pack([(i,i=1,nstacks)], canonical > 0)
+        allocate(stack_paths(nstacks))
+        do i = 1, size(stack_order)
+            a = stack_order(i)
+            stack_paths(a) = simple_abspath(build%spproj%get_stkname(a), status=status)
+            if( status /= 0 ) THROW_HARD('cannot resolve an experimental particle stack')
+        end do
+        call hpsort(stack_order, stack_before)
+        group = 0
+        do i = 1, size(stack_order)
+            a = stack_order(i)
+            if( i == 1 )then
+                group = 1
+            else
+                b = stack_order(i-1)
+                if( stack_paths(a)%to_char() /= stack_paths(b)%to_char() ) group = group + 1
+            endif
+            canonical(a) = group
+        end do
+        stacks = canonical(stacks)
+        call hpsort(order, physical_before)
+        do i = 2, size(order)
+            a = order(i-1); b = order(i)
+            if( stacks(a) == stacks(b) .and. indices(a) == indices(b) ) &
+                THROW_HARD('experimental selections repeat a physical stack/image identity')
+        end do
+    contains
+        logical function stack_before( left, right )
+            integer, intent(in) :: left, right
+            stack_before = stack_paths(left)%to_char() < stack_paths(right)%to_char()
+        end function stack_before
+
+        logical function physical_before( left, right )
+            integer, intent(in) :: left, right
+            physical_before = stacks(left) < stacks(right)
+            if( stacks(left) == stacks(right) ) physical_before = indices(left) < indices(right)
+        end function physical_before
+    end subroutine validate_distinct_physical_rows
 
     subroutine validate_covariance_inputs( params, l_vol1_explicit, l_pindfile, build, pinds, nptcls, rounds )
         class(flex_pca_rounds), intent(inout) :: rounds
@@ -120,12 +179,17 @@ contains
     !! it committed.
     subroutine ensure_canonical_sigma_state( params, build, cline )
         use simple_core_module_api,  only: OBJFUN_EUCLID
-        use simple_sigma2_bootstrap, only: ensure_sigma2_for_iteration
+        use simple_sigma2_bootstrap, only: ensure_sigma2_for_iteration, sigma2_estimate_available
         type(parameters), intent(in)    :: params
         type(builder),    intent(inout) :: build
         class(cmdline),   intent(in)    :: cline
         logical :: l_bootstrapped
         if( params%cc_objfun /= OBJFUN_EUCLID ) return
+        if( params%pca_eval_pindfile%strlen() > 0 )then
+            if( .not. sigma2_estimate_available(params%projfile, 'ptcl3D', params%box, params%smpd) ) &
+                THROW_HARD('predictive evaluation requires frozen canonical noise with training-only provenance; automatic bootstrap is disabled')
+            return
+        endif
         call ensure_sigma2_for_iteration(cline, params%projfile, 'ptcl3D', 1, params%box, params%smpd, &
             &'FLEX_PCA SIGMA', l_bootstrapped)
         if( l_bootstrapped ) call build%spproj%read_segment('projinfo', params%projfile)
@@ -305,6 +369,10 @@ contains
         call cline_rec%set('pgrp',        trim(params%pgrp))
         call cline_rec%set('objfun',      trim(params%objfun))
         call cline_rec%set('nthr',        params%nthr)
+        if( params%state_assembly > 0 )then
+            call cline_rec%set('state_assembly', params%state_assembly)
+            call cline_rec%set('assembly_mem', params%assembly_mem)
+        endif
         ! the run's solver controls carry over to its delivered maps
         call cline_rec%set('maxits_pcg',  params%maxits_pcg)
         call cline_rec%set('rtol',        params%rtol)

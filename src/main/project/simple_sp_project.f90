@@ -179,6 +179,7 @@ contains
     ! I/O – Writers
     procedure          :: write
     procedure          :: write_segment_inside
+    procedure          :: write_selected_particles
     procedure          :: clear_segment_inside
     procedure          :: write_non_data_segments
     procedure          :: write_mics_star
@@ -861,6 +862,12 @@ interface
     end subroutine read_data_info
 
     ! I/O - Writers
+
+    module subroutine write_selected_particles( self, src, dst, rows )
+        class(sp_project), intent(inout) :: self
+        class(string),     intent(in)    :: src, dst
+        integer,           intent(in)    :: rows(:)
+    end subroutine write_selected_particles
 
     module subroutine write( self, fname, fromto, isegment, tempfile )
         class(sp_project),                    intent(inout) :: self

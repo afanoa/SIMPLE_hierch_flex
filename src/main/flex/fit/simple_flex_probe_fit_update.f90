@@ -11,6 +11,7 @@ use simple_flex_pca_basis,     only: covariance_kfromto, orthonormalize_represen
     &align_basis_to_reference, deflate_against_basis, cross_half_subspace_angles
 use simple_flex_pca_util,      only: dilation_template
 use simple_flex_pca_fit_types, only: cleanup_plane
+use simple_flex_shared_private, only: sp_transport
 use , intrinsic :: ieee_arithmetic, only: ieee_is_finite
 implicit none
 #include "simple_local_flags.inc"
@@ -31,6 +32,9 @@ contains
         type(string) :: fname
         real,     allocatable :: filt(:), corrs(:), fscq_dg(:,:)
         real(dp), allocatable :: sv_eo(:), Mconv(:,:), sconv(:)
+        real(dp), allocatable :: sp_frame(:,:), sp_total(:,:)
+        real(dp) :: sp_frame_error
+        integer :: sp_status, sp_b, sp_i, sp_j, sp_unit, sp_io
         real,     pointer :: rmatp(:,:,:), rm_dfl(:,:,:), rv_dfl(:,:,:)
         real(dp) :: eo_dim, cos_mean, mu_q, sd_q
         real(dp) :: mm_dfl, mv_dfl, rem_dfl, tot_dfl, mnorm_dfl
@@ -303,7 +307,20 @@ contains
             end do   ! iblk_dfl
         endif
         ! orthonormalize the probe volumes -> refined basis
-        call orthonormalize_representatives(params, build, realvols, fit%model%ncomp, utilde, utilde_real, d_new)
+        if( fit%spec%l_sp_req )then
+            call orthonormalize_representatives(params,build,realvols,fit%model%ncomp,utilde,utilde_real,d_new, &
+                &frame_transform=sp_frame,frame_residual=sp_frame_error)
+            if( d_new /= fit%spec%sp_union ) THROW_HARD('private fit lost requested union rank; do not reuse its prior')
+            if( sp_frame_error > 1.d-5 ) THROW_HARD('private fit basis change is not an exact coordinate transport')
+            if( fit%history%l_mix_active )then
+                call sp_transport(d_new,fit%spec%sp_shared+fit%spec%sp_private,fit%spec%kmix,sp_frame, &
+                    &fit%history%sp_loading,fit%history%mix_xi,sp_status)
+                if( sp_status /= 0 ) THROW_HARD('private fit covariance-frame transport failed')
+            endif
+            write(logfhandle,'(A,ES12.4)') '>>> FLEX_PCA SHARED_PRIVATE frame residual=',sp_frame_error
+        else
+            call orthonormalize_representatives(params, build, realvols, fit%model%ncomp, utilde, utilde_real, d_new)
+        endif
         ! Convergence: principal angles between successive bases. Both come out of
         ! orthonormalize_representatives orthonormal, so the cross-Gram singular values are
         ! principal-angle cosines (align_basis_to_reference's per-vector normalisation is a no-op).
@@ -333,6 +350,20 @@ contains
         end do
         deallocate(fit%model%basis_recs); allocate(fit%model%basis_recs(d_new))
         if( allocated(fit%model%eigvals) ) deallocate(fit%model%eigvals); allocate(fit%model%eigvals(d_new))
+        if( fit%spec%l_sp_req .and. fit%history%l_mix_active )then
+            allocate(sp_total(d_new,d_new),source=0.d0)
+            do sp_b = 1, fit%spec%kmix
+                sp_total = sp_total + fit%history%mix_pi(sp_b)*matmul( &
+                    &matmul(fit%history%sp_loading(:,:,sp_b),fit%history%sp_sigma(:,:,sp_b)), &
+                    &transpose(fit%history%sp_loading(:,:,sp_b)))
+                do sp_j = 1, d_new
+                    do sp_i = 1, d_new
+                        sp_total(sp_i,sp_j) = sp_total(sp_i,sp_j) + fit%history%mix_pi(sp_b)* &
+                            &fit%history%mix_xi(sp_i,sp_b)*fit%history%mix_xi(sp_j,sp_b)
+                    enddo
+                enddo
+            enddo
+        endif
         do q = 1, d_new
             ! projection-ready basis reconstructor from the clean real basis image (mean_rec idiom)
             call init_basis_reconstructor(params, build, fit%model%basis_recs(q))
@@ -341,11 +372,37 @@ contains
             call fit%model%basis_recs(q)%expand_exp
             ! EM Gamma update: the posterior second moment (1/n) sum_i (z_iq^2 + [A_i^-1]_qq); the
             ! MAP point-estimate variance underestimates Gamma and collapses the prior
-            fit%model%eigvals(q) = max(fit%iter%gam_acc(min(q,fit%model%ncomp)), DTINY)
+            if( allocated(sp_total) )then
+                ! Diagonal compatibility summary only; the complete model is retained below.
+                fit%model%eigvals(q) = max(sp_total(q,q),DTINY)
+            else
+                fit%model%eigvals(q) = max(fit%iter%gam_acc(min(q,fit%model%ncomp)), DTINY)
+            endif
             ! overwrite the eigenvolume MRC with the refined basis vector, in the fit's namespace
             fname = fit%spec%fprefix//int2str_pad(q,3)//MRC_EXT
             call utilde_real(q)%write(fname, del_if_exists=.true.); call fname%kill
         end do
+        if( allocated(sp_total) )then
+            ! Namespaced inference receipt, NOT a resumable checkpoint. Independent half fits
+            ! have different prefixes; downstream diagonal embedding is an approximation.
+            fname = fit%spec%fprefix//'_shared_private_model.txt'
+            open(newunit=sp_unit,file=fname%to_char(),status='replace',action='write',iostat=sp_io)
+            if( sp_io /= 0 ) THROW_HARD('cannot write private-fit inference receipt')
+            write(sp_unit,'(A)') 'simple_flex_shared_private 1'
+            write(sp_unit,*) d_new,fit%spec%kmix,fit%spec%sp_shared,fit%spec%sp_private,it_eff,fit%spec%id
+            write(sp_unit,'(I0,1X,ES25.16,1X,ES25.16)') params%box_crop,real(params%smpd_crop,dp),fit%model%sig2
+            write(sp_unit,'(*(ES25.16,1X))') fit%history%mix_pi
+            do sp_b = 1, fit%spec%kmix
+                write(sp_unit,'(*(ES25.16,1X))') fit%history%mix_xi(:,sp_b)
+                do sp_j = 1, fit%spec%sp_shared+fit%spec%sp_private
+                    write(sp_unit,'(*(ES25.16,1X))') fit%history%sp_loading(:,sp_j,sp_b)
+                enddo
+                do sp_j = 1, fit%spec%sp_shared+fit%spec%sp_private
+                    write(sp_unit,'(*(ES25.16,1X))') fit%history%sp_sigma(:,sp_j,sp_b)
+                enddo
+            enddo
+            close(sp_unit); call fname%kill
+        endif
         ! Gamma comes from reduced posterior moments on either path; the z moments only where z was solved.
         ! z is zeroed at allocation and written only by a solving process: all-zero = distributed master.
         l_z_local = any(fit%model%z /= 0.d0)
@@ -382,6 +439,7 @@ contains
         deallocate(fit%iter%prior)
         deallocate(fit%iter%Gth, fit%iter%Ath, fit%iter%bth, fit%iter%cth, fit%iter%zth, fit%iter%basis_fpls, fit%iter%mean_fpl, fit%iter%mean_es, fit%iter%zbatch, fit%iter%dens, fit%iter%valid, fit%iter%valid_e, fit%iter%valid_o)
         deallocate(fit%iter%Ainvth, fit%iter%Acpth, fit%iter%gam_thr, fit%iter%gam_acc, fit%iter%nval_thr, fit%iter%hth, fit%iter%nll_thr)
+        if( allocated(fit%iter%sp_status_thr) ) deallocate(fit%iter%sp_status_thr)
         ! The mixture state (mix_*) and its work arrays are not freed here: they must survive
         ! from one iteration's M-step to the next E-step, and are freed only by kill_probe_fit
         ! (the resize block at iteration start handles dimension changes).
@@ -408,6 +466,21 @@ contains
         call flush(logfhandle)
         ! MCFA: one basis, K latent Gaussians (Baek et al., IEEE TPAMI 2010); K=1 is plain PPCA EM.
         fit%spec%kmix   = COV_EM_MIX
+        fit%spec%l_sp_req = params%flex_sp_k > 0
+        if( fit%spec%l_sp_req )then
+            fit%spec%kmix = params%flex_sp_k
+            fit%spec%sp_shared = params%flex_sp_shared
+            fit%spec%sp_union = params%neigs
+            if( params%nparts > 1 ) THROW_HARD('shared/private fitting is not enabled for distributed workers')
+            if( params%continue == 'yes' .or. params%startit /= 1 ) THROW_HARD('shared/private fitting requires a fresh run')
+            if( fit%spec%kmix < 2 .or. fit%spec%sp_shared < 0 ) THROW_HARD('invalid shared/private component configuration')
+            if( params%neigs-fit%spec%sp_shared-fit%spec%kmix+1 < fit%spec%kmix ) &
+                THROW_HARD('shared/private union rank cannot supply one private direction per component')
+            if( mod(params%neigs-fit%spec%sp_shared-fit%spec%kmix+1,fit%spec%kmix) /= 0 ) &
+                THROW_HARD('shared/private rank must obey neigs=q+K*r+K-1')
+            fit%spec%sp_private = (params%neigs-fit%spec%sp_shared-fit%spec%kmix+1)/fit%spec%kmix
+            if( fit%model%ncomp /= fit%spec%sp_union ) THROW_HARD('actual shared/private union rank differs from neigs')
+        endif
         fit%spec%l_mix_req = fit%spec%kmix >= 1
         ! the MCFA accumulators and a bounded latent subsample (mcfa_init's seed) ride in the probe part files
         fit%spec%n_mix_warm = 1
@@ -442,6 +515,8 @@ contains
         type(reconstructor),   intent(inout) :: mean_rec
         integer,               intent(in)    :: it_eff, niters_eff, nthr
         integer :: q
+        if( fit%spec%l_sp_req .and. fit%model%ncomp /= fit%spec%sp_union ) &
+            THROW_HARD('private mixture cannot resume after active rank changes')
         fit%spec%lp_it  = params%lp
         fit%diag%sec_bank_thr  = 0.d0; fit%diag%sec_ring_thr = 0.d0
         fit%diag%sec_exact_thr = 0.d0; fit%diag%sec_solve_thr = 0.d0
@@ -488,6 +563,7 @@ contains
         allocate(fit%iter%gam_thr(fit%model%ncomp,nthr), source=0.d0)
         allocate(fit%iter%gam_acc(fit%model%ncomp), source=0.d0)
         allocate(fit%iter%nval_thr(nthr), source=0)
+        if( fit%spec%l_sp_req ) allocate(fit%iter%sp_status_thr(nthr),source=0)
         allocate(fit%iter%hth(fit%model%ncomp,nthr), source=0.d0)
         allocate(fit%iter%nll_thr(nthr), source=0.d0)
         allocate(fit%diag%gam_dbg(4,nthr), source=0.d0)

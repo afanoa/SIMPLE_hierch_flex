@@ -27,6 +27,10 @@ contains
         &visibility=UI_VIS_ADVANCED, display_name='Refine 3D Structure')
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
+        call refine3D%add_input(UI_COMP, 'rec_plane_reuse', 'binary', 'Reuse Fourier plane buffers', &
+            &'Reuse native FLEX and gridding plane storage while recomputing all values(yes|no)', &
+            &'', .false., 'no', visibility=UI_VIS_DEVELOPER, &
+            &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call refine3D%add_input(UI_IMG, 'vol1', 'file', 'Reference volume', 'Reference volume for creating polar 2D central &
         & sections for particle image matching', 'input volume e.g. vol.mrc', .false., 'vol1.mrc', &
         &visibility=UI_VIS_ADVANCED)

@@ -664,7 +664,40 @@ contains
         type(string)                  :: errmsg
         character(len=2), allocatable :: symbols(:)
         character(len=5)              :: selector
-        integer                       :: binwidth_min
+        integer                       :: binwidth_min, sp_private_budget
+        if( self%flex_sp_k < 0 .or. self%flex_sp_shared < 0 ) THROW_HARD('negative shared/private covariance control')
+        if( self%flex_sp_k == 0 .and. self%flex_sp_shared /= 0 ) &
+            THROW_HARD('flex_sp_shared requires flex_sp_k>=2')
+        if( self%flex_sp_k > 0 )then
+            if( self%prg /= 'flex_pca' ) THROW_HARD('shared/private covariance is available only in flex_pca')
+            if( self%rowmap%strlen() > 0 ) THROW_HARD('shared/private fit-only evaluation requires the original project without rowmap')
+            if( self%flex_sp_k < 2 .or. self%neigs < 1 .or. self%neigs > 48 ) &
+                THROW_HARD('shared/private covariance requires K>=2 and neigs in 1..48')
+            if( self%flex_sp_k > self%neigs .or. self%flex_sp_shared > self%neigs ) &
+                THROW_HARD('shared/private component count and shared rank exceed the union rank')
+            sp_private_budget = self%neigs - self%flex_sp_shared - self%flex_sp_k + 1
+            if( sp_private_budget < self%flex_sp_k ) &
+                THROW_HARD('shared/private covariance requires at least one private direction per component')
+            if( mod(sp_private_budget,self%flex_sp_k) /= 0 ) &
+                THROW_HARD('shared/private rank contract is neigs=q+K*r+K-1 with integer r>=1')
+            if( self%nparts /= 1 .or. cline%defined('part') ) &
+                THROW_HARD('shared/private covariance currently requires shared-memory execution')
+            if( cline%defined('infile') .or. self%continue /= 'no' .or. self%startit /= 1 ) &
+                THROW_HARD('shared/private covariance requires a fresh fit; cached-model resume is unsupported')
+        endif
+        if( self%pca_eval_pindfile%strlen() > 0 )then
+            if( self%prg /= 'flex_pca' ) THROW_HARD('predictive evaluation is available only in flex_pca')
+            if( .not. ieee_is_finite(self%pca_eval_sig2) ) THROW_HARD('pca_eval_sig2 must be finite')
+            if( self%pca_eval_sig2 <= 0. ) THROW_HARD('predictive evaluation requires positive pca_eval_sig2')
+            if( self%pindfile%strlen() == 0 ) THROW_HARD('predictive evaluation requires explicit training pindfile')
+            if( self%rowmap%strlen() > 0 ) THROW_HARD('predictive evaluation requires the original project without rowmap')
+            if( self%nparts /= 1 .or. cline%defined('part') ) &
+                THROW_HARD('predictive evaluation currently requires shared-memory execution')
+            if( cline%defined('infile') .or. self%continue /= 'no' .or. self%startit /= 1 ) &
+                THROW_HARD('predictive evaluation requires a fresh fit with explicit training rows')
+        else if( self%pca_eval_sig2 /= 0. )then
+            THROW_HARD('pca_eval_sig2 requires pca_eval_pindfile')
+        endif
         if( self%prg == 'select_micrographs' )then
             if( self%nmics < 1 .or. self%state < 1 .or. self%nspace < 1 .or. self%subset_max_nodes < 1 )then
                 THROW_HARD('select_micrographs requires positive nmics, state, nspace and subset_max_nodes')
@@ -1180,6 +1213,50 @@ contains
                     THROW_HARD('model_cavgs_rejection quality_context must be chunk, pool, or sieve')
             end select
         endif
+        select case(trim(self%merge_geom_reuse))
+            case('yes','no')
+            case DEFAULT
+                THROW_HARD('merge_geom_reuse must be yes or no')
+        end select
+        select case(trim(self%node_subset_io))
+            case('yes','no')
+            case DEFAULT
+                THROW_HARD('node_subset_io must be yes or no')
+        end select
+        select case(trim(self%merge_insert_reuse))
+            case('yes','no')
+            case DEFAULT
+                THROW_HARD('merge_insert_reuse must be yes or no')
+        end select
+        select case(trim(self%node_worker_pool))
+            case('yes')
+                if( self%workers < 1 .or. self%worker_nthr < 1 .or. self%node_worker_mem < 1 ) &
+                    THROW_HARD('node_worker_pool needs positive workers, worker_nthr and node_worker_mem')
+                if( self%worker_server%strlen() > 0 ) THROW_HARD('node_worker_pool owns its server; worker_server is unsupported')
+                if( self%subtree_node%strlen() > 0 ) THROW_HARD('subtree controllers cannot own a node_worker_pool')
+            case('no')
+            case DEFAULT
+                THROW_HARD('node_worker_pool must be yes or no')
+        end select
+        select case(trim(self%merge_insert_audit))
+            case('yes','no')
+            case DEFAULT
+                THROW_HARD('merge_insert_audit must be yes or no')
+        end select
+        if( self%merge_audit_request%strlen() > 0 .and. self%merge_insert_audit /= 'yes' ) &
+            THROW_HARD('merge_audit_request needs merge_insert_audit=yes')
+        if( self%state_assembly < 0 .or. self%assembly_state < 0 ) THROW_HARD('negative state assembly control')
+        if( self%state_assembly > 1 .and. self%assembly_mem < 1 ) THROW_HARD('state_assembly requires positive assembly_mem in MB')
+        if( self%assembly_state > 0 )then
+            if( self%prg /= 'volassemble' ) THROW_HARD('assembly_state is private to volassemble')
+            if( self%state_assembly /= 0 ) THROW_HARD('an assembly worker cannot spawn state jobs')
+            if( self%assembly_state > self%nstates ) THROW_HARD('private assembly state exceeds nstates')
+        endif
+        select case(trim(self%rec_plane_reuse))
+            case('yes','no')
+            case DEFAULT
+                THROW_HARD('rec_plane_reuse must be yes or no')
+        end select
         select case(trim(self%cache))
             case('yes','no')
             case DEFAULT

@@ -1,6 +1,6 @@
 !@descr: flex_pca: the fit drivers: the paired master run (two resident fits over the mod-4 halves, merge) and the worker stage bodies
 module simple_flex_pca_fit_driver
-use simple_core_module_api, only: del_file, dp, dtiny, file_exists, int2str_pad, logfhandle, mrc_ext, &
+use simple_core_module_api, only: del_file, dp, dtiny, fclose, file_exists, fileiochk, fopen, int2str_pad, logfhandle, mrc_ext, &
     &simple_exception, string
 use simple_defs_flex,          only: FLEX_FSC_SIGNAL_THRESHOLD
 use simple_flex_pca_records,   only: flex_fit_model, flex_selection, flex_latent
@@ -18,6 +18,7 @@ use simple_flex_pca_util,      only: cov_stage_subsample
 use simple_flex_probe_fit,     only: flex_probe_fit, flex_mean_ref, probe_subspace_iteration, fit_engine_iterate
 use simple_flex_pca_pairmerge, only: probe_paired_merge
 use simple_flex_pca_planes,    only: flex_plane_store
+use simple_flex_shared_private_embed, only: evaluate_shared_private_fit, export_shared_private_inference
 implicit none
 private
 #include "simple_local_flags.inc"
@@ -29,7 +30,9 @@ contains
     !> Paired engine: two resident probe fits over the mod-4 halves of the selection, advanced by one
     !! shared loop (fit_engine_iterate with nfits=2) from identical data-free bases, then merged by
     !! probe_paired_merge. Fit A writes flex_pca_pc*/flex_pca_probe.txt, fit B flex_pca_fitB_pc*/flex_pca_probe_fitB.txt.
-    subroutine run_flex_pca_paired( params, build, plane_store, pcg_env, sel, col_sep, neigs_req, model, rounds )
+    subroutine run_flex_pca_paired( params, build, plane_store, pcg_env, sel, col_sep, neigs_req, model, rounds, &
+        &eval_pinds, eval_sig2 )
+        use simple_srch_sort_loc, only: hpsort
         type(flex_selection),   intent(in)    :: sel
         type(flex_fit_model),   intent(inout) :: model   !< the merged product: basis, prior variances, rank, noise level
         class(flex_pca_rounds),  intent(inout) :: rounds
@@ -38,12 +41,19 @@ contains
         class(flex_plane_store), intent(inout) :: plane_store
         class(flex_pcg_environment), intent(in) :: pcg_env
         integer,                 intent(in)    :: col_sep, neigs_req
+        integer, optional,       intent(in)    :: eval_pinds(:)
+        real(dp), optional,      intent(in)    :: eval_sig2
         !> per merged component: the cross-half match |cos| (the axis weight below)
         real(dp), allocatable :: mergecos(:)
         type(flex_probe_fit), target :: fits(2)
         type(flex_mean_ref) :: means(2)
         type(flex_selection) :: half
-        integer :: f, i, cnt, nhalf(2), u
+        integer :: f, i, cnt, nhalf(2), u, inference_length, inference_status
+        integer, allocatable :: inference_pinds(:)
+        character(len=3) :: inference_env
+        logical :: l_inference
+        if( present(eval_pinds) .neqv. present(eval_sig2) ) THROW_HARD('private evaluation requires rows and fixed noise together')
+        if( present(eval_pinds) .and. params%flex_sp_k == 0 ) THROW_HARD('paired evaluation requires a shared/private fit')
         ! ---- FINAL STAGE (par.7 "merge, don't refit"): the accumulator-level merge is the delivery ----
         if( params%n_probe_iters < 2 ) THROW_HARD('the paired merge needs n_probe_iters >= 2: the final iteration''s statistics are expressed in the previous iteration''s delivered frame')
         model%ncomp = 0
@@ -131,6 +141,33 @@ contains
         call flush(logfhandle)
         ! ---- final stage: frame-align, accumulator merge and one joint solve; the merged eigenvolumes,
         ! meta and manifest lines are an additional product next to the fits' own delivery ----
+        if( params%flex_sp_k > 0 )then
+            do f = 1, 2
+                if( .not. fits(f)%history%l_mix_active .or. .not. fits(f)%history%l_mix_used ) &
+                    THROW_HARD('shared/private fit-only delivery requires an actual private-model E-step')
+            end do
+            call get_environment_variable('SIMPLE_PCA_INFER_STATS',inference_env, &
+                &length=inference_length,status=inference_status)
+            l_inference=.false.
+            if( inference_status==0 ) l_inference=inference_length==3 .and. inference_env=='yes'
+            if( l_inference )then
+                if( .not. present(eval_pinds) ) THROW_HARD('inference capture requires explicit F and C/S/T row lists')
+                allocate(inference_pinds(sel%nptcls+size(eval_pinds)))
+                inference_pinds(:sel%nptcls)=sel%pinds
+                inference_pinds(sel%nptcls+1:)=eval_pinds
+                call hpsort(inference_pinds)
+            endif
+            do f = 1, 2
+                if( present(eval_pinds) ) &
+                    call deliver_shared_private_prediction(params, build, fits(f), sel, eval_pinds, eval_sig2)
+                if( l_inference ) call export_shared_private_inference(params,build,fits(f),sel,inference_pinds)
+                call deliver_shared_private_fit(params, build, fits(f), present(eval_pinds))
+                call fits(f)%kill
+            end do
+            write(logfhandle,'(A)') '>>> FLEX_PCA shared/private fit-only artifacts complete; see flex_pca_paired.txt'
+            call flush(logfhandle)
+            return
+        endif
         call probe_paired_merge(params, build, fits, model, mergecos)
         if( .not. allocated(model%basis_recs) .or. model%ncomp < 1 ) THROW_HARD('paired merge returned no merged basis')
         ! Axis weight from cross-half match cosine c: prior variance x 2c/(1+c), ~0 below 0.143.
@@ -204,6 +241,97 @@ contains
             call fits(f)%kill
         end do
     end subroutine run_flex_pca_paired
+
+    !> Terminal experimental delivery binds each separate fit to its mean, basis, priors and rows.
+    subroutine deliver_shared_private_fit( params, build, fit, evaluated )
+        class(parameters),     intent(in)    :: params
+        type(builder),         intent(in)    :: build
+        type(flex_probe_fit),   intent(inout) :: fit
+        logical,               intent(in)    :: evaluated
+        logical, allocatable :: in_probe(:)
+        character(len=:), allocatable :: prefix, fname
+        integer :: u, ios, i, row, nrows
+        prefix = fit%spec%fprefix%to_char()
+        if( .not. file_exists(string(prefix//'_shared_private_model.txt')) ) &
+            THROW_HARD('shared/private fit lacks its full-prior artifact')
+        do i = 1, fit%model%ncomp
+            if( .not. file_exists(string(prefix//int2str_pad(i,3)//MRC_EXT)) ) &
+                THROW_HARD('shared/private fit lacks a final basis volume')
+        end do
+        nrows = build%spproj_field%get_noris()
+        if( any(fit%spec%ppinds < 1) .or. any(fit%spec%ppinds > nrows) ) &
+            THROW_HARD('shared/private probe row is outside its source project')
+        allocate(in_probe(nrows), source=.false.)
+        in_probe(fit%spec%ppinds) = .true.
+        fname = prefix//'_shared_private_rows.tsv'
+        call fopen(u, file=string(fname), status='REPLACE', action='WRITE', iostat=ios)
+        call fileiochk('shared/private fit row receipt', ios)
+        write(u,'(A)') '# original_project_row original_eo fit_id used_in_probe'
+        do i = 1, fit%spec%sel%nptcls
+            row = fit%spec%sel%pinds(i)
+            write(u,'(I0,1X,I0,1X,I0,1X,L1)') row, build%spproj_field%get_eo(row), fit%spec%id, in_probe(row)
+        end do
+        call fclose(u)
+        call fit%model%mean_rec%ifft
+        call fit%model%mean_rec%write(string(prefix//'_shared_private_mean.mrc'))
+        fname = prefix//'_shared_private_artifacts.txt'
+        call fopen(u, file=string(fname), status='REPLACE', action='WRITE', iostat=ios)
+        call fileiochk('shared/private fit artifact receipt', ios)
+        write(u,'(A)') 'simple_flex_shared_private_artifacts 1'
+        write(u,'(A)') 'scope fit_only_separate_models'
+        write(u,'(A)') 'partition mod4_pairs_each_containing_both_original_eo_classes'
+        write(u,'(A,I0)') 'mod4_pairing ', FLEX_MOD4_PAIRING
+        write(u,'(A,A)') 'source_project ', params%projfile%to_char()
+        write(u,'(A,A)') 'mean ', prefix//'_shared_private_mean.mrc'
+        write(u,'(A,A)') 'full_priors ', prefix//'_shared_private_model.txt'
+        write(u,'(A,A)') 'rows ', prefix//'_shared_private_rows.tsv'
+        if( evaluated )then
+            write(u,'(A,A)') 'heldout_scores ', prefix//'_shared_private_predictive.tsv'
+            write(u,'(A,A)') 'heldout_rows ', params%pca_eval_pindfile%to_char()
+            write(u,'(A,A)') 'posterior_audit ', prefix//'_shared_private_posterior_audit.txt'
+        endif
+        write(u,'(A,A)') 'support_mask ', params%pcg_mskfile%to_char()
+        write(u,'(A,ES16.8)') 'mask_diameter ', params%mskdiam
+        write(u,'(A)') 'noise conditional_transformed_noise_approximation'
+        do i = 1, fit%model%ncomp
+            write(u,'(A,I0,1X,A)') 'basis ', i, prefix//int2str_pad(i,3)//MRC_EXT
+        end do
+        call fclose(u)
+    end subroutine deliver_shared_private_fit
+
+    !> Held-out prediction uses each unmerged fit's final full prior and leaves it unchanged.
+    subroutine deliver_shared_private_prediction( params, build, fit, train_sel, rows, fixed_sig2 )
+        class(parameters),     intent(inout) :: params
+        type(builder),         intent(inout) :: build
+        type(flex_probe_fit),   intent(in)    :: fit
+        type(flex_selection),  intent(in)    :: train_sel
+        integer,               intent(in)    :: rows(:)
+        real(dp),              intent(in)    :: fixed_sig2
+        real(dp), allocatable :: logp(:), responsibility(:,:)
+        integer, allocatable :: ndof(:)
+        logical, allocatable :: valid(:)
+        character(len=:), allocatable :: prefix
+        integer :: u, ios, i, export_status
+        prefix = fit%spec%fprefix%to_char()//'_shared_private'
+        call evaluate_shared_private_fit(params, build, fit, train_sel, rows, fixed_sig2, &
+            &logp, ndof, valid, responsibility, export_status)
+        call fopen(u, file=string(prefix//'_predictive.tsv'), status='NEW', action='WRITE', iostat=ios)
+        call fileiochk('shared/private predictive report', ios)
+        write(u,'(A)') '# conditional_transformed_noise_approximation; fixed poses and amplitude=1'
+        write(u,'(A,ES26.17E3)') '# fixed_complex_noise_variance=', fixed_sig2
+        write(u,'(A,A)') '# full_prior_model=', prefix//'_model.txt'
+        write(u,'(A)') '# project_row logp_nats ndof valid component_responsibilities_in_model_order'
+        do i = 1, size(rows)
+            write(u,'(I0,1X,ES26.17E3,1X,I0,1X,L1,*(1X,ES26.17E3))') rows(i), logp(i), ndof(i), valid(i), &
+                &responsibility(:,i)
+        end do
+        call fclose(u)
+        write(logfhandle,'(A,A,A,I0,A,I0)') '>>> FLEX_PCA private evaluation ', prefix, ': valid rows=', &
+            &count(valid), '/', size(valid)
+        call flush(logfhandle)
+        if( export_status/=0 ) THROW_HARD('private statistics export failed; diagnostic artifacts retained')
+        if( count(valid) == 0 ) THROW_HARD('private evaluation produced no valid rows; diagnostic artifacts retained')
+    end subroutine deliver_shared_private_prediction
 
     !> Per-fit eigenvalue table (the paired-local equivalent of write_covariance_eigenvolumes'
     !! table): fit A keeps the legacy name, fit B gets the fitB namespace.

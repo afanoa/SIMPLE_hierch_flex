@@ -58,7 +58,142 @@ contains
         call test_padding_after_binary_ops()
         call test_padding_after_pad_and_collage()
         call test_rmat_ptr_is_box()
+        call test_plane_storage_reuse()
     end subroutine run_all_image_tests
+
+    subroutine test_plane_storage_reuse()
+        use iso_fortran_env, only: int32
+        use simple_type_defs, only: ctfparams, fplane_type, CTFFLAG_NO, CTFFLAG_YES, CTFFLAG_FLIP
+        use simple_fplane_grid, only: fplane_grid
+        use simple_memoize_ft_maps, only: memoize_ft_maps, forget_ft_maps
+        !$ use omp_lib, only: omp_get_max_threads, omp_set_num_threads, omp_get_thread_num
+        !$ use omp_lib, only: omp_get_dynamic, omp_set_dynamic
+        integer, parameter :: NSLOTS = 4
+        class(image), allocatable :: imgs(:)
+        class(fplane_grid), allocatable :: grid
+        type(fplane_type) :: baseline(NSLOTS), explicit_no(NSLOTS), reused(NSLOTS)
+        type(ctfparams) :: optics(NSLOTS)
+        real, allocatable :: sigma(:,:)
+        real :: shifts(2,NSLOTS), poison
+        integer :: pass, dim, i, j, h, team, saved_team, wanted, it, seen(NSLOTS)
+        logical :: whiten, with_transfer, observation
+        !$ logical :: saved_dynamic
+        write(*,'(A)') 'test_plane_storage_reuse'
+        allocate(imgs(NSLOTS), grid)
+        saved_team = 1
+        !$ saved_team = omp_get_max_threads()
+        !$ saved_dynamic = omp_get_dynamic()
+        !$ call omp_set_dynamic(.false.)
+        poison = ieee_value(0., ieee_quiet_nan)
+        do team = 1, NSLOTS, NSLOTS-1
+            !$ call omp_set_num_threads(team)
+            do pass = 1, 12
+                dim = 48 + 4*mod((pass-1)/4,2)
+                whiten = mod(pass,2) == 0
+                with_transfer = mod((pass-1)/2,3) == 1
+                observation = mod((pass-1)/2,3) == 2
+                call grid%new(dim)
+                allocate(sigma(dim/(2*OSMPL_PAD_FAC),2))
+                do j = 1, 2
+                    do h = 1, size(sigma,1)
+                        sigma(h,j) = 1. + real(h+j+pass)/32.
+                    end do
+                end do
+                call grid%set_sigma2(1, sigma, 1)
+                deallocate(sigma)
+                call memoize_ft_maps([dim,dim,1], SMPD)
+                do i = 1, NSLOTS
+                    call imgs(i)%new([dim,dim,1], SMPD, wthreads=.false.)
+                    do j = 1, dim
+                        do h = 1, dim
+                            call imgs(i)%set([h,j,1], real(mod(h*7+j*11+i*13+pass,97))/32.)
+                        end do
+                    end do
+                    call imgs(i)%fft()
+                    optics(i) = ctfparams(smpd=SMPD, kv=300., cs=2.7, fraca=0.1, &
+                        &dfx=1.1+real(i+pass)/32., dfy=1.6+real(i)/16., angast=real(7*pass+i), phshift=0.1*real(pass))
+                    select case(mod(i+pass,3))
+                        case(0)
+                            optics(i)%ctfflag = CTFFLAG_NO
+                        case(1)
+                            optics(i)%ctfflag = CTFFLAG_YES
+                        case(2)
+                            optics(i)%ctfflag = CTFFLAG_FLIP
+                    end select
+                    shifts(:,i) = [real(i-pass)/8.,real(i+pass)/16.]
+                    if( allocated(reused(i)%cmplx_plane) ) reused(i)%cmplx_plane = cmplx(poison,poison)
+                    if( allocated(reused(i)%ctfsq_plane) ) reused(i)%ctfsq_plane = poison
+                    if( allocated(reused(i)%transfer_plane) ) reused(i)%transfer_plane = cmplx(poison,poison)
+                    if( pass == 3 )then
+                        deallocate(reused(i)%cmplx_plane)
+                        allocate(reused(i)%cmplx_plane(1:dim+1,1:dim/2+1))
+                    endif
+                    if( whiten )then
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), baseline(i), grid, half=mod(i,2)+1, &
+                            &store_transfer=with_transfer, observation_model=observation)
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), explicit_no(i), grid, half=mod(i,2)+1, &
+                            &store_transfer=with_transfer, observation_model=observation, reuse_storage=.false.)
+                    else
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), baseline(i), grid, &
+                            &store_transfer=with_transfer, observation_model=observation)
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), explicit_no(i), grid, &
+                            &store_transfer=with_transfer, observation_model=observation, reuse_storage=.false.)
+                    endif
+                    call same_plane(baseline(i), explicit_no(i))
+                end do
+                seen = 0
+                !$omp parallel do default(shared) private(i,it) schedule(static)
+                do i = 1, NSLOTS
+                    it = 1
+                    !$ it = omp_get_thread_num()+1
+                    seen(it) = 1
+                    if( whiten )then
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), reused(i), grid, half=mod(i,2)+1, &
+                            &store_transfer=with_transfer, observation_model=observation, reuse_storage=.true.)
+                    else
+                        call imgs(i)%gen_fplane4rec(SMPD, optics(i), shifts(:,i), reused(i), grid, &
+                            &store_transfer=with_transfer, observation_model=observation, reuse_storage=.true.)
+                    endif
+                end do
+                !$omp end parallel do
+                wanted = 1
+                !$ wanted = team
+                call assert_true(sum(seen) == wanted, 'plane storage reuse runs the requested team')
+                do i = 1, NSLOTS
+                    call same_plane(baseline(i), reused(i))
+                    call imgs(i)%kill()
+                end do
+            end do
+        end do
+        !$ call omp_set_num_threads(saved_team)
+        !$ call omp_set_dynamic(saved_dynamic)
+        call grid%kill()
+        call forget_ft_maps()
+      contains
+        subroutine same_plane( expected, actual )
+            type(fplane_type), intent(in) :: expected, actual
+            call assert_true(all(expected%frlims == actual%frlims), 'plane Fourier limits unchanged')
+            call assert_true(expected%nyq == actual%nyq, 'plane Nyquist unchanged')
+            call assert_true(all(transfer(expected%shconst,[0_int32]) == &
+                &transfer(actual%shconst,[0_int32])), 'plane shift constants bitwise unchanged')
+            call assert_true(all(lbound(expected%cmplx_plane) == lbound(actual%cmplx_plane)) .and. &
+                &all(ubound(expected%cmplx_plane) == ubound(actual%cmplx_plane)), 'plane observation bounds unchanged')
+            call assert_true(all(lbound(expected%ctfsq_plane) == lbound(actual%ctfsq_plane)) .and. &
+                &all(ubound(expected%ctfsq_plane) == ubound(actual%ctfsq_plane)), 'plane density bounds unchanged')
+            call assert_true(all(transfer(expected%cmplx_plane,[0_int32]) == &
+                &transfer(actual%cmplx_plane,[0_int32])), 'all plane observation bits unchanged')
+            call assert_true(all(transfer(expected%ctfsq_plane,[0_int32]) == &
+                &transfer(actual%ctfsq_plane,[0_int32])), 'all plane density bits unchanged')
+            call assert_true(allocated(expected%transfer_plane) .eqv. allocated(actual%transfer_plane), &
+                &'plane transfer presence unchanged')
+            if( allocated(expected%transfer_plane) .and. allocated(actual%transfer_plane) )then
+                call assert_true(all(lbound(expected%transfer_plane) == lbound(actual%transfer_plane)) .and. &
+                    &all(ubound(expected%transfer_plane) == ubound(actual%transfer_plane)), 'plane transfer bounds unchanged')
+                call assert_true(all(transfer(expected%transfer_plane,[0_int32]) == &
+                    &transfer(actual%transfer_plane,[0_int32])), 'all plane transfer bits unchanged')
+            endif
+        end subroutine same_plane
+    end subroutine test_plane_storage_reuse
 
     !---------------- construction and access ----------------
 

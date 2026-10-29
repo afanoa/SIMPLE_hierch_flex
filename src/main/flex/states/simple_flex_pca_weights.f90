@@ -16,9 +16,57 @@ private
 
 public :: build_covariance_state_weights, kernel_weights_at_bandwidth, project_onto_target_polyline
 public :: bandwidth_cv_grid, bandwidth_cv_error, bandwidth_cv_adopt
+public :: build_supported_extrema_state_weights
 
 
 contains
+
+    !> Supported A/middle/B initializer in a caller-verified common score frame; calibration remains pending.
+    !! Unit weights use canonical delivery. Kernel CV must be skipped: kdist/kfloor are absent.
+    !! Failure leaves the preceding state set intact; the caller must retain its parent.
+    subroutine build_supported_extrema_state_weights( latent, score, row_ids, eo, ntail, minpop, minhalf, &
+        &score_frame_verified, states, counts, status, calibration_status, message )
+        use simple_flex_supported_extrema, only: flex_supported_tail_labels, EXTREMA_OK, EXTREMA_INVALID, &
+            &EXTREMA_CALIBRATION_PENDING
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        type(flex_latent),    intent(in)    :: latent
+        real(dp),            intent(in)    :: score(:)
+        integer,             intent(in)    :: row_ids(:), eo(:), ntail, minpop, minhalf
+        logical,             intent(in)    :: score_frame_verified
+        type(flex_state_set), intent(inout) :: states
+        integer,             intent(out)   :: counts(3,2), status, calibration_status
+        character(len=*),    intent(out)   :: message
+        integer, allocatable :: labels(:)
+        integer :: n, ncomp, s, q
+        counts = 0
+        status = EXTREMA_INVALID
+        calibration_status = EXTREMA_CALIBRATION_PENDING
+        message = 'unverified common physical score frame; no endpoint candidate'
+        if( .not. score_frame_verified ) return
+        message = 'invalid latent rows for supported endpoint candidate'
+        if( .not. allocated(latent%z) ) return
+        n = size(latent%z,1)
+        ncomp = size(latent%z,2)
+        if( n /= size(score) .or. ncomp == 0 ) return
+        if( any(.not. ieee_is_finite(latent%z)) ) return
+        call flex_supported_tail_labels(score, row_ids, eo, ntail, minpop, minhalf, labels, counts, status, message)
+        if( status /= EXTREMA_OK ) return
+        call states%kill
+        states%nstates = 3
+        allocate(states%weights(n,3), source=0.)
+        allocate(states%targets(ncomp,3), states%bandwidths(3), states%neff(3))
+        call move_alloc(labels, states%labels)
+        do s = 1, 3
+            where( states%labels == s ) states%weights(:,s) = 1.
+            states%neff(s) = real(sum(counts(s,:)))
+            states%bandwidths(s) = 0. ! categorical partition, not a smoothing bandwidth
+            do q = 1, ncomp
+                states%targets(q,s) = real(sum(latent%z(:,q), mask=states%labels == s) / &
+                    &real(sum(counts(s,:)),dp))
+            end do
+        end do
+        message = 'calibration_pending: supported initializer; native physical acceptance is separate'
+    end subroutine build_supported_extrema_state_weights
 
     !> Kernel-regression reconstruction weights (supplement S.F): place nstates latent targets, then give
     !! every particle an Epanechnikov weight per state from its Mahalanobis distance to that target. Each
