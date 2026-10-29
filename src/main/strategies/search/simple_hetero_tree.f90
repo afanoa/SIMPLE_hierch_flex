@@ -34,7 +34,7 @@ integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_
 integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
 real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3, DMATE = 0.99
 integer,  parameter :: ITA0 = 1, ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
-integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32
+integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32, SBATCH_PTCLS = 200000, PTCLS_PER_THR = 2500
 ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
 integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
@@ -295,7 +295,7 @@ contains
         integer(kind=8) :: t0, t1, rate
         integer :: i, nact, code, nsub, noff
         character(len=:), allocatable :: sdone
-        logical :: l_fin
+        logical :: l_fin, l_pl
         call seed_rnd_fixed(RND_SEED)
         do
             if( allocated(self%qpool) ) call self%qpool%service_persistent_worker_warmup()
@@ -333,7 +333,10 @@ contains
                 call expand_proj(self%step_dir(i, self%nodes(i)%step))
                 sdone = self%step_dir(i, self%nodes(i)%step)
                 call self%advance(i)
-                if( .not. keep_maps() ) call prune_partials(sdone)
+                if( .not. keep_maps() )then
+                    call prune_step(sdone)
+                    if( self%nodes(i)%step == S_DONE ) call prune_node(self, i)
+                endif
                 call system_clock(t1)
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': controller '//&
                     &rstr(real(t1 - t0) / real(max(rate, 1_8)))//' s after its step'
@@ -359,7 +362,11 @@ contains
                 nact = nact + 1
                 call self%write_table
             end do
-            if( self%p%site_layer .eq. 'yes' ) call self%fs_sync
+            if( self%p%site_layer .eq. 'yes' )then
+                call self%fs_sync
+            else if( len(self%subroot) == 0 )then
+                l_pl = self%plain()
+            endif
             call self%off_work(noff)
             if( nact == 0 .and. nsub == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED .or. self%nodes(:)%step == S_GATEW) )then
                 l_fin = self%final()
@@ -691,6 +698,11 @@ contains
                     call site_batch(ks)
                     return
                 endif
+                if( ks > 1 .and. size(rows) > SBATCH_PTCLS )then
+                    call site_batch(ks)
+                    call write_ints(d//'/sites/rest_first.txt', [1])
+                    return
+                endif
                 if( ks > 0 )then
                     ! a site step restarted after losing its record ranks the site its directory belongs to, not site 1
                     j = seed_site(d)
@@ -888,7 +900,8 @@ contains
             call cj%set('pcg_mskfile', smask)
             call cj%set('pgrp',        trim(self%p%pgrp))
             call cj%set('mskdiam',     self%p%mskdiam)
-            call cj%set('nthr',        max(self%p%nthr, SITE_NTHR))
+            ! a site rank gets a thread per PTCLS_PER_THR particles (the root keeps SITE_NTHR)
+            call cj%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(size(rows)) / real(PTCLS_PER_THR)))))
             if( local_rows(d) ) call cj%set('rowmap', d//'/rows.txt')
             call self%submit_in(sdir, cj, size(rows))
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//sdir(index(sdir, '/', back=.true.)+1:)//&
@@ -1648,7 +1661,8 @@ contains
             case(S_SITE)
                 if( self%p%site_disc .ne. 'yes' ) prev_step = S_FFLEX
             case(S_SBATCH)
-                prev_step = merge(S_RECB0, S_SITE, self%l_motion .or. self%l_strong)
+                prev_step = merge(S_RECB0, S_SITE, self%l_motion .or. self%l_strong .or. &
+                    &first_line(self%ndir(i)//'/sites/rest_first.txt', '2') == '1')
             case(S_MOTION, S_MBATCH, S_GATEW)
                 prev_step = S_SITE
         end select
@@ -1714,12 +1728,18 @@ contains
         subroutine queue_in( q )
             use simple_persistent_worker_server, only: persistent_worker
             type(qsys_env), intent(inout) :: q
-            type(string) :: mem0, memclaim, prg
-            integer :: task_mem, task_nthr, fu, io
+            type(string) :: mem0, memclaim, prg, cpu0
+            integer :: task_mem, task_nthr, fu, io, ncpu
             logical :: l_pool
             if( present(nmem) )then
                 mem0 = q%qdescr%get('job_memory_per_task')
                 call q%qdescr%set('job_memory_per_task', int2str(8000 + nint(0.025 * real(nmem))))
+            endif
+            ncpu = 0
+            if( cl%defined('nthr') ) ncpu = cl%get_iarg('nthr')
+            if( ncpu > 0 )then
+                cpu0 = q%qdescr%get('job_cpus_per_task')
+                call q%qdescr%set('job_cpus_per_task', int2str(ncpu))
             endif
             l_pool = .false.
             if( self%p%node_worker_pool == 'yes' )then
@@ -1772,6 +1792,7 @@ contains
                     &exit_code_fname=string(STEP_EXIT))
             endif
             if( present(nmem) ) call q%qdescr%set('job_memory_per_task', mem0)
+            if( ncpu > 0 ) call q%qdescr%set('job_cpus_per_task', cpu0)
         end subroutine queue_in
 
     end subroutine submit_in
@@ -3617,16 +3638,50 @@ contains
         keep_maps = ios == 0 .and. ev == 'yes'
     end function keep_maps
 
-    ! a step's per-part partial reconstructions are read only by its own assembly
-    subroutine prune_partials( dir )
+    ! a step's partials, neighbour tables, reprojection models, embedding and sigma2 state (but stage B's) are read only inside it
+    subroutine prune_step( dir )
         character(len=*), intent(in) :: dir
         type(string), allocatable :: list(:)
+        character(len=:), allocatable :: rx
         integer :: j
-        call simple_list_files_regexp(string(dir), '_part[0-9]+_(even|odd)[.]mrc$', list)
+        rx = '(_part[0-9]+_(even|odd)[.]mrc|^dist_part_neigh_[0-9]+[.]dat|^reprojection_model_(even|odd)[.]bin|^flex_pca_embedding[.]bin'
+        if( index(dir, '/stageB', back=.true.) /= len(dir) - 6 ) rx = rx//'|^sigma2_state[.]bin'
+        call simple_list_files_regexp(string(dir), rx//')$', list)
         do j = 1, size(list)
-            call del_file(string(dir//'/'//list(j)%to_char()))
+            call del_file(list(j))
         end do
-    end subroutine prune_partials
+    end subroutine prune_step
+
+    subroutine prune_node( self, i )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: i
+        type(string), allocatable :: subs(:), list(:)
+        character(len=:), allocatable :: sd, nm
+        integer :: j, k
+        logical :: l_kids
+        if( self%p%site_layer .eq. 'yes' .or. self%l_motion ) return
+        l_kids = any([(self%nodes(j)%pproj == self%ndir(i)//'/stageB/b.simple', j=1,size(self%nodes))])
+        call del_file(string(self%ndir(i)//'/'//NODE_PROJ))
+        call del_file(string(self%ndir(i)//'/pmean.mrc'))
+        call simple_list_files_regexp(string(self%ndir(i)), &
+            &'^(mean|flex|cheap|fflex|stA0|recB0|site|nsite_.+|sites|seeds|stageA|recB|split)$', subs)
+        do j = 1, size(subs)
+            sd = subs(j)%to_char()
+            nm = sd(index(sd, '/', back=.true.)+1:)
+            if( nm == 'recB0' .and. l_kids )then
+                call simple_list_files_regexp(string(sd), '([.]bin|^recvol_state[0-9]+(_even|_odd)?[.]mrc)$', list)
+            else if( nm == 'recB' .and. l_kids )then
+                call simple_list_files_regexp(string(sd), '([.](simple|bin)|_(even|odd)(_unfil)?[.]mrc)$', list)
+            else if( nm == 'sites' )then
+                call simple_list_files_regexp(string(sd), '[.]mrc$', list)
+            else
+                call simple_list_files_regexp(string(sd), '[.](simple|mrc|bin)$', list)
+            endif
+            do k = 1, size(list)
+                call del_file(list(k))
+            end do
+        end do
+    end subroutine prune_node
 
     ! once the tree is done, the maps under its node directories that no leaf uses are removed
     subroutine prune_maps( self )
