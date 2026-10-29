@@ -2144,7 +2144,7 @@ contains
     end subroutine exec_state_mergeup
 
     subroutine exec_state_split( self, cline )
-        use simple_state_mergeup, only: state_mergeup, EM_LIM
+        use simple_state_mergeup, only: state_mergeup, EM_LIM, locality_guard
         use simple_eo_partition,  only: ensure_field_halves
         class(commander_state_split), intent(inout) :: self
         class(cmdline),               intent(inout) :: cline
@@ -2186,6 +2186,7 @@ contains
         endif
         rows = split%get_rows()
         call split%test(labels(rows), maxval(labels), child, kstar, junk, ntests=params%split_ntests)
+        call locality_guard(labels(rows), child, kstar, params%mskdiam)
         allocate(out(size(labels)), source=0)
         out(rows) = child
         call fopen(funit, string('split_children.txt'), status='replace', action='write', iostat=ios)

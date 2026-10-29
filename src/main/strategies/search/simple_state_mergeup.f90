@@ -5,7 +5,7 @@ use simple_defs,          only: dp, logfhandle, OSMPL_PAD_FAC, MAXIMGBATCHSZ, PI
 use simple_type_defs,     only: fplane_type
 use simple_error,         only: simple_exception
 use simple_string,        only: string
-use simple_string_utils,  only: int2str
+use simple_string_utils,  only: int2str, int2str_pad
 use simple_fileio,        only: fopen, fclose, fileiochk, nlines
 use simple_ori,           only: ori
 use simple_sym,           only: sym
@@ -20,7 +20,7 @@ use simple_stat,          only: avg_ranks
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
-public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_zcrit
+public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_zcrit, locality_guard
 private
 #include "simple_local_flags.inc"
 
@@ -4673,5 +4673,209 @@ contains
         write(buf,fmt) x
         str = trim(adjustl(buf))
     end function fmtr
+
+    ! split groups whose stage-B states differ only diffusely merge (SIMPLE_SPLIT_LOCALITY=off disables; =dir sets the maps)
+    subroutine locality_guard( lab, child, kstar, mskdiam )
+        integer, intent(in)    :: lab(:)
+        integer, intent(inout) :: child(:), kstar
+        real,    intent(in)    :: mskdiam
+        real, parameter :: LOC_MIN = 0.5
+        character(len=4096)           :: ev
+        character(len=:), allocatable :: stb
+        real,    allocatable :: rat(:,:)
+        integer, allocatable :: smap(:), cnt(:), sz(:), rk(:)
+        logical, allocatable :: have(:)
+        real    :: r, rmin
+        integer :: ios, nst, ng, s, t, g, h, gm, hm, kold
+        logical :: l_ex
+        if( kstar < 2 ) return
+        call get_environment_variable('SIMPLE_SPLIT_LOCALITY', ev, status=ios)
+        if( ios == 0 .and. trim(ev) == 'off' ) return
+        stb = '../stageB'
+        if( ios == 0 .and. len_trim(ev) > 0 ) stb = trim(ev)
+        nst = maxval(lab)
+        ng  = maxval(child)
+        allocate(have(nst), source=.false.)
+        allocate(smap(nst), source=0)
+        allocate(cnt(ng))
+        do s = 1, nst
+            if( count(lab == s .and. child > 0) == 0 ) cycle
+            cnt     = [(count(lab == s .and. child == g), g=1,ng)]
+            smap(s) = maxloc(cnt, dim=1)
+            inquire(file=stb//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc', exist=have(s))
+            inquire(file=stb//'/recvol_state'//int2str_pad(s,2)//'_odd_unfil.mrc',  exist=l_ex)
+            have(s) = have(s) .and. l_ex
+        end do
+        if( count(have) < 2 )then
+            write(logfhandle,'(A)') 'locality guard: stage-B half maps not found under '//stb//'; skipped'
+            return
+        endif
+        allocate(rat(nst,nst), source=-1.)
+        do s = 1, nst - 1
+            do t = s + 1, nst
+                if( .not. (have(s) .and. have(t)) .or. smap(s) == smap(t) ) cycle
+                rat(s,t) = pair_locality(stb, s, t, mskdiam)
+                rat(t,s) = rat(s,t)
+                write(logfhandle,'(A)') 'locality guard: stage-B states '//int2str(s)//' / '//int2str(t)//' L / L_ref '//&
+                    &fmtr(real(rat(s,t),dp),3)
+            end do
+        end do
+        kold = kstar
+        do
+            if( count([(any(child == g), g=1,ng)]) < 2 ) exit
+            rmin = huge(rmin)
+            gm   = 0
+            hm   = 0
+            do g = 1, ng - 1
+                do h = g + 1, ng
+                    if( .not. (any(child == g) .and. any(child == h)) ) cycle
+                    r = -1.
+                    do s = 1, nst
+                        do t = 1, nst
+                            if( smap(s) == g .and. smap(t) == h ) r = max(r, rat(s,t))
+                        end do
+                    end do
+                    if( r < 0. ) cycle
+                    if( r < rmin )then
+                        rmin = r
+                        gm   = g
+                        hm   = h
+                    endif
+                end do
+            end do
+            if( rmin >= LOC_MIN ) exit
+            write(logfhandle,'(A)') 'locality guard: groups '//int2str(gm)//' / '//int2str(hm)//' differ diffusely (L / L_ref '//&
+                &fmtr(real(rmin,dp),3)//' < '//fmtr(real(LOC_MIN,dp),2)//') -> merged'
+            where( child == hm ) child = gm
+            where( smap  == hm ) smap  = gm
+        end do
+        sz = [(count(child == g), g=1,ng)]
+        allocate(rk(0:ng), source=0)
+        do g = 1, ng
+            if( sz(g) > 0 ) rk(g) = count(sz > sz(g)) + count(sz(1:g-1) == sz(g)) + 1
+        end do
+        child = rk(child)
+        kstar = count(sz > 0)
+        write(logfhandle,'(A)') 'locality guard: K* '//int2str(kold)//' -> '//int2str(kstar)
+    end subroutine locality_guard
+
+    real function pair_locality( stb, s, t, mskdiam ) result( ratio )
+        use simple_imghead,       only: get_mrcfile_info
+        use simple_srch_sort_loc, only: hpsort
+        character(len=*), intent(in) :: stb
+        integer,          intent(in) :: s, t
+        real,             intent(in) :: mskdiam
+        real, parameter :: SIG = 3., TOPQ = 0.05, EDGE = 6.
+        type(image)       :: img(4), w
+        character(len=:), allocatable :: fn(:)
+        real, allocatable :: pw(:,:), fb(:), c14(:), c23(:), g(:), gk(:), bf(:), m(:,:,:), sp(:)
+        real, allocatable :: r1(:,:,:), r2(:,:,:), r3(:,:,:), r4(:,:,:), res(:,:,:), nse(:,:,:), con(:,:,:), ex(:,:,:)
+        real    :: smpd, rad, d, den, lsh, lref
+        integer :: ldim(3), i, j, k, n, sh
+        allocate(character(len=len(stb)+40) :: fn(4))
+        fn(1) = stb//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc'
+        fn(2) = stb//'/recvol_state'//int2str_pad(s,2)//'_odd_unfil.mrc'
+        fn(3) = stb//'/recvol_state'//int2str_pad(t,2)//'_even_unfil.mrc'
+        fn(4) = stb//'/recvol_state'//int2str_pad(t,2)//'_odd_unfil.mrc'
+        call get_mrcfile_info(string(trim(fn(1))), ldim, 'M', smpd, .false.)
+        rad = 0.5 * mskdiam / smpd
+        allocate(m(ldim(1),ldim(2),ldim(3)))
+        do k = 1, ldim(3)
+            do j = 1, ldim(2)
+                do i = 1, ldim(1)
+                    d = sqrt(real((i - ldim(1)/2 - 1)**2 + (j - ldim(2)/2 - 1)**2 + (k - ldim(3)/2 - 1)**2))
+                    m(i,j,k) = 0.
+                    if( d <= rad + EDGE ) m(i,j,k) = 0.5 * (1. + cos(PI * min(max(d - rad, 0.), EDGE) / EDGE))
+                end do
+            end do
+        end do
+        do i = 1, 4
+            call img(i)%new(ldim, smpd)
+            call img(i)%read(string(trim(fn(i))))
+            call img(i)%set_rmat(img(i)%get_rmat() * m, .false.)
+            call img(i)%fft()
+        end do
+        n = img(1)%get_filtsz()
+        allocate(pw(n,4), source=0.)
+        allocate(fb(n), c14(n), c23(n), g(n), gk(n), bf(n))
+        do i = 1, 4
+            call img(i)%spectrum('power', sp, norm=.false.)
+            pw(1:min(n,size(sp)),i) = sp(1:min(n,size(sp)))
+        end do
+        call img(3)%fsc(img(4), fb)
+        call img(1)%fsc(img(4), c14)
+        call img(2)%fsc(img(3), c23)
+        do sh = 1, n
+            den   = fb(sh) * sqrt(pw(sh,3) * pw(sh,4))
+            g(sh) = 0.
+            if( den > 0. ) g(sh) = 0.5 * (c14(sh) * sqrt(pw(sh,1) * pw(sh,4)) + c23(sh) * sqrt(pw(sh,2) * pw(sh,3))) / den
+            gk(sh) = exp(-2. * (PI * SIG * real(sh) / real(ldim(1)))**2)
+            d      = real(ldim(1)) * smpd / real(sh)
+            bf(sh) = merge(1., 0., d <= 40. .and. d > 10.)
+        end do
+        do i = 1, 4
+            call img(i)%ifft()
+        end do
+        r1 = img(1)%get_rmat()
+        r2 = img(2)%get_rmat()
+        r3 = img(3)%get_rmat()
+        r4 = img(4)%get_rmat()
+        call w%new(ldim, smpd)
+        res = 0.5 * (r1 + r2) - filtered(0.5 * (r3 + r4))
+        nse = 0.5 * (r1 - r2) - filtered(0.5 * (r3 - r4))
+        res = banded(res)
+        nse = banded(nse)
+        con = banded(0.25 * (r1 + r2 + r3 + r4))
+        ex  = max(smoothed(res * res) - smoothed(nse * nse), 0.)
+        lsh  = top_share(pack(ex, m > 0.5))
+        lref = top_share(pack(smoothed(con * con), m > 0.5))
+        ratio = 0.
+        if( lref > 0. ) ratio = lsh / lref
+        do i = 1, 4
+            call img(i)%kill
+        end do
+        call w%kill
+
+    contains
+
+        function filtered( x ) result( y )
+            real, intent(in)  :: x(:,:,:)
+            real, allocatable :: y(:,:,:)
+            call w%set_rmat(x, .false.)
+            call w%apply_filter(g)
+            y = w%get_rmat()
+        end function filtered
+
+        function banded( x ) result( y )
+            real, intent(in)  :: x(:,:,:)
+            real, allocatable :: y(:,:,:)
+            call w%set_rmat(x, .false.)
+            call w%apply_filter(bf)
+            y = w%get_rmat()
+            y = y - sum(y) / real(size(y))
+        end function banded
+
+        function smoothed( x ) result( y )
+            real, intent(in)  :: x(:,:,:)
+            real, allocatable :: y(:,:,:)
+            call w%set_rmat(x, .false.)
+            call w%apply_filter(gk)
+            y = w%get_rmat()
+        end function smoothed
+
+        real function top_share( v )
+            real, intent(in)  :: v(:)
+            real, allocatable :: vs(:)
+            integer :: nt
+            top_share = 0.
+            if( size(v) == 0 ) return
+            if( sum(v) <= 0. ) return
+            vs = v
+            call hpsort(vs)
+            nt = max(1, int(TOPQ * real(size(vs))))
+            top_share = sum(vs(size(vs)-nt+1:)) / sum(vs)
+        end function top_share
+
+    end function pair_locality
 
 end module simple_state_mergeup
