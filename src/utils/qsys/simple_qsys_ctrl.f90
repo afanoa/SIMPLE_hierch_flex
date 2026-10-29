@@ -9,7 +9,7 @@ use simple_qsys_persistent_worker,   only: qsys_persistent_worker
 use simple_qsys_coarray,             only: qsys_coarray
 use simple_cmdline,                  only: cmdline
 use simple_parameters,               only: parameters
-use simple_syslib,                   only: simple_rmfile
+use simple_syslib,                   only: simple_rmfile, simple_sync_dir
 use simple_qsys_job_record,          only: check_job_lost, cancel_queued_job, JOB_LOST_EXIT_CODE
 use simple_persistent_worker_message_task, only: qsys_persistent_worker_message_task 
 use simple_persistent_worker_server,       only: persistent_worker
@@ -894,7 +894,7 @@ contains
     !! code file; in batch mode the done sentinel file is sufficient.
     subroutine update_queue( self )
         class(qsys_ctrl), intent(inout) :: self
-        integer :: ipart, njobs_in_queue, exit_code
+        integer :: ipart, njobs_in_queue, exit_code, ios
         logical :: err, l_lost
         select type( pmyqsys => self%myqsys )
             class is(qsys_coarray)
@@ -927,6 +927,12 @@ contains
             self%ncomputing_units_avail = min(count(self%jobs_done), self%ncomputing_units)
             self%n_stream_updates = self%n_stream_updates + 1
         else
+            ! the parts' done files sit in the cwd: opening it revalidates NFS's cached "absent" answers
+            select type( pmyqsys => self%myqsys )
+                class is(qsys_local)
+                class default
+                    call simple_sync_dir(trim(CWD_GLOB), status=ios)
+            end select
             do ipart = self%fromto_part(1), self%fromto_part(2)
                 ! Sentinel file present → job finished.
                 if( .not. self%jobs_done(ipart) ) self%jobs_done(ipart) = file_exists(self%jobs_done_fnames(ipart))

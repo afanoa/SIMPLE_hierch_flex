@@ -217,9 +217,9 @@ contains
                     latent%resid_mean_energy(row) = e_yy - 2.d0*myth(ithr) + e_mm                       ! contrast=1 mean residual
                     ! Contrast (S.E): for each a on the grid solve the fixed-a MAP
                     ! (a^2 G/sig2 + Gamma^-1) z = (a b - a^2 c)/sig2 and keep the a with the lowest residual.
-                    ! With COV_EMBED_CONTRAST_GRID off this is a single pass at a = 1.
+                    ! Single pass at the probe E-step's contrast a = <Tmu,y>/<Tmu,Tmu>, clamped to [0.1, 5].
                     best_res = huge(1.d0)
-                    a_best   = 1.d0
+                    a_best   = max(0.1d0, min(5.d0, myth(ithr) / max(e_mm, DTINY)))
                     a_keep   = 1.d0     ! a NaN residual would leave this unset and hand garbage downstream
                     aa = a_best*a_best
                     Ath(:,:,ithr) = (aa/sig2)*Gth(:,:,ithr)
@@ -273,7 +273,7 @@ contains
                         Gcache(:,:,row) = Gth(:,:,ithr)
                         bcache(:,row)   = bth(:,ithr)
                         ccache(:,row)   = cth(:,ithr)
-                        ! and the two half-data solves, each at its OWN fitted contrast (the delivered z keeps a=1):
+                        ! and the two half-data solves, each at its OWN fitted contrast (the delivered z uses the full-data one):
                         ! at a=1 the residual (a_i-1)*Tmu enters the halves with opposite signs (basis deflated vs the mean)
                         do ihf = 1, 2
                             ah = myhf(ihf,ithr) / max(emmhf(ihf,ithr), DTINY)

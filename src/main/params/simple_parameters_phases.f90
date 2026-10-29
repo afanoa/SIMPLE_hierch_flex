@@ -1257,6 +1257,7 @@ contains
             case DEFAULT
                 THROW_HARD('rec_plane_reuse must be yes or no')
         end select
+        if( self%rec_states_box < 0 ) THROW_HARD('rec_states_box must be >= 0')
         select case(trim(self%cache))
             case('yes','no')
             case DEFAULT

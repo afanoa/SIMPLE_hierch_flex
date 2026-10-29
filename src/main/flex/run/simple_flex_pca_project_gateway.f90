@@ -357,8 +357,19 @@ contains
         type(commander_rec3D) :: xrec3D
         type(cmdline)         :: cline_rec
         type(string)          :: vol_fname, fsc_fname
-        integer :: state, nstates_out
+        integer :: state, nstates_out, box_out
+        real    :: smpd_out
+        box_out  = params%box
+        smpd_out = params%smpd
+        if( params%rec_states_box > 0 .and. params%rec_states_box < params%box )then
+            box_out  = params%rec_states_box
+            smpd_out = real(params%box) * params%smpd / real(box_out)
+        endif
         call cline_rec%set('prg',         'reconstruct3D')
+        if( box_out < params%box )then
+            call cline_rec%set('box_crop',  box_out)
+            call cline_rec%set('smpd_crop', smpd_out)
+        endif
         call cline_rec%set('projfile',    params%projfile%to_char())
         call cline_rec%set('mkdir',       'no')
         call cline_rec%set('oritype',     'ptcl3D')
@@ -378,8 +389,8 @@ contains
         call cline_rec%set('rtol',        params%rtol)
         ! a distributed run reconstructs its delivered maps on its parts, as it runs its rounds
         if( params%nparts > 1 ) call cline_rec%set('nparts',      params%nparts)
-        write(logfhandle,'(A,I0,A)') '>>> FLEX_PCA DELIVERED STATE MAPS: reconstruct3D m_estimator=flex nstates=', nstates, &
-            &' from the published state weight set'
+        write(logfhandle,'(A,I0,A,I0,A)') '>>> FLEX_PCA DELIVERED STATE MAPS: reconstruct3D m_estimator=flex nstates=', nstates, &
+            &' from the published state weight set, box ', box_out
         call flush(logfhandle)
         call xrec3D%execute(cline_rec)
         call cline_rec%kill
@@ -399,8 +410,8 @@ contains
                 cycle
             endif
             vol_fname = simple_abspath(vol_fname)
-            call build%spproj%add_vol2os_out(vol_fname, params%smpd, state, 'vol', box=params%box)
-            call build%spproj%add_fsc2os_out(fsc_fname, state, params%box)
+            call build%spproj%add_vol2os_out(vol_fname, smpd_out, state, 'vol', box=box_out)
+            call build%spproj%add_fsc2os_out(fsc_fname, state, box_out)
         end do
         call build%spproj%write_segment_inside('out', params%projfile)
         call vol_fname%kill

@@ -6,7 +6,8 @@ use simple_error,           only: simple_exception
 use simple_string,          only: string
 use simple_string_utils,    only: int2str
 use simple_fileio,          only: fopen, fclose, fileiochk, nlines, read_exit_code, simple_copy_file
-use simple_syslib,          only: file_exists, dir_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file
+use simple_syslib,          only: file_exists, dir_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file, &
+                                & exec_cmdline, simple_list_files_regexp, simple_sync_dir
 use simple_imghead,         only: find_ldim_nptcls, find_img_smpd
 use simple_rnd,             only: seed_rnd_fixed, ran3
 use simple_linalg,          only: eigh, jacobi
@@ -32,7 +33,7 @@ private
 integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_ITS = 40, POLL_SECS = 5, RND_SEED = 0
 integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
 real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3, DMATE = 0.99
-integer,  parameter :: ITA0 = 1, ITA = 1, ITB = 1, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
+integer,  parameter :: ITA0 = 1, ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
 integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32
 ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
 integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
@@ -293,6 +294,7 @@ contains
         class(hetero_tree), intent(inout) :: self
         integer(kind=8) :: t0, t1, rate
         integer :: i, nact, code, nsub, noff
+        character(len=:), allocatable :: sdone
         logical :: l_fin
         call seed_rnd_fixed(RND_SEED)
         do
@@ -329,7 +331,9 @@ contains
                 endif
                 call system_clock(t0, rate)
                 call expand_proj(self%step_dir(i, self%nodes(i)%step))
+                sdone = self%step_dir(i, self%nodes(i)%step)
                 call self%advance(i)
+                if( .not. keep_maps() ) call prune_partials(sdone)
                 call system_clock(t1)
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': controller '//&
                     &rstr(real(t1 - t0) / real(max(rate, 1_8)))//' s after its step'
@@ -363,6 +367,7 @@ contains
             endif
             call sleep(POLL_SECS)
         end do
+        if( len(self%subroot) == 0 .and. .not. keep_maps() ) call prune_maps(self)
     end subroutine run
 
     subroutine start( self, i, istep )
@@ -400,6 +405,7 @@ contains
         call cl%set('projfile', 'm.simple')
         call cl%set('nstates',  1)
         call common_keys(self, cl)
+        call cl%set('postprocess', 'no')
         call self%submit(i, S_MEAN, cl)
     end subroutine start
 
@@ -613,6 +619,7 @@ contains
                     call cl%set('projfile', 'c.simple')
                     call cl%set('nstates',  NCHILD)
                     call common_keys(self, cl)
+                    call halves_only_keys(cl)
                     call self%submit(i, S_CHEAP, cl)
                 endif
             case(S_CHEAP)
@@ -667,6 +674,7 @@ contains
                 call cl%set('projfile', 'b.simple')
                 call cl%set('nstates',  ks)
                 call common_keys(self, cl)
+                call halves_only_keys(cl)
                 call self%submit(i, S_RECB0, cl)
             case(S_RECB0)
                 st   = project_states(d//'/recB0/b.simple')
@@ -705,6 +713,20 @@ contains
                     call log_site(sd, '')
                 endif
                 j = str2int(trim(adjustl(first_line(d//'/sites/seed_site.txt', '1'))))
+                if( s == S_SBATCH .and. .not. (self%l_motion .or. self%l_strong) )then
+                    ! the remaining sites were ranked at once: the first that gives a split is the one the chain stops at
+                    j = str2int(trim(adjustl(first_line(d//'/sites/rest_first.txt', '2'))))
+                    do while( j < nsites(d) )
+                        if( maxval([0, read_ints(site_dir_of(d, j)//'/site_seeds.txt')]) >= 2 ) exit
+                        j = j + 1
+                    end do
+                    call write_ints(d//'/sites/seed_site.txt', [j])
+                    sd    = seed_dir(d)
+                    seeds = read_ints(sd//'/site_seeds.txt')
+                    ks    = maxval([0, seeds])
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(j)//' of the batch '//&
+                        &merge('gives the split   ', 'is the last site  ', ks >= 2)
+                endif
                 if( (self%l_motion .or. self%l_strong) .and. j < nsites(d) )then
                     if( ks >= 2 )then
                         call next_site(j, 'keeps a pole; every site is ranked')
@@ -747,7 +769,7 @@ contains
                 endif
                 if( ks < 2 )then
                     if( .not. self%l_strong .and. j < nsites(d) )then
-                        call next_site(j, 'gives no split')
+                        call rest_batch(j)
                         return
                     endif
                     ch = two_groups(d)
@@ -792,6 +814,8 @@ contains
                 call cl%set('projfile', 'b.simple')
                 call cl%set('nstates',  ks)
                 call common_keys(self, cl)
+                call cl%set('postprocess', 'no')
+                call crop_keys(self, cl, BOXB)
                 call self%submit(i, S_RECB, cl)
             case(S_RECB)
                 ch = compact(fold_small(project_states(d//'/stageA/r.simple')))
@@ -894,6 +918,30 @@ contains
                 &'once, '//int2str(nsub)//' jobs submitted'
         end subroutine site_batch
 
+        subroutine rest_batch( jf )
+            integer, intent(in) :: jf
+            type(string), allocatable :: sds(:)
+            character(len=:), allocatable :: sdir
+            integer :: kk, nsub, ns
+            ns = nsites(d)
+            allocate(sds(0))
+            nsub = 0
+            do kk = jf + 1, ns
+                call simple_mkdir(string(d//'/nsite_'//self%nodes(i)%id//'_s'//int2str(kk)))
+                sdir = site_dir_of(d, kk)
+                sds  = [sds, string(sdir)]
+                if( self%dir_status(sdir) /= -2 ) cycle
+                call site_submit(d//'/sites/site_'//pad2(kk)//'.mrc', sdir)
+                nsub = nsub + 1
+            end do
+            call write_ints(d//'/sites/rest_first.txt', [jf + 1])
+            call write_lines(d//'/sites/batch.txt', sds)
+            call write_ints(d//'/sites/seed_site.txt', [ns])
+            self%nodes(i)%step = S_SBATCH
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(jf)//' gives no split, sites '//&
+                &int2str(jf + 1)//'..'//int2str(ns)//' are ranked at once, '//int2str(nsub)//' jobs submitted'
+        end subroutine rest_batch
+
         subroutine log_site( sdl, pre )
             character(len=*), intent(in) :: sdl, pre
             call log_lines(sdl//'/site_poles.txt', pre//'pole (index, seeds, endpoints)')
@@ -945,6 +993,8 @@ contains
             call cl%set('projfile', 's.simple')
             call cl%set('nstates',  kss)
             call common_keys(self, cl)
+            call cl%set('postprocess', 'no')
+            call crop_keys(self, cl, BOXA)
             call self%submit(i, S_SEEDS, cl)
         end subroutine seed_node
 
@@ -1598,7 +1648,7 @@ contains
             case(S_SITE)
                 if( self%p%site_disc .ne. 'yes' ) prev_step = S_FFLEX
             case(S_SBATCH)
-                prev_step = S_RECB0
+                prev_step = merge(S_RECB0, S_SITE, self%l_motion .or. self%l_strong)
             case(S_MOTION, S_MBATCH, S_GATEW)
                 prev_step = S_SITE
         end select
@@ -1619,6 +1669,8 @@ contains
         call cl%set('pcg_mskfile', d//'/mask.mrc')
         if( self%p%flex_min_neff > 0 ) call cl%set('min_neff', self%p%flex_min_neff)
         if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
+        ! its state maps feed only stA0's references and the two-group fallback's 40-10 A tree: stage A's box suffices
+        if( self%box > BOXA ) call cl%set('rec_states_box', BOXA)
         call self%submit(i, S_FFLEX, cl)
     end subroutine submit_fflex
 
@@ -2289,6 +2341,7 @@ contains
         call cl%set('nstates',  size(pres))
         call self%set_parts(count(st > 0))
         call common_keys(self, cl)
+        call cl%set('postprocess', 'no')
         call self%submit_in(wd, cl)
         self%fs(j)%st = F_MAPS
         write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': maps of its '//int2str(size(pres))//' pole(s) at '//&
@@ -2550,6 +2603,7 @@ contains
             call cl%set('nstates',  size(pres))
             call self%set_parts(count(st > 0))
             call common_keys(self, cl)
+            call halves_only_keys(cl)
             call self%submit_in(wd//'/refine_rec', cl)
             nrun = nrun + 1
             self%fs(j)%st = F_REC
@@ -2734,6 +2788,7 @@ contains
             call cl%set('nstates',  size(pres))
             call self%set_parts(count(st > 0))
             call common_keys(self, cl)
+            call halves_only_keys(cl)
             call self%submit_in(wd//'/pre_rec', cl)
             nrun = nrun + 1
             self%fs(j)%st = F_PREC
@@ -2810,6 +2865,8 @@ contains
         class(hetero_tree), intent(in) :: self
         character(len=*),   intent(in) :: sd
         logical :: err
+        integer :: ios
+        call simple_sync_dir(sd, status=ios)
         if( file_exists(string(sd//'/'//STEP_EXIT)) )then
             call read_exit_code(string(sd//'/'//STEP_EXIT), dir_status, err)
             if( err ) dir_status = -1
@@ -3181,6 +3238,7 @@ contains
         integer,            intent(in) :: i, istep
         character(len=:), allocatable :: f, sdir
         logical :: err
+        integer :: ios
         if( istep == S_MBATCH )then
             step_status = self%batch_status(self%ndir(i)//'/motion/batch.txt')
             return
@@ -3193,6 +3251,8 @@ contains
         endif
         sdir = self%step_dir(i, istep)
         f = sdir//'/'//STEP_EXIT
+        ! opening the step directory revalidates NFS's cached "absent" answer, so a finished step is seen at once
+        call simple_sync_dir(sdir, status=ios)
         if( file_exists(string(f)) )then
             call read_exit_code(string(f), step_status, err)
             if( err ) step_status = -1
@@ -3549,6 +3609,77 @@ contains
         end do
         call fclose(funit)
     end subroutine leaf_lines
+
+    logical function keep_maps()
+        character(len=8) :: ev
+        integer :: ios
+        call get_environment_variable('SIMPLE_TREE_KEEPMAPS', ev, status=ios)
+        keep_maps = ios == 0 .and. ev == 'yes'
+    end function keep_maps
+
+    ! a step's per-part partial reconstructions are read only by its own assembly
+    subroutine prune_partials( dir )
+        character(len=*), intent(in) :: dir
+        type(string), allocatable :: list(:)
+        integer :: j
+        call simple_list_files_regexp(string(dir), '_part[0-9]+_(even|odd)[.]mrc$', list)
+        do j = 1, size(list)
+            call del_file(string(dir//'/'//list(j)%to_char()))
+        end do
+    end subroutine prune_partials
+
+    ! once the tree is done, the maps under its node directories that no leaf uses are removed
+    subroutine prune_maps( self )
+        class(hetero_tree), intent(inout) :: self
+        type(string), allocatable :: keep(:), maps(:)
+        character(len=4096) :: line
+        character(len=:), allocatable :: lst, f
+        integer(kind=8) :: sz, freed
+        integer :: funit, ios, il, j, ndel, nfound
+        allocate(keep(0), maps(0))
+        if( .not. file_exists(string(self%root//'/'//self%ltab)) ) return
+        call fopen(funit, string(self%root//'/'//self%ltab), status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        do il = 1, nlines(string(self%root//'/'//self%ltab))
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
+            keep = [keep, string(word(line, 5)), string(word(line, 6)), string(word(line, 7))]
+        end do
+        call fclose(funit)
+        lst = self%root//'/prune_maps_list.txt'
+        call exec_cmdline('find '//self%root//' -mindepth 2 -path "*/node_*" -type f -name "*.mrc" -o -path "*/node_*" -type f -name '//&
+            &'"reprojection_model_*.bin" -o -path "*/node_*" -type f -name "dist_part_neigh_*.dat" > '//lst, suppress_errors=.true.)
+        if( .not. file_exists(string(lst)) ) return
+        call fopen(funit, string(lst), status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        do il = 1, nlines(string(lst))
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
+            maps = [maps, string(trim(line))]
+        end do
+        call fclose(funit)
+        call del_file(string(lst))
+        nfound = count([(any(maps == keep(j)), j=1,size(keep))])
+        if( nfound < count([(file_exists(keep(j)), j=1,size(keep))]) )then
+            write(logfhandle,'(A)') '>>> HETERO_TREE WARNING: leaf maps not found by path, intermediate maps kept'
+            return
+        endif
+        freed = 0
+        ndel  = 0
+        do j = 1, size(maps)
+            f = maps(j)%to_char()
+            if( any(keep == maps(j)) ) cycle
+            if( index(f, '/leafmaps/') > 0 .or. index(f, '/landscape/') > 0 ) cycle
+            if( index(f, '/mask.mrc', back=.true.) == len(f) - 8 ) cycle
+            if( index(f, '/plain/') > 0 .and. index(f, '_part') == 0 ) cycle
+            inquire(file=f, size=sz)
+            call del_file(maps(j))
+            freed = freed + max(0_8, sz)
+            ndel  = ndel + 1
+        end do
+        write(logfhandle,'(A)') '>>> HETERO_TREE removed '//int2str(ndel)//' intermediate maps and reprojection models ('//&
+            &int2str(nint(real(freed,dp) / 1.e9_dp))//' GB); the leaves'' maps, plain leaf maps and final maps are kept'
+    end subroutine prune_maps
 
     subroutine final_maps( self )
         class(hetero_tree), intent(inout) :: self
@@ -4558,6 +4689,22 @@ contains
             call cl%set('assembly_mem', self%p%assembly_mem)
         endif
     end subroutine common_keys
+
+    subroutine crop_keys( self, cl, boxc )
+        class(hetero_tree), intent(in)    :: self
+        class(cmdline),     intent(inout) :: cl
+        integer,            intent(in)    :: boxc
+        if( self%box <= boxc ) return
+        call cl%set('box_crop',  boxc)
+        call cl%set('smpd_crop', real(self%box) * self%smpd / real(boxc))
+    end subroutine crop_keys
+
+    ! a reconstruction whose consumers read only its unfiltered halves needs neither ML regularization nor postprocessing
+    subroutine halves_only_keys( cl )
+        class(cmdline), intent(inout) :: cl
+        call cl%set('ml_reg',      'no')
+        call cl%set('postprocess', 'no')
+    end subroutine halves_only_keys
 
     subroutine flex_keys( self, cl, mean, k )
         class(hetero_tree), intent(in)    :: self

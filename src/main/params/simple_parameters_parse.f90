@@ -424,6 +424,7 @@ contains
         call reg%add_int('min_neff', self%min_neff)
         call reg%add_int('state_axis', self%state_axis)
         call reg%add_int('nkern', self%nkern)
+        call reg%add_int('rec_states_box', self%rec_states_box)
         call reg%add_int('nbins', self%nbins)
         call reg%add_int('column_separation', self%column_separation)
         call reg%add_int('n_probe_iters', self%n_probe_iters)

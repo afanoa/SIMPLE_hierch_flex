@@ -65,6 +65,12 @@ type :: state_mergeup
     integer, allocatable :: fsh(:,:,:)
     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
     logical :: l_exists = .false.
+    real, allocatable :: qv(:)
+    logical :: l_qstrata = .false.
+    integer :: nemnull = 0, emseed = 0, khp = 0
+    logical :: l_ortho = .false.
+    integer :: ktgap = RB_MARGIN_FOCUS
+    real    :: rhomin = 0.
     integer :: audit_calls = 0
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
@@ -136,8 +142,9 @@ contains
         type(ptcl_read_session) :: reads
         type(image) :: mskimg
         real    :: dirs(3,NVIEW), v(3), t, z, rz, g, e1, e2
-        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie, ist
+        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie, ist, iqs
         character(len=32) :: route
+        character(len=16) :: qs
         call self%kill
         self%p => params
         self%b => build
@@ -160,7 +167,39 @@ contains
         self%klo = max(nint(real(self%box) * params%smpd_crop / params%hp), 3)
         self%khi = self%nyq - 1
         self%kb  = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / em_lim))
-        allocate(self%eo(self%n), self%vbin(self%n), self%eul(3,self%n), self%dfm(self%n))
+        allocate(self%eo(self%n), self%vbin(self%n), self%eul(3,self%n), self%dfm(self%n), self%qv(self%n))
+        ! test switch SIMPLE_SPLIT_QSTRATA=yes: the shuffle null is also stratified by per-particle corr tertiles
+        call get_environment_variable('SIMPLE_SPLIT_QSTRATA', qs, status=iqs)
+        self%l_qstrata = iqs == 0 .and. trim(qs) == 'yes'
+        ! test switch SIMPLE_SPLIT_EMNULL=R (SIMPLE_SPLIT_EMNULL_SEED=s): R shuffled EM starts through cross_em + re-test, log only
+        self%nemnull = 0
+        self%emseed  = 0
+        call get_environment_variable('SIMPLE_SPLIT_EMNULL', qs, status=iqs)
+        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%nemnull
+        call get_environment_variable('SIMPLE_SPLIT_EMNULL_SEED', qs, status=iqs)
+        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%emseed
+        ! test switch SIMPLE_SPLIT_KTGAP=g: with a focus mask the re-test band starts g shells above the EM band (default 4)
+        self%ktgap = RB_MARGIN_FOCUS
+        call get_environment_variable('SIMPLE_SPLIT_KTGAP', qs, status=iqs)
+        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%ktgap
+        ! test switch SIMPLE_SPLIT_RHOMIN=x: a split whose relative effect (rel_effect in test) is below x is refused
+        self%rhomin = 0.
+        call get_environment_variable('SIMPLE_SPLIT_RHOMIN', qs, status=iqs)
+        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%rhomin
+        ! test switch SIMPLE_SPLIT_ORTHO=yes: pair statistics on group differences orthogonal, per shell, to the group mean
+        call get_environment_variable('SIMPLE_SPLIT_ORTHO', qs, status=iqs)
+        self%l_ortho = iqs == 0 .and. trim(qs) == 'yes'
+        if( self%l_ortho ) write(logfhandle,'(A)') '>>> STATE_MERGEUP test switch: pair statistics on group differences '//&
+            &'orthogonal, per shell, to the group mean'
+        ! test switch SIMPLE_SPLIT_HPMASK=m: masked maps above shell kb+m come from the map high-passed above kb+m before the mask
+        self%khp = 0
+        call get_environment_variable('SIMPLE_SPLIT_HPMASK', qs, status=iqs)
+        if( iqs == 0 .and. len_trim(qs) > 0 )then
+            read(qs,*) self%khp
+            self%khp = self%kb + self%khp
+            write(logfhandle,'(A)') '>>> STATE_MERGEUP test switch: masked maps above shell '//int2str(self%khp)//&
+                &' from the map high-passed before the mask'
+        endif
         do i = 1, NVIEW
             t  = real(i-1) + 0.5
             z  = 1. - 2. * t / real(NVIEW)
@@ -173,6 +212,7 @@ contains
             self%eo(i)    = build%spproj_field%get_eo(ip)
             self%eul(:,i) = build%spproj_field%get_euler(ip)
             self%dfm(i)   = 0.5 * (build%spproj_field%get_dfx(ip) + build%spproj_field%get_dfy(ip))
+            self%qv(i)    = build%spproj_field%get(ip, 'corr')
             e1 = self%eul(1,i) * PI / 180.
             e2 = self%eul(2,i) * PI / 180.
             v  = [sin(e2)*cos(e1), sin(e2)*sin(e1), cos(e2)]
@@ -340,7 +380,7 @@ contains
         fm = min(max(vol%get_rmat(), 0.), 1.)
         if( any(shape(fm) /= shape(self%msk3)) ) THROW_HARD('focus mask box does not match the particles; focus')
         self%msk3 = self%msk3 * fm
-        self%kt   = min(self%kb + RB_MARGIN_FOCUS, self%khi - 2)
+        self%kt   = min(self%kb + self%ktgap, self%khi - 2)
         write(logfhandle,'(A)') '>>> STATE_MERGEUP focus mask '//fname%to_char()//': '//&
             &fmtr(100._dp*real(count(fm > 0.5),dp)/real(size(fm),dp),1)//' % of the crop grid above 0.5'
         call vol%kill
@@ -390,7 +430,7 @@ contains
             call vol%kill
         end do
         self%msk0 = self%msk3
-        self%kt   = min(self%kb + RB_MARGIN_FOCUS, self%khi - 2)
+        self%kt   = min(self%kb + self%ktgap, self%khi - 2)
         write(logfhandle,'(A)') '>>> STATE_MERGEUP per-state focus masks '//fname%to_char()//': '//int2str(nl)//&
             &' states, '//int2str(ns)//' masks; each group is tested inside the union of its states'' masks'
     end subroutine leaf_focus
@@ -732,6 +772,14 @@ contains
                 call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
                     &exa, exb, kstar, rst)
             endif
+            if( self%nemnull > 0 ) call em_null(kem, rst)
+            if( kstar >= 2 .and. self%rhomin > 0. )then
+                if( rel_effect(rst) < self%rhomin )then
+                    write(logfhandle,'(A)') 'relative effect below SIMPLE_SPLIT_RHOMIN '//fmtr(real(self%rhomin,dp),4)//' -> K* 1'
+                    gof   = 1
+                    kstar = 1
+                endif
+            endif
         endif
         npair = size(plist)
         allocate(sizes(kstar), order(kstar), rank(kstar), source=0)
@@ -892,6 +940,70 @@ contains
                     &' particles change group'
             endif
         end subroutine route_members
+
+        ! test switch: the real EM start labels shuffled within the nuisance strata, each through the same cross_em fit and
+        ! re-test; also the start labels re-tested without the EM. Log only: the decision above is unchanged
+        subroutine em_null( k0em, treal )
+            use simple_rnd, only: seed_rnd_fixed
+            integer, intent(in) :: k0em
+            real,    intent(in) :: treal
+            integer, allocatable :: sa(:), sb(:), lar(:), lbr(:), pl(:), gf(:), ea(:), eb(:)
+            real,    allocatable :: tn(:)
+            real    :: tr, tpre, mul, sdl, mue, sde
+            integer :: r, kk
+            call self%decide(ia, ib, starta, startb, k0em, eps, neq, cons, self%kt, -huge(tr), 'start labels, no EM', &
+                &pl, gf, ea, eb, kk, tpre)
+            if( self%emseed /= 0 ) call seed_rnd_fixed(self%emseed)
+            allocate(tn(0), lar(size(ia)), lbr(size(ib)))
+            do r = 1, self%nemnull
+                sa = sshuf(starta, sta)
+                sb = sshuf(startb, stb)
+                call self%cross_em(ia, ib, sa, sb, k0em, eps, neq, lar, lbr)
+                if( nuniq(lar) < 2 .or. nuniq(lbr) < 2 )then
+                    write(logfhandle,'(A)') 'EM null shuffle '//int2str(r)//': the EM drained to one group'
+                    cycle
+                endif
+                call self%decide(ia, ib, lar, lbr, k0em, eps, neq, cons, self%kt, -huge(tr), 'EM null', pl, gf, ea, eb, kk, tr)
+                write(logfhandle,'(A)') 'EM null shuffle '//int2str(r)//': re-test '//fmtr(real(tr,dp),4)//&
+                    &'; MAP changed vs start '//fmtr(real(count(lar /= sa) + count(lbr /= sb),dp)/&
+                    &real(size(lar) + size(lbr),dp),3)
+                tn = [tn, tr]
+            end do
+            mul = sum(nl%nul2) / real(max(size(nl%nul2), 1))
+            sdl = sqrt(sum((nl%nul2 - mul)**2) / real(max(size(nl%nul2) - 1, 1)))
+            mue = sum(tn) / real(max(size(tn), 1))
+            sde = sqrt(sum((tn - mue)**2) / real(max(size(tn) - 1, 1)))
+            write(logfhandle,'(A)') 'EM-INCLUSIVE NULL: real re-test '//fmtr(real(treal,dp),4)//'; start labels without the EM '//&
+                &fmtr(real(tpre,dp),4)//' | label null ('//int2str(size(nl%nul2))//', no EM) mean / sd / max '//&
+                &fmtr(real(mul,dp),4)//' / '//fmtr(real(sdl,dp),4)//' / '//fmtr(real(maxval(nl%nul2),dp),4)//', z '//&
+                &fmtr(real((treal - mul) / max(sdl, 1.e-12),dp),2)//' | EM null ('//int2str(size(tn))//') mean / sd / max '//&
+                &fmtr(real(mue,dp),4)//' / '//fmtr(real(sde,dp),4)//' / '//fmtr(real(maxval([tn, -huge(tr)]),dp),4)//&
+                &', z '//fmtr(real((treal - mue) / max(sde, 1.e-12),dp),2)//' | EM null values '//joinedr(tn)
+            mue = rel_effect(treal)
+        end subroutine em_null
+
+        ! test switch: the re-test pair's per-particle difference SNR over the consensus's per-particle SNR in the re-test band
+        real function rel_effect( treal )
+            real, intent(in) :: treal
+            real    :: m2, y, rd, fc, sc
+            integer :: nn, gg
+            rel_effect = huge(rel_effect)
+            if( size(nl%nul2) == 0 ) return
+            m2 = medianr(nl%nul2)
+            y  = max((treal - m2) / max(1. - m2, 1.e-6), 0.)
+            nn = huge(nn)
+            do gg = 1, kem
+                if( count(la == gg) > 0 .and. count(lb == gg) > 0 ) nn = min(nn, count(la == gg), count(lb == gg))
+            end do
+            rd = 2. * y / (max(1. - y, 1.e-6) * real(nn))
+            fc = min(max(self%shell_corr(cons(:,:,:,1), cons(:,:,:,2), self%kt, self%khi), 1.e-6), 0.999999)
+            sc = fc / ((1. - fc) * 0.5 * real(size(ia) + size(ib)))
+            rel_effect = rd / sc
+            write(logfhandle,'(A)') 'RELATIVE EFFECT: re-test '//fmtr(real(treal,dp),4)//', null median '//fmtr(real(m2,dp),4)//&
+                &', n '//int2str(nn)//' -> difference SNR / particle '//fmtr(real(rd,dp)*1.d6,3)//'e-6; consensus band FSC '//&
+                &fmtr(real(fc,dp),4)//' over '//int2str((size(ia) + size(ib)) / 2)//' per half -> SNR / particle '//&
+                &fmtr(real(sc,dp)*1.d6,3)//'e-6; rho '//fmtr(real(rel_effect,dp),5)
+        end function rel_effect
 
         subroutine add_subset_jobs( idx, lab )
             integer, intent(in) :: idx(:), lab(:)
@@ -3437,11 +3549,30 @@ contains
         logical,              intent(in)    :: l_mask
         complex,              intent(out)   :: cm(:,:,:)
         real, pointer :: rmat(:,:,:)
+        complex, allocatable :: cu(:,:,:), ch(:,:,:)
         call self%recs(it)%add_shell_rho(epsv)
         call self%recs(it)%sampl_dens_correct
         call self%recs(it)%ifft
         call self%recs(it)%deapodize
         call self%wimgs(it)%copy_fast(self%recs(it))
+        if( l_mask .and. self%khp > 0 )then
+            ! no content at or below khp (the EM band) reaches the shells above it through the mask
+            call self%wimgs(it)%fft
+            cu = self%wimgs(it)%get_cmat()
+            call self%wimgs(it)%set_cmat(merge(cu, (0.,0.), self%fsh > self%khp))
+            call self%wimgs(it)%ifft
+            call self%wimgs(it)%get_rmat_ptr(rmat)
+            rmat = rmat * self%msk3
+            call self%wimgs(it)%fft
+            ch = self%wimgs(it)%get_cmat()
+            call self%wimgs(it)%set_cmat(cu)
+            call self%wimgs(it)%ifft
+            call self%wimgs(it)%get_rmat_ptr(rmat)
+            rmat = rmat * self%msk3
+            call self%wimgs(it)%fft
+            cm = merge(ch, self%wimgs(it)%get_cmat(), self%fsh > self%khp)
+            return
+        endif
         if( l_mask )then
             call self%wimgs(it)%get_rmat_ptr(rmat)
             rmat = rmat * self%msk3
@@ -3592,6 +3723,17 @@ contains
         do i = 1, n
             st(i) = (self%vbin(idx(i)) - 1) * 3 + count(q < self%dfm(idx(i)))
         end do
+        if( .not. self%l_qstrata ) return
+        dfs = self%qv(idx)
+        call hpsort(dfs)
+        do i = 1, 2
+            pos  = real(n-1) * real(i) / 3.
+            lo   = int(pos)
+            q(i) = dfs(lo+1) + (pos - real(lo)) * (dfs(min(lo+2,n)) - dfs(lo+1))
+        end do
+        do i = 1, n
+            st(i) = st(i) * 3 + count(q < self%qv(idx(i)))
+        end do
     end function strata
 
     real function pair_stat( self, a1, a2, b1, b2, kl )
@@ -3600,11 +3742,47 @@ contains
         integer,              intent(in) :: kl
         real    :: f(0:self%nyq)
         integer :: k
-        call self%shell_fsc(a1 - a2, b1 - b2, f)
+        if( self%l_ortho )then
+            call self%shell_fsc(odiff(a1, a2), odiff(b1, b2), f)
+        else
+            call self%shell_fsc(a1 - a2, b1 - b2, f)
+        endif
         pair_stat = -huge(1.)
         do k = kl, max(self%khi - 2, kl)
             pair_stat = max(pair_stat, sum(f(k:k+2)) / 3.)
         end do
+
+    contains
+
+        ! test switch: the group difference without its per-shell component along the group mean (an envelope / quality change)
+        function odiff( x1, x2 ) result( d )
+            complex, intent(in)  :: x1(:,:,:), x2(:,:,:)
+            complex, allocatable :: d(:,:,:)
+            real(dp) :: sdc(0:self%nyq), scc(0:self%nyq)
+            real     :: g(0:self%nyq)
+            integer  :: h, kk, l, sh
+            d   = x1 - x2
+            sdc = 0._dp
+            scc = 0._dp
+            do l = 1, self%box
+                do kk = 1, self%box
+                    do h = 1, self%nh
+                        sh = self%fsh(h,kk,l)
+                        sdc(sh) = sdc(sh) + self%fw(h,kk,l) * real(real(d(h,kk,l) * conjg(x1(h,kk,l) + x2(h,kk,l))),dp)
+                        scc(sh) = scc(sh) + self%fw(h,kk,l) * real(abs(x1(h,kk,l) + x2(h,kk,l)),dp)**2
+                    end do
+                end do
+            end do
+            g = real(sdc / max(scc, 1.e-30_dp))
+            do l = 1, self%box
+                do kk = 1, self%box
+                    do h = 1, self%nh
+                        d(h,kk,l) = d(h,kk,l) - g(self%fsh(h,kk,l)) * (x1(h,kk,l) + x2(h,kk,l))
+                    end do
+                end do
+            end do
+        end function odiff
+
     end function pair_stat
 
     subroutine dock( self, cm, cref, b1, b2 )
@@ -3778,6 +3956,7 @@ contains
             deallocate(self%recs, self%os, self%syms, self%smps, self%pouts, self%wimgs, self%bpls)
         endif
         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
+        if( allocated(self%qv)   ) deallocate(self%qv)
         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
         if( allocated(self%fbhk) ) deallocate(self%fbhk, self%fbsh, self%fbw, self%f2b, self%cwb)

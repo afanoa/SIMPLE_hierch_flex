@@ -136,6 +136,11 @@ contains
             '', .false., 'gridding', &
         &choices=ui_choices([character(len=8) :: 'gridding', 'pcg']), &
         &visibility=UI_VIS_ADVANCED)
+        call flex_pca%add_input(UI_FILT, 'rec_states_box', 'num', &
+            'Box of the final state maps (default 0 = the particle box)', &
+            'The state maps are reconstructed on this cropped box when it is smaller than the particle box; &
+            &hetero_tree sets the box its next refinement starts at', &
+            'voxels, 0=particle box', .false., 0.0, visibility=UI_VIS_DEVELOPER)
         call flex_pca%add_input(UI_PARM, 'infile', 'file', &
             'Cached embedding to resume from', &
             'Path to a flex_pca_embedding.bin written by an earlier run. Skips the covariance &

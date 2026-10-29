@@ -465,6 +465,7 @@ type :: parameters
     integer :: min_neff=2000       !< minimum effective particle count for covariance state kernels
     integer :: state_axis=0        !< covariance latent coordinate for state targets; 0=diffusion k-center over all comps
     integer :: nkern=0             !< # leading latent components used for state placement/kernel; 0=all (neigs)
+    integer :: rec_states_box=0
     integer :: nbins=1             !< # kernel bandwidth bins for cross-validated state selection (1=off)
     integer :: column_separation=2 !< minimum grid separation between selected covariance columns
     integer :: n_probe_iters=0     !< EM/probe subspace-iteration refinements of the flex_pca column basis (0=off; commander sets 5)
