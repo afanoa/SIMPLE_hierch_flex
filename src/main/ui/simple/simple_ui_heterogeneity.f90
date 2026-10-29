@@ -786,7 +786,7 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'strongest_pole', 'binary', 'Seed from the strongest kept pole', &
         &'Every site is ranked and the site whose kept pole has the largest smaller pole-rule margin seeds the split, instead of &
-        &the first site that keeps a pole; ignored with node_motion=yes(yes|no){no}', '', .false., 'no', &
+        &the first site that keeps a pole; ignored with node_motion=yes(yes|no){yes}', '', .false., 'yes', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'two_poles', 'binary', 'Seed both ends of the split''s axis', &
         &'The split is seeded from the kept pole and the opposite end of its axis: the kept pole at the opposite endpoints of &

@@ -62,7 +62,7 @@ type :: parameters
     character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}
     character(len=3)          :: node_proj='no'
     character(len=3)          :: node_motion='no'
-    character(len=3)          :: strongest_pole='no'
+    character(len=3)          :: strongest_pole='yes'
     character(len=3)          :: two_poles='no'
     character(len=3)          :: motion_gate='no'
     character(len=3)          :: motion_inherit='no'
