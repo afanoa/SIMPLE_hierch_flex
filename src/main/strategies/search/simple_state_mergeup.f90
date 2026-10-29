@@ -71,6 +71,12 @@ type :: state_mergeup
     logical :: l_ortho = .false.
     integer :: ktgap = RB_MARGIN_FOCUS
     real    :: rhomin = 0.
+    ! merge-up rule (default; SIMPLE_MERGE_RULE=off restores the old one): a pair merges only when shown equivalent at margin
+    ! mdelta, never across cnl
+    logical, allocatable :: cnl(:,:)
+    logical :: l_equiv = .false.
+    real    :: mdelta = 0., nmed = 0., nmax = 0.
+    integer :: nnull = 0
     integer :: audit_calls = 0
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
@@ -491,8 +497,10 @@ contains
         integer,    allocatable :: grp(:), names(:), l2u(:), uptcl(:), cand(:), child(:), chrow(:), newu(:)
         integer,    allocatable :: to(:), cnt(:), merged(:), junk(:), tst(:), pop(:)
         logical,    allocatable :: isj(:), newj(:)
+        integer,    allocatable :: dpairs(:,:), ugrp(:)
         integer :: g, lv, gi, il, u, nid, i, j, kstar, c, nmerge, ntest, nbefore, big
         units = max(labels, 0)
+        call merge_rule_setup
         allocate(ul(maxval(units)))
         do u = 1, size(ul)
             if( count(units == u) > 0 )then
@@ -558,7 +566,13 @@ contains
                 end do
                 write(logfhandle,'(A)') '>>> level '//int2str(lv)//' node '//int2str(gi)//': units '//joined(tst)
                 if( allocated(self%lslot) ) call group_mask(tst)
-                call self%test(cand, size(tst), child, kstar, junk)
+                if( self%l_equiv )then
+                    call link_matrix(tst)
+                    call self%test(cand, size(tst), child, kstar, junk, ugrp=ugrp)
+                    deallocate(self%cnl)
+                else
+                    call self%test(cand, size(tst), child, kstar, junk)
+                endif
                 if( allocated(self%lslot) ) self%msk3 = self%msk0
                 do j = 1, size(junk)
                     call pass(tst(junk(j)), .true.)
@@ -586,6 +600,14 @@ contains
                 big = 1
                 if( any(to > 0) ) big = maxloc(pop, dim=1, mask=[(any(to == c), c=1,size(pop))])
                 where( to == 0 ) to = big
+                if( self%l_equiv )then
+                    ! units follow decide's groups, so a group the EM drained cannot carry a unit into a merge decide refused
+                    do j = 1, size(tst)
+                        if( to(j) < 0 ) cycle
+                        to(j) = ugrp(j)
+                        if( to(j) == 0 ) call pass(tst(j), .false.)
+                    end do
+                endif
                 do c = 1, max(1,kstar)
                     if( .not. any(to == c) ) cycle
                     nid = nid + 1
@@ -617,6 +639,64 @@ contains
         write(logfhandle,'(A)') '>>> STATE_MERGEUP DONE: '//int2str(size(ul))//' states, '//int2str(count(isj))//' junk'
 
     contains
+
+        subroutine merge_rule_setup
+            character(len=4096) :: ev
+            character(len=:), allocatable :: tdir
+            integer, allocatable :: npairs(:,:)
+            real    :: ndelta
+            integer :: ios, funit, a, b, nrs
+            call get_environment_variable('SIMPLE_MERGE_RULE', ev, status=ios)
+            self%l_equiv = .not. (ios == 0 .and. trim(ev) == 'off')
+            if( .not. self%l_equiv ) return
+            call get_environment_variable('SIMPLE_MERGE_TREEDIR', ev, status=ios)
+            if( ios == 0 .and. len_trim(ev) > 0 )then
+                tdir = trim(ev)
+            else
+                tdir = parent_dir(parent_dir(self%p%infile%to_char()))
+            endif
+            call equiv_tree_inputs(tdir, ndelta, npairs, nrs)
+            write(logfhandle,'(A)') '>>> STATE_MERGEUP merge rule inputs from '//tdir//': '//int2str(nrs)//&
+                &' node splits kept K* >= 2, smallest effect '//fmtr(real(ndelta,dp),6)//'; '//int2str(size(npairs,2))//&
+                &' sibling leaf pairs shown distinct:'//pair_list(npairs)
+            self%mdelta = ndelta
+            call move_alloc(npairs, dpairs)
+            ! SIMPLE_MERGE_DELTA / SIMPLE_MERGE_DISTINCT (a file of leaf-index pairs) override the tree's own inputs
+            call get_environment_variable('SIMPLE_MERGE_DELTA', ev, status=ios)
+            if( ios == 0 .and. len_trim(ev) > 0 ) read(ev,*) self%mdelta
+            call get_environment_variable('SIMPLE_MERGE_DISTINCT', ev, status=ios)
+            if( ios == 0 .and. len_trim(ev) > 0 )then
+                deallocate(dpairs)
+                allocate(dpairs(2,0))
+                call fopen(funit, string(trim(ev)), status='old', action='read', iostat=ios)
+                call fileiochk('state_mergeup: cannot read '//trim(ev), ios)
+                do
+                    read(funit,*,iostat=ios) a, b
+                    if( ios /= 0 ) exit
+                    dpairs = reshape([dpairs, a, b], [2, size(dpairs,2) + 1])
+                end do
+                call fclose(funit)
+            endif
+            write(logfhandle,'(A)') '>>> STATE_MERGEUP merge rule: a pair merges only when shown equivalent at margin '//&
+                &fmtr(real(self%mdelta,dp),6)//'; '//int2str(size(dpairs,2))//' leaf pairs shown distinct are never merged'
+        end subroutine merge_rule_setup
+
+        subroutine link_matrix( uu )
+            integer, intent(in) :: uu(:)
+            integer :: a, b, k
+            allocate(self%cnl(size(uu),size(uu)), source=.false.)
+            do k = 1, size(dpairs,2)
+                do a = 1, size(uu)
+                    if( .not. any(ul(uu(a))%v == dpairs(1,k)) ) cycle
+                    do b = 1, size(uu)
+                        if( a == b .or. .not. any(ul(uu(b))%v == dpairs(2,k)) ) cycle
+                        self%cnl(a,b) = .true.
+                        self%cnl(b,a) = .true.
+                    end do
+                end do
+            end do
+            write(logfhandle,'(A)') '>>>   merge rule: '//int2str(count(self%cnl) / 2)//' cannot-link unit pairs in this node'
+        end subroutine link_matrix
 
         subroutine pass( uu, lj )
             integer, intent(in) :: uu
@@ -678,12 +758,17 @@ contains
 
     end subroutine run
 
-    subroutine test( self, cand, k0, child, kstar, junk, ntests )
+    subroutine test( self, cand, k0, child, kstar, junk, ntests, ugrp )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: cand(:), k0
         integer, allocatable, intent(out)   :: child(:), junk(:)
         integer,              intent(out)   :: kstar
         integer, optional,    intent(in)    :: ntests
+        integer, allocatable, optional, intent(out) :: ugrp(:)
+        logical, allocatable :: cg(:,:)
+        integer, allocatable :: mapb(:), mape(:)
+        logical :: l_em
+        integer :: m2
         complex, allocatable :: cons(:,:,:,:)
         integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:)
         integer, allocatable :: plist(:), gof(:), exa(:), exb(:), starta(:), startb(:), sizes(:), order(:), rank(:)
@@ -745,7 +830,13 @@ contains
                 &': shuffle null median '//fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//&
                 &' -> threshold '//fmtr(real(thr2,dp),3)
         endif
+        if( size(nl%nul) > 0 ) call stash(nl%nul, thr)
         call self%decide(ia, ib, la, lb, k0, eps, neq, cons, self%klo, thr, 'board groups', plist, gof, exa, exb, kstar)
+        allocate(mapb(k0), source=0)
+        do m = 1, size(plist)
+            mapb(plist(m)) = gof(m)
+        end do
+        l_em = kstar >= 2
         if( kstar >= 2 )then
             allocate(starta(size(ia)), startb(size(ib)), source=0)
             do m = 1, size(plist)
@@ -756,6 +847,16 @@ contains
             call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
             write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
                 &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
+            if( size(nl%nul2) > 0 ) call stash(nl%nul2, thr2)
+            if( allocated(self%cnl) )then
+                allocate(cg(kem,kem), source=.false.)
+                do m = 1, size(plist)
+                    do m2 = 1, size(plist)
+                        if( gof(m) /= gof(m2) ) cg(gof(m),gof(m2)) = cg(gof(m),gof(m2)) .or. self%cnl(plist(m),plist(m2))
+                    end do
+                end do
+                call move_alloc(cg, self%cnl)
+            endif
             if( nl%l_z .and. ng >= 2 )then
                 call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
                     &exa, exb, kstar, rst, nl)
@@ -773,7 +874,8 @@ contains
                     &exa, exb, kstar, rst)
             endif
             if( self%nemnull > 0 ) call em_null(kem, rst)
-            if( kstar >= 2 .and. self%rhomin > 0. )then
+            ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
+            if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
                 if( rel_effect(rst) < self%rhomin )then
                     write(logfhandle,'(A)') 'relative effect below SIMPLE_SPLIT_RHOMIN '//fmtr(real(self%rhomin,dp),4)//' -> K* 1'
                     gof   = 1
@@ -805,6 +907,24 @@ contains
         do ii = 1, size(ib)
             child(ib(ii)) = group_of(lb(ii), exb)
         end do
+        if( present(ugrp) )then
+            allocate(ugrp(k0), source=0)
+            if( l_em )then
+                allocate(mape(kem), source=0)
+                do m = 1, size(plist)
+                    mape(plist(m)) = gof(m)
+                end do
+                do ii = 1, k0
+                    if( mapb(ii) > 0 )then
+                        if( mape(mapb(ii)) > 0 ) ugrp(ii) = rank(mape(mapb(ii)))
+                    endif
+                end do
+            else
+                do ii = 1, k0
+                    if( mapb(ii) > 0 ) ugrp(ii) = rank(mapb(ii))
+                end do
+            endif
+        endif
         if( self%l_route .and. kstar >= 2 ) call route_members
         call junk_report(ia, 1, 'A')
         call junk_report(ib, 2, 'B')
@@ -813,6 +933,13 @@ contains
         deallocate(cons)
 
     contains
+
+        subroutine stash( nul_, th )
+            real, intent(in) :: nul_(:), th
+            self%nmed  = medianr(nul_)
+            self%nmax  = th
+            self%nnull = size(nul_)
+        end subroutine stash
 
         integer function group_of( lab, ex )
             integer, intent(in) :: lab, ex(0:)
@@ -1309,6 +1436,12 @@ contains
             else if( best >= thr )then
                 exit
             endif
+            if( self%l_equiv )then
+                if( .not. shown_equal(bp, bq, best) )then
+                    rmat(bp,bq) = huge(best)
+                    cycle
+                endif
+            endif
             merged = [merged, best]
             l_alive(bq) = .false.
             where( groupof == bq ) groupof = bp
@@ -1333,6 +1466,42 @@ contains
         deallocate(rmat, l_alive, groupof, merged, lowc, mapa, mapb, jidx, joff, jscale)
 
     contains
+
+        ! one-sided equivalence at the margin: r_eq = r_hat(stat + 1.645 sd) <= mdelta, sd from the null's median and maximum
+        logical function shown_equal( p, q, t )
+            integer, intent(in) :: p, q
+            real,    intent(in) :: t
+            real    :: sg, y, req
+            integer :: nn, i, j
+            logical :: lnk
+            lnk = .false.
+            if( allocated(self%cnl) )then
+                do i = 1, npair
+                    if( groupof(i) /= p ) cycle
+                    do j = 1, npair
+                        if( groupof(j) == q ) lnk = lnk .or. self%cnl(plist(i), plist(j))
+                    end do
+                end do
+            endif
+            nn  = min(members(la, p), members(la, q), members(lb, p), members(lb, q))
+            sg  = max((self%nmax - self%nmed) / max(blom_emax(self%nnull), 1.e-6), 1.e-3)
+            y   = min(max((t + 1.645 * sg - self%nmed) / (1. - self%nmed), 1.e-4), 0.995)
+            req = 2. * y / ((1. - y) * real(max(nn, 1)))
+            shown_equal = (.not. lnk) .and. req <= self%mdelta
+            write(logfhandle,'(A)') 'equivalence: groups '//int2str(p)//' '//int2str(q)//' stat '//fmtr(real(t,dp),3)//' n '//&
+                &int2str(nn)//' null sd '//fmtr(real(sg,dp),3)//' r_eq '//fmtr(real(req,dp),6)//' margin '//&
+                &fmtr(real(self%mdelta,dp),6)//' -> '//trim(merge('merge             ', merge('keep (cannot-link)', &
+                &'keep (unresolved) ', lnk), shown_equal))
+        end function shown_equal
+
+        integer function members( lab, g )
+            integer, intent(in) :: lab(:), g
+            integer :: i
+            members = 0
+            do i = 1, npair
+                if( groupof(i) == g ) members = members + count(lab == plist(i))
+            end do
+        end function members
 
         subroutine add_jobs( idx, lab, pres )
             integer, intent(in) :: idx(:), lab(:), pres(:)
@@ -3974,6 +4143,8 @@ contains
         if( allocated(self%msk3) ) deallocate(self%msk3, self%fsh, self%fw)
         if( allocated(self%fqh) ) deallocate(self%fqh, self%fqk)
         if( allocated(self%lmsk) ) deallocate(self%lmsk, self%lslot, self%msk0)
+        if( allocated(self%cnl)  ) deallocate(self%cnl)
+        self%l_equiv = .false.
         self%p => null()
         self%b => null()
         self%n = 0
@@ -4189,6 +4360,190 @@ contains
             v(j+1) = t
         end do
     end subroutine isort
+
+    ! expected maximum of k standard normals (Blom), by bisection on the normal tail
+    real function blom_emax( k )
+        integer, intent(in) :: k
+        real(dp) :: p, lo, hi, mid
+        integer  :: it
+        blom_emax = 0.
+        if( k < 2 ) return
+        p  = 1._dp - (real(k,dp) - 0.375_dp) / (real(k,dp) + 0.25_dp)
+        lo = 0._dp
+        hi = 12._dp
+        do it = 1, 80
+            mid = 0.5_dp * (lo + hi)
+            if( 0.5_dp * erfc(mid / sqrt(2._dp)) > p )then
+                lo = mid
+            else
+                hi = mid
+            endif
+        end do
+        blom_emax = real(0.5_dp * (lo + hi))
+    end function blom_emax
+
+    ! the equivalence merge-up's inputs from a tree's own tables: every node whose split log shows K* >= 2 after the cross-half
+    ! EM re-test gives an effect r_hat (the margin is the smallest); its stage-B leaves <node>_s1 / _s2 (and swing poles
+    ! <node>_pA / _pB) are pairs shown distinct. Leaf indices follow hetero_tree_leaves.txt, as the tree's labels do
+    subroutine equiv_tree_inputs( tdir, delta, dpairs, nrs )
+        character(len=*),     intent(in)  :: tdir
+        real,                 intent(out) :: delta
+        integer, allocatable, intent(out) :: dpairs(:,:)
+        integer,              intent(out) :: nrs
+        character(len=256), allocatable :: lnames(:), nids(:)
+        character(len=:),   allocatable :: logf
+        integer :: i, a, b, k, kst
+        real    :: r
+        logical :: l_ok, l_ex
+        allocate(dpairs(2,0))
+        delta = 0.
+        nrs   = 0
+        call first_tokens(tdir//'/hetero_tree_leaves.txt', lnames)
+        call first_tokens(tdir//'/hetero_tree_nodes.txt', nids)
+        do i = 1, size(nids)
+            logf = tdir//'/node_'//trim(nids(i))//'/split/hetero_step.log'
+            inquire(file=logf, exist=l_ex)
+            if( .not. l_ex ) cycle
+            call node_effect(logf, kst, r, l_ok)
+            if( .not. l_ok ) cycle
+            nrs = nrs + 1
+            if( nrs == 1 )then
+                delta = r
+            else
+                delta = min(delta, r)
+            endif
+            a = name_index(lnames, trim(nids(i))//'_s1')
+            b = name_index(lnames, trim(nids(i))//'_s2')
+            if( a > 0 .and. b > 0 ) dpairs = reshape([dpairs, a, b], [2, size(dpairs,2) + 1])
+        end do
+        do i = 1, size(lnames)
+            k = len_trim(lnames(i))
+            if( k <= 3 ) cycle
+            if( lnames(i)(k-2:k) /= '_pA' ) cycle
+            b = name_index(lnames, lnames(i)(1:k-3)//'_pB')
+            if( b > 0 ) dpairs = reshape([dpairs, i, b], [2, size(dpairs,2) + 1])
+        end do
+    end subroutine equiv_tree_inputs
+
+    ! a node split's re-test from its step log: T (first pair statistic of the cross-half EM groups), their equal N, the
+    ! re-test null's mean (median when the log has no mean) and K*; r_hat = 2 y / ((1 - y) n), y = (T - m) / (1 - m)
+    subroutine node_effect( fname, kst, rh, l_ok )
+        character(len=*), intent(in)  :: fname
+        integer,          intent(out) :: kst
+        real,             intent(out) :: rh
+        logical,          intent(out) :: l_ok
+        character(len=8192) :: line
+        character(len=*), parameter :: SEM = '[cross-half EM groups] equal N ', SBO = '[board groups] equal N ', &
+            &SPS = 'pair statistics at the start (sorted):', SNU = 'beyond-EM band ', SKS = 'K* = '
+        integer :: funit, ios, p, n, stage
+        real    :: t, mmed, mmean, y, m
+        logical :: l_t, l_med, l_mean, l_em
+        kst = 0
+        rh  = 0.
+        n   = 0
+        stage  = 0
+        l_t    = .false.
+        l_med  = .false.
+        l_mean = .false.
+        l_em   = .false.
+        l_ok   = .false.
+        open(newunit=funit, file=fname, status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        do
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
+            if( index(line, SBO) == 1 )then
+                stage = 1
+            else if( index(line, SEM) == 1 )then
+                stage = 2
+                l_em  = .true.
+                l_t   = .false.
+                p = index(line(len(SEM)+1:), ';')
+                if( p > 1 ) read(line(len(SEM)+1:len(SEM)+p-1),*,iostat=ios) n
+            else if( index(line, SPS) == 1 )then
+                if( stage == 2 .and. len_trim(line) > len(SPS) )then
+                    read(line(len(SPS)+1:),*,iostat=ios) t
+                    l_t = ios == 0
+                endif
+            else if( index(line, SNU) == 1 )then
+                p = index(line, 'shuffle null median ')
+                if( p > 0 )then
+                    read(line(p+20:),*,iostat=ios) mmed
+                    if( ios == 0 ) l_med = .true.
+                endif
+                p = index(line, 'mean / sd ')
+                if( p > 0 .and. index(line, '-> threshold') > p )then
+                    read(line(p+10:),*,iostat=ios) mmean
+                    if( ios == 0 ) l_mean = .true.
+                endif
+            else if( index(line, SKS) == 1 )then
+                p = index(line, ';')
+                if( p > len(SKS) + 1 ) read(line(len(SKS)+1:p-1),*,iostat=ios) kst
+            endif
+        end do
+        close(funit)
+        l_ok = l_em .and. l_t .and. kst >= 2 .and. (l_med .or. l_mean) .and. n > 0
+        if( .not. l_ok ) return
+        m  = mmed
+        if( l_mean ) m = mmean
+        y  = min(max((t - m) / (1. - m), 1.e-4), 0.995)
+        rh = 2. * y / ((1. - y) * real(n))
+    end subroutine node_effect
+
+    subroutine first_tokens( fname, toks )
+        character(len=*),                intent(in)  :: fname
+        character(len=256), allocatable, intent(out) :: toks(:)
+        character(len=8192) :: line
+        character(len=256)  :: tk
+        integer :: funit, ios
+        allocate(toks(0))
+        open(newunit=funit, file=fname, status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        do
+            read(funit,'(A)',iostat=ios) line
+            if( ios /= 0 ) exit
+            if( len_trim(line) == 0 ) cycle
+            read(line,*,iostat=ios) tk
+            if( ios == 0 ) toks = [toks, tk]
+        end do
+        close(funit)
+    end subroutine first_tokens
+
+    integer function name_index( names, nm )
+        character(len=*), intent(in) :: names(:), nm
+        integer :: i
+        name_index = 0
+        do i = 1, size(names)
+            if( trim(names(i)) == trim(nm) )then
+                name_index = i
+                return
+            endif
+        end do
+    end function name_index
+
+    function parent_dir( path ) result( d )
+        character(len=*), intent(in)  :: path
+        character(len=:), allocatable :: d
+        integer :: p
+        p = index(trim(path), '/', back=.true.)
+        if( p > 1 )then
+            d = path(1:p-1)
+        else if( p == 1 )then
+            d = '/'
+        else
+            d = '.'
+        endif
+    end function parent_dir
+
+    function pair_list( pr ) result( s )
+        integer, intent(in) :: pr(:,:)
+        character(len=:), allocatable :: s
+        integer :: k
+        s = ''
+        do k = 1, size(pr,2)
+            s = s//' '//int2str(pr(1,k))//'-'//int2str(pr(2,k))
+        end do
+    end function pair_list
 
     real function medianr( v )
         use simple_stat, only: median_nocopy
