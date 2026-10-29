@@ -286,6 +286,9 @@ contains
         end do
         allocate(self%f2j(self%kj,self%n), source=0.)
         call get_environment_variable('SIMPLE_SPLIT_ROUTE', route, status=ist)
+        ! membership by the choose rule unless SIMPLE_SPLIT_ROUTE names another mode ('em' = the cross-half EM's groups)
+        if( ist /= 0 .or. len_trim(route) == 0 ) route = 'choose'
+        ist = 0
         self%l_route = ist == 0 .and. (trim(route) == 'best' .or. trim(route) == 'band' .or. trim(route) == 'band_direct' .or. &
             &trim(route) == 'choose')
         self%l_rband = ist == 0 .and. (trim(route) == 'band' .or. trim(route) == 'band_direct')
@@ -977,6 +980,11 @@ contains
                 if( sum(cnt(ss,:)) > 0 ) smap(ss) = maxloc(cnt(ss,:), dim=1)
             end do
             l_two = all([(any(smap == gg), gg=1,k1)])
+            ! as many groups as stage-B states: the states themselves are the K* groups
+            if( self%l_rcho .and. k0 == k1 .and. .not. l_two )then
+                smap  = [(ss, ss=1,k0)]
+                l_two = .true.
+            endif
             if( self%l_rcho )then
                 ! choose: the re-test band decides between the raw label sets, stage-B only when its margin exceeds 3 SE
                 nchg   = 0
