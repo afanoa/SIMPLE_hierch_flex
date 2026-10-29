@@ -53,7 +53,7 @@ character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE 
 character(len=*), parameter :: STEP_EXIT = 'hetero_step.exit', NODE_PROJ = 'n.simple'
 character(len=*), parameter :: NR_PROJ = 'node_rows.simple', NR_ROWS = 'node_rows.txt', NR_NAME = 'node_rows_proj.txt'
 character(len=*), parameter :: POOL_PENDING = 'hetero_pool.pending'
-character(len=*), parameter :: NODE_LOCAL = 'node_local.txt'
+character(len=*), parameter :: NODE_LOCAL = 'node_local.txt', SITE_ROWS = 'site_rows.txt'
 integer,  parameter :: SITE_NFIT = 100000, F_FAIL = -1, F_RUN = 1, F_TEST = 2, F_UP = 3, F_LEVEL = 4, F_COPY = 5, F_NOPOLE = 6, &
                      & F_DUP = 7, F_KEEP = 8, F_MAPS = 9, F_DONE = 10, F_REC = 11, F_REF = 12, F_READY = 13, F_PREC = 14, &
                      & F_PREF = 15, F_SIZE = 16
@@ -196,9 +196,7 @@ contains
         self%l_gate    = self%l_motion .and. params%motion_gate .eq. 'yes'
         self%l_inherit = self%l_motion .and. params%motion_inherit .eq. 'yes'
         self%l_multi   = params%motion_multi .ne. 'no'
-        self%l_nodeproj = params%node_proj .eq. 'yes' .and. params%site_layer .ne. 'yes'
-        if( params%node_proj .eq. 'yes' .and. .not. self%l_nodeproj ) write(logfhandle,'(A)') '>>> HETERO_TREE node_proj=yes '//&
-            &'needs site_layer=no: the node projects stay the size of the input project'
+        self%l_nodeproj = params%node_proj .eq. 'yes'
         call simple_getcwd(cwd)
         self%root     = cwd%to_char()
         self%sitemask = ''
@@ -900,6 +898,7 @@ contains
             type(cmdline) :: cj
             call simple_mkdir(string(sdir))
             call simple_copy_file(string(d//'/'//NODE_PROJ), string(sdir//'/s.simple'))
+            if( local_rows(d) ) call simple_copy_file(string(d//'/rows.txt'), string(sdir//'/'//SITE_ROWS))
             call cj%set('prg',         'site_rank')
             call cj%set('projfile',    's.simple')
             call cj%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
@@ -2308,24 +2307,34 @@ contains
         logical,            intent(in)    :: l_size
         type(cmdline)        :: cl
         integer, allocatable :: rows(:), jk(:), st(:)
-        character(len=:), allocatable :: nd
+        character(len=:), allocatable :: nd, sdir, sf
         nd = self%root//'/node_'//id
         call simple_mkdir(string(sd))
         if( len(srcproj) > 0 )then
             call simple_copy_file(string(srcproj), string(sd//'/s.simple'))
+            sdir = srcproj(1:index(srcproj, '/', back=.true.)-1)
+            if( file_exists(string(sdir//'/'//SITE_ROWS)) ) call simple_copy_file(string(sdir//'/'//SITE_ROWS), string(sd//'/'//SITE_ROWS))
             st = project_states(sd//'/s.simple')
         else
             rows = read_ints(nd//'/rows.txt')
-            allocate(st(self%nrows), source=0)
-            st(rows) = 1
+            if( local_rows(nd) )then
+                allocate(st(size(rows)), source=1)
+                call write_ints(sd//'/'//SITE_ROWS, rows)
+            else
+                allocate(st(self%nrows), source=0)
+                st(rows) = 1
+            endif
             jk = junk_rows(nd)
             if( size(jk) > 0 ) st(jk) = 0
             call write_states(nd//'/'//NODE_PROJ, sd//'/s.simple', st)
         endif
+        sf = startf
+        if( file_exists(string(sd//'/'//SITE_ROWS)) .and. len(startf) > 0 ) sf = local_list(startf, sd)
         call cl%set('prg',         'site_rank')
         call cl%set('projfile',    's.simple')
+        if( file_exists(string(sd//'/'//SITE_ROWS)) ) call cl%set('rowmap', sd//'/'//SITE_ROWS)
         if( len(startf) > 0 )then
-            call cl%set('infile2',   startf)
+            call cl%set('infile2',   sf)
         else
             call cl%set('infile',    nd//'/fflex/flex_pca_coordinates.txt')
             call cl%set('site_dirs', trim(self%p%site_dirs))
@@ -2389,7 +2398,8 @@ contains
             where( lab == pres(a) ) st = a
         end do
         call simple_mkdir(string(wd))
-        call write_states(self%root//'/node_'//self%fs(j)%level//'/stageB/b.simple', wd//'/p.simple', st)
+        call write_states(self%root//'/node_'//self%fs(j)%level//'/stageB/b.simple', wd//'/p.simple', &
+            &node_cut(st, self%root//'/node_'//self%fs(j)%level))
         call cl%set('prg',      'reconstruct3D')
         call cl%set('projfile', 'p.simple')
         call cl%set('nstates',  size(pres))
@@ -2475,7 +2485,7 @@ contains
                 end do
                 line = line//' |'
                 do a = 1, np
-                    epm = read_ints(self%fs_zd(j)//'/site_epm_p'//int2str(a)//'.txt')
+                    epm = site_ints(self%fs_zd(j), 'site_epm_p'//int2str(a)//'.txt', self%nrows)
                     if( size(epm) == self%nrows )then
                         line = line//' '//int2str(count(epm(rows) > 0 .and. .not. self%tjunk(rows)))
                     else
@@ -2651,7 +2661,8 @@ contains
                 where( lab == pres(s) ) st = s
             end do
             call simple_mkdir(string(wd//'/refine_rec'))
-            call write_states(self%root//'/node_'//self%fs(j)%level//'/'//NODE_PROJ, wd//'/refine_rec/c.simple', st)
+            call write_states(self%root//'/node_'//self%fs(j)%level//'/'//NODE_PROJ, wd//'/refine_rec/c.simple', &
+                &node_cut(st, self%root//'/node_'//self%fs(j)%level))
             call cl%set('prg',      'reconstruct3D')
             call cl%set('projfile', 'c.simple')
             call cl%set('nstates',  size(pres))
@@ -2713,8 +2724,8 @@ contains
             r0  = curve_peak(od//'/site_curve_'//e//'.txt')
             r1  = curve_peak(nd//'/site_curve_'//e//'.txt')
             se  = sqrt(((1. - r0**2) / sqrt(max(n0 - 3., 1.)))**2 + ((1. - r1**2) / sqrt(max(n1 - 3., 1.)))**2)
-            v0  = read_reals(od//'/site_post_'//e//'.txt')
-            v1  = read_reals(nd//'/site_post_'//e//'.txt')
+            v0  = site_reals(od, 'site_post_'//e//'.txt', self%nrows)
+            v1  = site_reals(nd, 'site_post_'//e//'.txt', self%nrows)
             if( size(v0) /= self%nrows .or. size(v1) /= self%nrows )then
                 fs_guard = .false.
                 cycle
@@ -2810,7 +2821,7 @@ contains
                 call reject('no endpoint')
                 return
             endif
-            v = read_reals(hd//'/site_post_'//ends(1)%to_char()//'.txt')
+            v = site_reals(hd, 'site_post_'//ends(1)%to_char()//'.txt', self%nrows)
             allocate(lab(self%nrows), source=0)
             allocate(best(self%nrows), source=-1.)
             where( v >= 0. ) lab = np + 1
@@ -2819,8 +2830,8 @@ contains
                 allocate(top(self%nrows), source=0)
                 do e = 1, size(ends)
                     if( pole(e) /= s ) cycle
-                    pm = pm + read_reals(hd//'/site_post_'//ends(e)%to_char()//'.txt') / real(count(pole == s))
-                    top = max(top, read_ints(hd//'/site_top_'//ends(e)%to_char()//'.txt'))
+                    pm = pm + site_reals(hd, 'site_post_'//ends(e)%to_char()//'.txt', self%nrows) / real(count(pole == s))
+                    top = max(top, site_ints(hd, 'site_top_'//ends(e)%to_char()//'.txt', self%nrows))
                 end do
                 where( top > 0 .and. v >= 0. .and. pm > best )
                     lab  = s
@@ -2836,7 +2847,8 @@ contains
                 where( lab == pres(s) ) st = s
             end do
             call simple_mkdir(string(wd//'/pre_rec'))
-            call write_states(self%root//'/node_'//self%fs(j)%home//'/'//NODE_PROJ, wd//'/pre_rec/c.simple', st)
+            call write_states(self%root//'/node_'//self%fs(j)%home//'/'//NODE_PROJ, wd//'/pre_rec/c.simple', &
+                &node_cut(st, self%root//'/node_'//self%fs(j)%home))
             call cl%set('prg',      'reconstruct3D')
             call cl%set('projfile', 'c.simple')
             call cl%set('nstates',  size(pres))
@@ -3156,6 +3168,7 @@ contains
         ev = read_ints(self%root//'/node_'//id//'/rows.txt')
         jk = junk_rows(self%root//'/node_'//id)
         if( size(jk) == 0 ) return
+        if( local_rows(self%root//'/node_'//id) ) jk = ev(jk)
         allocate(m(self%nrows), source=.false.)
         m(jk) = .true.
         ev = pack(ev, .not. m(ev))
@@ -3183,7 +3196,7 @@ contains
         if( kind > 0 .and. self%dir_status(sz) == 0 )then
             do a = 1, size(pp,2)
                 if( .not. file_exists(string(sz//'/site_'//merge('top', 'epm', kind == 1)//'_p'//int2str(a)//'.txt')) ) cycle
-                top     = read_ints(sz//'/site_'//merge('top', 'epm', kind == 1)//'_p'//int2str(a)//'.txt')
+                top     = site_ints(sz, 'site_'//merge('top', 'epm', kind == 1)//'_p'//int2str(a)//'.txt', self%nrows)
                 tp(:,a) = top(rows) > 0
             end do
             if( kind == 2 )then
@@ -3258,7 +3271,7 @@ contains
         character(len=*),     intent(in)    :: sd
         integer, allocatable, intent(inout) :: seeds(:)
         integer,              intent(inout) :: ks
-        integer, allocatable :: ev(:), rows(:), ia(:), cand(:), ord(:), top(:)
+        integer, allocatable :: ev(:), rows(:), ia(:), cand(:), ord(:), top(:), sg(:), nr(:)
         real,    allocatable :: pp(:,:), key(:)
         logical, allocatable :: tp(:,:)
         character(len=:), allocatable :: id, hd
@@ -3266,6 +3279,13 @@ contains
         real    :: r
         logical :: l_ok
         if( .not. allocated(self%fs) ) return
+        sg = seeds
+        if( local_rows(self%ndir(i)) )then
+            nr = read_ints(self%ndir(i)//'/rows.txt')
+            deallocate(sg)
+            allocate(sg(self%nrows), source=0)
+            sg(nr) = seeds
+        endif
         id   = self%nodes(i)%id
         ev   = self%fs_eval_rows(id)
         k0   = ks
@@ -3283,22 +3303,22 @@ contains
             ia(rows) = [(m, m=1,size(rows))]
             do a = 1, size(pp,2)
                 n    = pole_epm(hd, a)
-                cand = pack(ev, ia(ev) > 0 .and. seeds(ev) >= 1 .and. seeds(ev) <= k0)
+                cand = pack(ev, ia(ev) > 0 .and. sg(ev) >= 1 .and. sg(ev) <= k0)
                 n    = min(n, size(cand))
-                l_ok = r < FGATE .and. n >= nmin .and. 2 * (count(seeds(ev) > k0) + n) < size(ev)
+                l_ok = r < FGATE .and. n >= nmin .and. 2 * (count(sg(ev) > k0) + n) < size(ev)
                 if( l_ok )then
                     key = -pp(ia(cand), a)
                     ord = [(m, m=1,size(cand))]
                     call hpsort(key, ord)
                     top  = cand(ord(1:n))
-                    l_ok = all([(count(seeds(ev) == m) - count(seeds(top) == m) >= nmin, m=1,k0)])
+                    l_ok = all([(count(sg(ev) == m) - count(sg(top) == m) >= nmin, m=1,k0)])
                 endif
                 if( .not. l_ok )then
                     write(fu,'(A)') self%fs(j)%name//' '//int2str(a)//' '//int2str(n)//' '//rstr(r)//' 0'
                     cycle
                 endif
                 ks = ks + 1
-                seeds(top) = ks
+                sg(top) = ks
                 write(fu,'(A)') self%fs(j)%name//' '//int2str(a)//' '//int2str(n)//' '//rstr(r)//' '//int2str(ks)
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//id//': site '//self%fs(j)%name//' pole '//int2str(a)//' ('//&
                     &int2str(n)//' equivalent pure members, Spearman '//rstr(r)//' with the seeding site) seeds state '//int2str(ks)
@@ -3306,6 +3326,11 @@ contains
             deallocate(ia)
         end do
         call fclose(fu)
+        if( allocated(nr) )then
+            seeds = sg(nr)
+        else
+            seeds = sg
+        endif
     end subroutine state_seeds
 
     subroutine fs_read_table( self )
@@ -5260,6 +5285,87 @@ contains
         f = self%root//'/node_'//self%fs(j)%home//'/sites/site_'//pad2(self%fs(j)%k)//'.mrc'
     end function site_mask
 
+    ! a site folder whose project is row-local carries its rows (SITE_ROWS): its per-row files are cut and expanded at the boundary
+    function site_reals( sd, f, nrows ) result( v )
+        character(len=*), intent(in) :: sd, f
+        integer,          intent(in) :: nrows
+        real,    allocatable :: v(:), w(:)
+        integer, allocatable :: mp(:)
+        v = read_reals(sd//'/'//f)
+        if( .not. file_exists(string(sd//'/'//SITE_ROWS)) ) return
+        mp = read_ints(sd//'/'//SITE_ROWS)
+        if( size(v) /= size(mp) ) return
+        allocate(w(nrows), source=-1.)
+        w(mp) = v
+        call move_alloc(w, v)
+    end function site_reals
+
+    function site_ints( sd, f, nrows ) result( v )
+        character(len=*), intent(in) :: sd, f
+        integer,          intent(in) :: nrows
+        integer, allocatable :: v(:), w(:), mp(:)
+        v = read_ints(sd//'/'//f)
+        if( .not. file_exists(string(sd//'/'//SITE_ROWS)) ) return
+        mp = read_ints(sd//'/'//SITE_ROWS)
+        if( size(v) /= size(mp) ) return
+        allocate(w(nrows), source=0)
+        w(mp) = v
+        call move_alloc(w, v)
+    end function site_ints
+
+    function node_cut( v, nd ) result( c )
+        integer,          intent(in) :: v(:)
+        character(len=*), intent(in) :: nd
+        integer, allocatable :: c(:)
+        if( local_rows(nd) )then
+            c = v(read_ints(nd//'/rows.txt'))
+        else
+            c = v
+        endif
+    end function node_cut
+
+    function local_list( startf, sd ) result( lf )
+        character(len=*), intent(in) :: startf, sd
+        character(len=:), allocatable :: lf, nm, pth, out
+        character(len=64), allocatable :: lines(:)
+        character(len=4096) :: ln
+        integer, allocatable :: mp(:)
+        integer :: fu, fl, fo, io, k, j0
+        mp = read_ints(sd//'/'//SITE_ROWS)
+        lf = sd//'/local_'//startf(index(startf, '/', back=.true.)+1:)
+        call fopen(fl, string(lf), status='replace', action='write', iostat=io)
+        call fileiochk('hetero_tree: cannot write '//lf, io)
+        call fopen(fu, string(startf), status='old', action='read', iostat=io)
+        call fileiochk('hetero_tree: cannot read '//startf, io)
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            ln = adjustl(ln)
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            j0  = index(trim(ln), ' ')
+            nm  = ln(1:j0-1)
+            pth = trim(adjustl(ln(j0+1:)))
+            allocate(lines(nlines(string(pth))))
+            call fopen(fo, string(pth), status='old', action='read', iostat=io)
+            call fileiochk('hetero_tree: cannot read '//pth, io)
+            do k = 1, size(lines)
+                read(fo,'(A)') lines(k)
+            end do
+            call fclose(fo)
+            out = sd//'/local_'//pth(index(pth, '/', back=.true.)+1:)
+            call fopen(fo, string(out), status='replace', action='write', iostat=io)
+            call fileiochk('hetero_tree: cannot write '//out, io)
+            do k = 1, size(mp)
+                write(fo,'(A)') trim(lines(mp(k)))
+            end do
+            call fclose(fo)
+            deallocate(lines)
+            write(fl,'(A)') nm//' '//out
+        end do
+        call fclose(fu)
+        call fclose(fl)
+    end function local_list
+
     subroutine site_poles( sd, nrows, rows, pp, tp )
         character(len=*),     intent(in)  :: sd
         integer,              intent(in)  :: nrows
@@ -5293,8 +5399,8 @@ contains
         allocate(it(nrows,np), source=0)
         allocate(inn(nrows), source=.false.)
         do e = 1, size(ends)
-            v   = read_reals(sd//'/site_post_'//ends(e)%to_char()//'.txt')
-            top = read_ints(sd//'/site_top_'//ends(e)%to_char()//'.txt')
+            v   = site_reals(sd, 'site_post_'//ends(e)%to_char()//'.txt', nrows)
+            top = site_ints(sd, 'site_top_'//ends(e)%to_char()//'.txt', nrows)
             if( size(v) /= nrows .or. size(top) /= nrows ) THROW_HARD('site ranking files do not match the project: '//sd)
             inn = inn .or. v >= 0.
             acc(:,pole(e)) = acc(:,pole(e)) + v

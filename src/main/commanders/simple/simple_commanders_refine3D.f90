@@ -3109,10 +3109,8 @@ contains
         if( .not. cline%defined('pgrp')     ) call cline%set('pgrp',     'c1')
         if( .not. cline%defined('site_dirs')) call cline%set('site_dirs', '1,3')
         if( .not. cline%defined('site_disc')) call cline%set('site_disc', 'yes')
-        ! node-sized projects wherever they apply (site_layer=no)
-        if( .not. cline%defined('node_proj') .and. cline%defined('site_layer') )then
-            if( cline%get_carg('site_layer') == 'no' ) call cline%set('node_proj', 'yes')
-        endif
+        ! node-sized projects by default, with or without the site layer
+        if( .not. cline%defined('node_proj') ) call cline%set('node_proj', 'yes')
         call cline%set('oritype', 'ptcl3D')
         call params%new(cline)
         call tree%new(params, cline%defined('infile'), cline)
