@@ -53,7 +53,7 @@ character(len=*), parameter :: NODE_TABLE = 'hetero_tree_nodes.txt', LEAF_TABLE 
 character(len=*), parameter :: STEP_EXIT = 'hetero_step.exit', NODE_PROJ = 'n.simple'
 character(len=*), parameter :: NR_PROJ = 'node_rows.simple', NR_ROWS = 'node_rows.txt', NR_NAME = 'node_rows_proj.txt'
 character(len=*), parameter :: POOL_PENDING = 'hetero_pool.pending'
-character(len=*), parameter :: NODE_LOCAL = 'node_local.txt', SITE_ROWS = 'site_rows.txt'
+character(len=*), parameter :: NODE_LOCAL = 'node_local.txt', SITE_ROWS = 'site_rows.txt', SITE_REUSE = 'site_reuse.txt'
 integer,  parameter :: SITE_NFIT = 100000, F_FAIL = -1, F_RUN = 1, F_TEST = 2, F_UP = 3, F_LEVEL = 4, F_COPY = 5, F_NOPOLE = 6, &
                      & F_DUP = 7, F_KEEP = 8, F_MAPS = 9, F_DONE = 10, F_REC = 11, F_REF = 12, F_READY = 13, F_PREC = 14, &
                      & F_PREF = 15, F_SIZE = 16
@@ -702,6 +702,9 @@ contains
                 call simple_mkdir(string(d//'/sites'))
                 call discover_sites(evens, odds, w, pres, self%p%mskdiam, d//'/sites', ks, trim(self%p%pgrp))
                 if( ks > 1 .and. (self%l_motion .or. self%l_strong) )then
+                    ! with every particle fitted and no junk set aside the per-site layer's ranking of a site is this batch's
+                    if( self%l_strong .and. self%p%site_layer .eq. 'yes' .and. self%p%junk_screen .eq. 'no' .and. &
+                        &size(rows) <= SITE_NFIT ) call write_ints(d//'/sites/'//SITE_REUSE, [1])
                     call site_batch(ks)
                     return
                 endif
@@ -2083,7 +2086,7 @@ contains
             code = self%dir_status(sd)
             if( code == -1 ) cycle
             if( code == -2 )then
-                if( self%fs(j)%k == 1 .or. nrun >= max(1, self%p%nodepar) ) cycle
+                if( self%fs(j)%k == 1 .or. nrun >= max(1, self%p%nodepar) .or. fs_reused(self, j) ) cycle
                 call self%fs_rank(sd, self%fs(j)%home, site_mask(self, j), '', '', SITE_NFIT, .false.)
                 write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': ranking at its node submitted'
                 nrun = nrun + 1
@@ -2530,6 +2533,8 @@ contains
             d = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name//'/pre'
         else if( self%fs(j)%k == 1 )then
             d = self%root//'/node_'//self%fs(j)%home//'/site'
+        else if( fs_reused(self, j) )then
+            d = self%root//'/node_'//self%fs(j)%home//'/nsite_'//self%fs(j)%home//'_s'//int2str(self%fs(j)%k)
         else
             d = self%root//'/node_'//self%fs(j)%home//'/fsite_'//self%fs(j)%name
         endif
@@ -3785,12 +3790,16 @@ contains
         character(len=:), allocatable :: sd, nm
         integer :: j, k
         logical :: l_kids
-        if( self%p%site_layer .eq. 'yes' .or. self%l_motion ) return
+        if( self%l_motion ) return
         l_kids = any([(self%nodes(j)%pproj == self%ndir(i)//'/stageB/b.simple', j=1,size(self%nodes))])
-        call del_file(string(self%ndir(i)//'/'//NODE_PROJ))
         call del_file(string(self%ndir(i)//'/pmean.mrc'))
-        call simple_list_files_regexp(string(self%ndir(i)), &
-            &'^(mean|flex|cheap|fflex|stA0|recB0|site|nsite_.+|sites|seeds|stageA|recB|split)$', subs)
+        if( self%p%site_layer .eq. 'yes' )then
+            call simple_list_files_regexp(string(self%ndir(i)), '^(mean|flex|cheap|fflex|stA0|recB0|seeds|stageA|recB|split)$', subs)
+        else
+            call del_file(string(self%ndir(i)//'/'//NODE_PROJ))
+            call simple_list_files_regexp(string(self%ndir(i)), &
+                &'^(mean|flex|cheap|fflex|stA0|recB0|site|nsite_.+|sites|seeds|stageA|recB|split)$', subs)
+        endif
         do j = 1, size(subs)
             sd = subs(j)%to_char()
             nm = sd(index(sd, '/', back=.true.)+1:)
@@ -5286,6 +5295,12 @@ contains
     end function site_mask
 
     ! a site folder whose project is row-local carries its rows (SITE_ROWS): its per-row files are cut and expanded at the boundary
+    logical function fs_reused( self, j )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        fs_reused = self%fs(j)%k > 1 .and. file_exists(string(self%root//'/node_'//self%fs(j)%home//'/sites/'//SITE_REUSE))
+    end function fs_reused
+
     function site_reals( sd, f, nrows ) result( v )
         character(len=*), intent(in) :: sd, f
         integer,          intent(in) :: nrows
