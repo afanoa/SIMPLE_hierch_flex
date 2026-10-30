@@ -34,7 +34,7 @@ integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000,
 real,    parameter :: SITE_PFLOOR = 1.e-3
 real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
 real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005, MAD_SD = 1.4826
-integer, parameter :: JUNK_ITS = 500, NQ_CON = 81, NROT_SMEAR = 24
+integer, parameter :: JUNK_ITS = 500, NQ_CON = 81, NROT_SMEAR = 24, LOC_BOX = 88
 real,    parameter :: SMEAR_DEG(10) = [0., 1., 2., 3., 4., 6., 8., 11., 15., 20.]
 
 type :: ivec
@@ -99,6 +99,7 @@ type :: state_mergeup
     procedure :: junk_screen
     procedure :: get_rows
     procedure :: holdout_band
+    procedure :: group_halves
     procedure :: kill
     procedure :: audit_em_wrapper
     procedure, private :: consensus
@@ -4674,12 +4675,14 @@ contains
         str = trim(adjustl(buf))
     end function fmtr
 
-    ! split groups whose stage-B states differ only diffusely merge (SIMPLE_SPLIT_LOCALITY=off disables; =dir sets the maps)
-    subroutine locality_guard( lab, child, kstar, mskdiam )
+    ! diffusely differing split groups merge; pairs no stage-B state pair spans are judged on the children's own half maps (mu)
+    subroutine locality_guard( lab, child, kstar, mskdiam, mu )
         integer, intent(in)    :: lab(:)
         integer, intent(inout) :: child(:), kstar
         real,    intent(in)    :: mskdiam
+        class(state_mergeup), optional, intent(inout) :: mu
         real, parameter :: LOC_MIN = 0.5
+        character(len=*), parameter :: CHD = 'locality_children'
         character(len=4096)           :: ev
         character(len=:), allocatable :: stb
         real,    allocatable :: rat(:,:)
@@ -4687,7 +4690,7 @@ contains
         logical, allocatable :: have(:)
         real    :: r, rmin
         integer :: ios, nst, ng, s, t, g, h, gm, hm, kold
-        logical :: l_ex
+        logical :: l_ex, l_kids
         if( kstar < 2 ) return
         call get_environment_variable('SIMPLE_SPLIT_LOCALITY', ev, status=ios)
         if( ios == 0 .and. trim(ev) == 'off' ) return
@@ -4706,10 +4709,12 @@ contains
             inquire(file=stb//'/recvol_state'//int2str_pad(s,2)//'_odd_unfil.mrc',  exist=l_ex)
             have(s) = have(s) .and. l_ex
         end do
-        if( count(have) < 2 )then
+        if( count(have) < 2 .and. .not. present(mu) )then
             write(logfhandle,'(A)') 'locality guard: stage-B half maps not found under '//stb//'; skipped'
             return
         endif
+        if( count(have) < 2 ) write(logfhandle,'(A)') 'locality guard: stage-B half maps not found under '//stb//&
+            &'; every group pair is judged on the delivered children''s half maps'
         allocate(rat(nst,nst), source=-1.)
         do s = 1, nst - 1
             do t = s + 1, nst
@@ -4720,7 +4725,8 @@ contains
                     &fmtr(real(rat(s,t),dp),3)
             end do
         end do
-        kold = kstar
+        kold   = kstar
+        l_kids = .false.
         do
             if( count([(any(child == g), g=1,ng)]) < 2 ) exit
             rmin = huge(rmin)
@@ -4735,7 +4741,19 @@ contains
                             if( smap(s) == g .and. smap(t) == h ) r = max(r, rat(s,t))
                         end do
                     end do
-                    if( r < 0. ) cycle
+                    if( r < 0. )then
+                        if( .not. present(mu) )then
+                            write(logfhandle,'(A)') 'locality guard: groups '//int2str(g)//' / '//int2str(h)//&
+                                &': no stage-B state pair spans them and no children''s maps; kept unjudged'
+                            cycle
+                        endif
+                        if( .not. l_kids ) call mu%group_halves(child, CHD, stb)
+                        l_kids = .true.
+                        r = pair_locality(CHD, g, h, mskdiam)
+                        write(logfhandle,'(A)') 'locality guard: groups '//int2str(g)//' / '//int2str(h)//&
+                            &': no stage-B state pair spans them; L / L_ref from the delivered children''s half maps '//&
+                            &fmtr(real(r,dp),3)
+                    endif
                     if( r < rmin )then
                         rmin = r
                         gm   = g
@@ -4748,6 +4766,7 @@ contains
                 &fmtr(real(rmin,dp),3)//' < '//fmtr(real(LOC_MIN,dp),2)//') -> merged'
             where( child == hm ) child = gm
             where( smap  == hm ) smap  = gm
+            l_kids = .false.
         end do
         sz = [(count(child == g), g=1,ng)]
         allocate(rk(0:ng), source=0)
@@ -4758,6 +4777,56 @@ contains
         kstar = count(sz > 0)
         write(logfhandle,'(A)') 'locality guard: K* '//int2str(kold)//' -> '//int2str(kstar)
     end subroutine locality_guard
+
+    subroutine group_halves( self, child, dir, stb )
+        use simple_imghead, only: get_mrcfile_info
+        use simple_syslib,  only: dir_exists, simple_mkdir
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: child(:)
+        character(len=*),     intent(in)    :: dir, stb
+        type(image)          :: vt
+        complex, allocatable :: cm(:,:,:)
+        real,    allocatable :: e(:)
+        integer, allocatable :: sel(:), js(:)
+        character(len=:), allocatable :: fn
+        integer :: g, h, j, s, ldim(3), boxt
+        real    :: smpdt
+        logical :: l_ex
+        ! LOC_MIN was set on stage-B halves, so the children's maps go on their grid (box LOC_BOX when none is on disk)
+        boxt  = min(self%p%box, LOC_BOX)
+        smpdt = real(self%p%box) * self%p%smpd / real(boxt)
+        do s = 1, 99
+            fn = stb//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc'
+            inquire(file=fn, exist=l_ex)
+            if( .not. l_ex ) cycle
+            call get_mrcfile_info(string(fn), ldim, 'M', smpdt, .false.)
+            boxt = ldim(1)
+            exit
+        end do
+        if( boxt < self%box )then
+            smpdt = smpdt * real(boxt) / real(self%box)
+            boxt  = self%box
+        endif
+        if( .not. dir_exists(string(dir)) ) call simple_mkdir(string(dir))
+        allocate(cm(self%nh,self%box,self%box))
+        do g = 1, maxval(child)
+            if( count(child == g) == 0 ) cycle
+            do h = 0, 1
+                sel = pack([(j, j=1,self%n)], child == g .and. self%eo == h)
+                if( size(sel) == 0 ) THROW_HARD('a delivered group has no particles in one half; group_halves')
+                call self%accumulate_jobs(sel, [1, size(sel)+1], .false., js)
+                call self%recs(js(1))%get_rho_shell_medians(e)
+                call self%finish(js(1), EPS_REG * e, .false., cm)
+                call vt%new([boxt,boxt,boxt], smpdt)
+                call self%wimgs(js(1))%pad(vt, antialiasing=.false.)
+                call vt%ifft
+                call vt%write(string(dir//'/recvol_state'//int2str_pad(g,2)//'_'//trim(merge('even', 'odd ', h == 0))//'_unfil.mrc'))
+                call vt%kill
+            end do
+        end do
+        write(logfhandle,'(A)') 'locality guard: delivered children''s half maps written to '//dir//' (box '//int2str(boxt)//&
+            &', '//fmtr(real(smpdt,dp),3)//' A)'
+    end subroutine group_halves
 
     real function pair_locality( stb, s, t, mskdiam ) result( ratio )
         use simple_imghead,       only: get_mrcfile_info

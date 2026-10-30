@@ -2186,7 +2186,7 @@ contains
         endif
         rows = split%get_rows()
         call split%test(labels(rows), maxval(labels), child, kstar, junk, ntests=params%split_ntests)
-        call locality_guard(labels(rows), child, kstar, params%mskdiam)
+        call locality_guard(labels(rows), child, kstar, params%mskdiam, split)
         allocate(out(size(labels)), source=0)
         out(rows) = child
         call fopen(funit, string('split_children.txt'), status='replace', action='write', iostat=ios)
