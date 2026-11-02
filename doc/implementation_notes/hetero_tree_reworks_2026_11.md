@@ -688,20 +688,109 @@ null mean, common n -> `split_effect`); a node without numbers or with K* < 2 co
 `node_effect` (the "[cross-half EM groups] equal N" / "beyond-EM band" / "K* =" lines of the production test's step log) is
 deleted. Every node written since c7ac3b0bd carries the numbers.
 
-Not done, scoped by reading `run` / `test` / `test_once`: the merge-up's own pair tests at every level still call the
-production `test` (`run`, the two `self%test` calls; the `.not. l_equiv` branch is dead since `merge_rule_setup` sets
-`l_equiv`). Replacing them by `test_once(cand, size(tst), child, kstar, junk, self%mtests, ugrp=ugrp)` compiles, but `ugrp`
-means different things: `test` maps a unit through the board groups and the second `decide`'s groups, so two units share a
-group only when `decide` merged them and a unit the EM drained gets 0 (the comment at the `l_equiv` branch relies on that);
-`test_once` sets `ugrp(g)` to the mode of the final `child` over the unit's particles, which is almost never 0 and can put
-two cannot-linked units in one group through the choose rule. The port is to derive `ugrp` from `decide_once`'s result (EM
-group m starts from unit `gcom(m)`; a unit gets the final index of `gof(findloc(plist, m))` when m is in `plist`, else 0,
-followed through `choose_members`' renumbering), then delete `test` (with `stash`, `group_of`, `route_members`,
-`add_subset_jobs`, `junk_report`), `decide`, `eqn_stats`, `null_upto`, `pair_stat`, `blom_emax`, `rnd_subset`, the
-components `nmed` / `nmax` / `nnull`, `shuffle_null%jsc` / `l_df` / `nul`, the constants `MINSEL_JUNK` / `JUNK_CORR`,
-and the `.not. l_df` branch of `null_resolve`. The statistic the merge-up tests with then becomes the draw-free one at the
-common n, and `mdelta` (from `split_effect` of the same statistic) is matched to it. Gate: OLE's merge-up must keep the small
-OLE states and the closed pair apart (memory `equivalence-mergeup-verdict-2026-10-27`). About 1,100 lines leave.
+### 11.1 The port (commit c569be829, session tree-mergeup-port)
+
+`run` calls `test_once(cand, size(tst), child, kstar, junk, self%mtests, ugrp=ugrp)` at every level, with the
+cannot-link matrix set first (the `.not. l_equiv` branch was dead since `merge_rule_setup` sets `l_equiv`), and routes
+the units by `ugrp` alone: the majority vote over `child` that `ugrp` overwrote is gone. `ugrp` in `test_once` no longer
+means the mode of the final `child` over a unit's particles (which is almost never 0 and can put two cannot-linked units
+in one group through the choose rule) but the final index of the EM group the unit started: EM group m starts from unit
+`gcom(m)`; a unit gets `rkc(rank(gof(findloc(plist, m))))` when m is in `plist` (`gof` = `decide_once`'s merges, `rank`
+the size order, `rkc` the choose rule's renumbering, identity when K* < 2) and 0 when the cross-half EM drained its group
+from a half, so it passes alone. Two units therefore share a unit at the next level only when `decide_once` merged their
+groups: below the null threshold and shown equivalent at the margin, never across a cannot-link.
+
+The equivalence test in `decide_once` reads r_eq at the statistic's common n (`ndraw`, the n `pair_stat_df` scales the
+noise to) instead of the smallest member count of the pair: `split_effect(t, m, n)` turns the weakest kept split pair's
+draw-free T at its common n into the margin, and r_eq(t + 1.645 sd) at the same n is the same quantity, so `mdelta` and
+r_eq are now one statistic. With the statistic computed on full-N maps the member count has no role left (the old
+`decide` drew every group at the smallest member count, so there the two coincided).
+
+Deleted: `test` (with `stash`, `group_of`, `route_members`, `add_subset_jobs`, `junk_report`), `decide`, `eqn_stats`,
+`null_upto`, `pair_stat`, `blom_emax`, `rnd_subset`, `mode_of_pos`, the components `nmed` / `nmax` / `nnull`,
+`shuffle_null%nul` / `jsc` / `l_df`, the constants `MINSEL_JUNK` / `JUNK_CORR` and the one-draw branch of `null_resolve`:
+750 lines leave `simple_state_mergeup.f90` (5,325 to 4,608). `exec_state_mergeup` needs no change. Build `build_mu` on
+batch2 (math_reworks, fast gate 15 / 15, the module's five unused-variable warnings as before).
+
+The merge-up's threshold changes with the statistic: the old `test` without a test count used the maximum of 20 shuffles
+of the one-draw statistic; `test_once` uses the draw-free null's mean + z_crit sd with z_crit from the tree's largest
+split test count (`mtests`, 460 on the 692k), as the split test does.
+
+### 11.2 Gates (arm `mu` = build_mu against the bc arm = the same tree code with the production merge-up)
+
+Seven trees from `launch_gates.sh BUILD mu` (the bc arm's keys and seeds; r131 on both seeds), then `readout.sbatch
+ARM=mu`, `mu_s1_readout.sbatch`, `ole_mu.sbatch` and `mergeup_compare.sbatch` (all under `math_reworks/`, 2026-11-02
+14:08 to 16:12). The tree code is the bc arm's, so the leaf tables are identical by construction (names and sizes, every
+fixture) and the arms differ only where the merge-up runs: qtoy2, r131 on both seeds and OLE; the nulls stop at one leaf
+before it.
+
+| fixture | bc leaves -> units | mu leaves -> units | readout (mu = bc) | merge-up wall bc / mu | core-h bc / mu |
+|---|---|---|---|---|---|
+| qtoynull | 1 | 1 | largest leaf 1.000 | - | 9.3 / 8.7 |
+| olenull | 1 | 1 | largest leaf 1.000 | - | 14.3 / 14.4 |
+| micnull | 1 | 1 | largest leaf 1.000 | - | 6.4 / 7.0 |
+| qtoy2 | 8 -> 8 | 8 -> 8 | NMI .812, the same eight leaves and shares | 4 / 4 min | 24.3 / 25.8 |
+| r131 seed 0 | 4 -> 4 | 4 -> 4 | closed corner r1_s2 1.00 / 0.49 | 2 / 2 min | 15.9 / 16.6 |
+| r131 seed 1 | 4 -> 4 | 4 -> 4 | closed corner r2_s2 0.97 / 0.53 | 2 / 2 min | 16.3 / 17.1 |
+| OLE | 8 -> 8 (0 merges) | 8 -> 8 (0 merges) | landscape bc vs mu: W1 0.000, coverage 1.00 / 1.00 (head vs mu 0.93 / 0.81 as head vs bc) | 17 / 17 min | 77.0 / 79.8 |
+
+Inside the merge-ups: on every tested node the weakest pair lies above the draw-free null threshold, at z 17.6-54.5 on
+qtoy2, 6.8-12.3 on r131 seed 0, 6.1-12.1 on seed 1 and 8.9-29.7 on OLE, so no pair reaches the equivalence test. The bc
+arm's production test did reach it on r131, at the level-1 sibling pair of node 1 on both seeds: seed 0 stat 0.078 at
+n 1753 (null sd 0.045, r_eq 0.000183 > margin 0.000064, keep), seed 1 stat 0.067 at n 2601 (sd 0.025, r_eq 0.000066 <
+margin 0.000096: shown equivalent, kept only by the cannot-link). On the draw-free statistic the same pairs are distinct
+at z 12.3 and 12.1. The OLE verdict of 2026-10-27 (the small OLE states and the closed pair stay apart) holds: 8 units,
+0 merges. The mu OLE tree's 2 h 04 min against bc's 1 h 54 min is the workers' queue wait under the 692k's root phase
+(csbdevel at the cap); the merge-up itself is 17 min in both. (The bc arm's earlier readout quoted 25.7 core-h for OLE
+because it ran before that tree had finished; the two numbers above are sacct over the finished trees.)
+
+Verdict: the seven gates are identical to the bc arm in leaves, merge-up units, closed corner, NMI and landscape, at the
+same merge-up walls.
+
+### 11.3 The 692k merge-up alone on the saved r17d tree
+
+The saved tree `integration/f692_r17d_s1/1_hetero_tree` (2026-10-29, 67 leaves, merge-up 73 min on 48 cores, job
+54655782) predates c7ac3b0bd: its nodes carry no `split/split_stats.txt`, so the current merge rule would read margin 0
+there and no cannot-link pairs. `integration/shadow_split_stats.py` rebuilds the numbers from the production test's split
+logs with the deleted `node_effect`'s rules into a shadow tree that `SIMPLE_MERGE_TREEDIR` points the merge rule at; the
+rule's log line is the saved run's (59 node splits kept K* >= 2, smallest effect 0.000075, the same 21 sibling pairs, 460
+split tests). The leaf labels go back on a copy of `mergeup/final.simple` (`prg=selection infile=hetero_tree_labels.txt
+oritype=ptcl3D`, 7 s), then `state_mergeup` runs with the saved `merge_tree.txt` / `leaf_masks.txt`, the saved mskdiam
+and pgrp, `junk_screen=no`, 48 threads, in its own directory `integration/mu_mergeup_r17d_s1` (job 54866127,
+`integration/mu_mergeup.sbatch`). The cut is the saved run's at every level (27, 17, 9, 5, 3, 2, 1 nodes), the cross-half
+EM at the top the same 65 groups, no junk at any level in either run.
+
+| | saved (production merge-up, job 54655782) | port (build_mu, job 54866127) |
+|---|---|---|
+| final units | 63 | 65 |
+| merges | 32+33 (level 4), 37+50 and 43+47 (level 6), 19+23 (level 7) | 32+33 (level 4), 37+50 (level 6) |
+| wall | 73 min 4 s | 64 min 44 s |
+| levels 1-7 (min) | 3.8, 3.0, 5.8, 7.4, 14.0, 14.9, 24.2 | 3.8, 3.1, 5.9, 7.5, 12.9, 9.1, 22.1 |
+| core-h (CPUTime, 48 cores) | 58.5 | 51.9 |
+| MaxRSS | 22.4 GB | 23.3 GB |
+
+The four merge decisions pair by pair (the two statistics have different scales; r_eq against the margin 0.000075):
+
+| pair | saved: stat, n, null sd -> r_eq | port: stat, n, null sd -> r_eq |
+|---|---|---|
+| 32+33 r2311_g1_2 + r2312_g1_2 (level 4 node 4) | 0.095, 3517, 0.023 -> 0.000073 merge | 0.044, 1592, 0.011 -> 0.000068 merge |
+| 37+50 r2122_s2 + r2511_s1 (level 6 node 2) | 0.039, 2076, 0.023 -> 0.000057 merge | 0.038, 1649, 0.009 -> 0.000055 merge |
+| 43+47 r3112_s2 + r3111_s1 (level 6 node 2) | 0.110, 4244, 0.023 -> 0.000069 merge | above the null threshold 0.042 (weakest kept pair 0.045, z >= 3.7): distinct |
+| 19+23 r2211_g1_2 + r2212_g1_2 (level 7) | 0.093, 3356, 0.023 -> 0.000074 merge | above the null threshold 0.041 (weakest kept pair 0.042): distinct |
+
+Why the two runs differ on two pairs. The old test's merge band was the maximum of 20 shuffles of the one-draw statistic
+(0.117 at level 6 node 2, 0.118 at level 7); every pair under it reached the equivalence test, and 43+47 and 19+23
+passed it by 0.000006 and 0.000001 at n = the pair's smallest member count (4244 and 3356, 2.0-2.6x the statistic's
+common n; at the common n their r_eq would be 2-2.5x the margin). The draw-free null is 2.7x tighter (sd 0.008-0.011
+against 0.023) and its threshold mean + 3.71 sd (0.041-0.042) lies under both pairs, so they are shown distinct and
+never reach the margin. The two merges the port keeps are the pairs under both nulls, with r_eq within 0.000005 of the
+saved values. The four closed-lineage leaves (r1311_s2, r1312_g1_2, r1311_s1, r2322_g1_2) are in no merge in either run.
+
+Verdict: the port reproduces the saved run's cut, groups and the two clear merges, drops the two borderline ones (which
+only the member-count n and the one-draw band had let through), and costs 8 min and 6.6 core-h less; the top level is
+still 22 min (65-group cross-half EM and 50 shuffles). Whether r3112_s2 / r3111_s1 and r2211 / r2212 are one state each
+is a question for the maps, not for the test: on the draw-free statistic they are distinct at the split test's own
+threshold.
 
 ## 12. Pose-change statistics in the node record (E, report only)
 
