@@ -472,3 +472,28 @@ actual cross-half FSC of the stage-B states. Its values on the stage-B states ar
 are read on the cross-half EM's groups (a third of the particles move, and at r131 r1 the EM leaves one group at a
 third of the stage-B size), so the comparison with the old statistic's draw spread is made in Fortran below, on the
 same EM groups, by an instrumented replay build that logs the production test and then runs the single pass.
+
+### 8.3 Draw variance: the production statistic over four subsample seeds against the draw-free one (same node, same labels)
+
+Standalone `state_split` replays on the saved split projects with an instrumented build (`build_df`: the production test
+runs and is logged, then the single pass with the draw-free statistic decides; the subsample seed comes from
+`SIMPLE_SPLIT_SEED`, a replay-only instrument that is not committed). "old T" is the production re-test's weakest pair,
+"T_df" the draw-free weakest pair at the start; thresholds are each test's own null at z_crit.
+
+| node | old T over seeds 1-4 (tree's own draw) | old verdicts | T_df (every seed) | T_df threshold | z_df | df verdicts |
+|---|---|---|---|---|---|---|
+| r131 r1, seed-2 tree (the corner node) | 0.074 0.137 0.166 0.097 (0.154) | F F P F (P) | 0.117 | 0.045-0.054 | 9.2-10.9 | P P P P |
+| r131 r1, seed-1 baseline tree | 0.203 0.205 0.225 0.221 (0.210) | P P P P | 0.189 | 0.080-0.115 | 6.6-9.4 | P P P P |
+| r131 r1, seed-1 variant D tree | 0.132 0.168 0.180 0.117 (0.116) | F F F F | 0.119 | 0.059-0.101 | 4.6-8.6 | P P P P |
+| qtoy2 r3 (seed 1, D) | 0.189 0.202 0.143 0.203 (0.165) | F P F P (F) | 0.182 | 0.114-0.135 | 4.9-6.5 | P P P P |
+| qtoy2 r5 (seed 1, D) | 0.120 0.137 0.153 0.174 (0.113) | F F F P (F) | 0.133 | 0.068-0.102 | 4.8-7.3 | P P P P |
+| qtoynull root | 0.062 0.059 0.065 0.055 (0.089) | P P P F (P) | 0.054 | 0.023-0.028 | 7.8-9.6 | P P P P |
+
+Three facts. The old statistic's spread over the draw at these nodes (sd 0.02-0.04) is as large as its margin, so its
+verdict at the corner node is one draw in four; the draw-free statistic has no spread, by construction, and lies at the
+centre of the old one's distribution (0.117 against a mean of 0.119 at the corner node), as the expectation of a
+single-draw FSC should. Its null is about three times tighter (sd 0.01 against 0.03): the signal estimate comes from the
+full-N maps and only the analytic noise term is at the common n, so the statistic's own noise is that of the full maps,
+in the null as in the real pairs. Every marginal pair the old test passed or failed by the draw is therefore clearly
+significant under the draw-free test, including the one-conformer null's root split, which both tests pass and the
+locality guard merges. The gate trees in 8.4 show what the extra power does to the leaves.
