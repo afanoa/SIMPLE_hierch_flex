@@ -891,6 +891,7 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Text file with the state of every particle (0 = none); it weighs the states', 'e.g. states.txt', .true., '', &
         &visibility=UI_VIS_STANDARD)
         call site_discover%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call site_discover%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call site_discover%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
         call add_ui_program('site_discover', site_discover, prgtab, UI_CATEGORY)
     end subroutine new_site_discover

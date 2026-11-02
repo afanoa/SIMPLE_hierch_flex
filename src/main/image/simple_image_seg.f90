@@ -127,6 +127,7 @@ contains
         end where
         ! 1D transform along x
         allocate(f(nx), d(nx))
+        !$omp parallel do collapse(2) default(shared) private(j,k,f,d) schedule(static) proc_bind(close)
         do k = 1, nz
             do j = 1, ny
                 f = self%rmat(:nx,j,k)
@@ -137,6 +138,7 @@ contains
         deallocate(f, d)
         ! 1D transform along y
         allocate(f(ny), d(ny))
+        !$omp parallel do collapse(2) default(shared) private(i,k,f,d) schedule(static) proc_bind(close)
         do k = 1, nz
             do i = 1, nx
                 f = self%rmat(i,:ny,k)
@@ -148,6 +150,7 @@ contains
         ! 1D transform along z (3D only)
         if( .not. self%is_2d() )then
             allocate(f(nz), d(nz))
+            !$omp parallel do collapse(2) default(shared) private(i,j,f,d) schedule(static) proc_bind(close)
             do j = 1, ny
                 do i = 1, nx
                     f = self%rmat(i,j,:nz)

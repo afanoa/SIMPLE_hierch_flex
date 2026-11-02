@@ -34,7 +34,7 @@ integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_
 integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
 real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3, DMATE = 0.99
 integer,  parameter :: ITA0 = 1, ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
-integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32, SBATCH_PTCLS = 200000, PTCLS_PER_THR = 2500
+integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32, SBATCH_PTCLS = 200000, PTCLS_PER_THR = 5000
 ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
 integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
@@ -42,6 +42,7 @@ real,     parameter :: ATHR = 0.01, LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
 integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_MOTION = 15, S_MBATCH = 16, S_GATEW = 17, S_SBATCH = 18, S_OFFP = 19
+integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000
 integer,  parameter :: NMBIN = 5, NVSHUF = 20, GATE_BOX = 100, GATE_MINGRP = 50, INH0 = 100, NULL_PERM = 4
 real,     parameter :: MRES = 15., NB_SW = 0.030, ZRES_SW = 5., ZLOC_MIN = 5., GRADED = 0.40, VIEW_EXC = 0.40, DFX_EXC = 0.20
 real,     parameter :: GATE_LP = 15., GATE_EDGE = 6., GATE_NSD = 3.
@@ -81,20 +82,22 @@ type :: hetero_tree
     class(parameters), pointer :: p => null()
     type(tnode), allocatable :: nodes(:)
     type(fsite), allocatable :: fs(:)
-    type(string), allocatable :: subd(:)
+    type(string), allocatable :: subd(:), jdir(:)
+    integer,      allocatable :: jnc(:)
     logical,      allocatable :: tjunk(:)
     type(qsys_env) :: qenv, qsite
     type(qsys_env), allocatable :: qpool
     character(len=:), allocatable :: root, sitemask
     real    :: smpd = 0.
     integer :: box = 0, nrows = 0, npcur = 0, ntests = 1
+    integer :: ncbusy = 0
     logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false., l_oneflex = .false.
     logical :: l_nodeproj = .false., l_nodeseed = .false., l_motion = .false., l_strong = .false., l_twopole = .false.
     logical :: l_gate = .false., l_inherit = .false., l_multi = .true.
     character(len=:), allocatable :: subroot, ntab, ltab
     type(qsys_env) :: qsub
     type(cmdline), allocatable :: cl0
-    real(dp) :: srate(S_SBATCH) = 0._dp
+    real(dp) :: srate(S_SDISC) = 0._dp
   contains
     procedure :: new
     procedure :: run
@@ -133,6 +136,11 @@ type :: hetero_tree
     procedure, private :: fs_labels
     procedure, private :: dir_status
     procedure, private :: fs_nrun
+    procedure, private :: fs_room
+    procedure, private :: core_room
+    procedure, private :: busy_update
+    procedure, private :: site_job
+    procedure, private :: sb_fill
     procedure, private :: fs_cd
     procedure, private :: fs_md
     procedure, private :: fs_fd
@@ -294,12 +302,13 @@ contains
     subroutine run( self )
         class(hetero_tree), intent(inout) :: self
         integer(kind=8) :: t0, t1, rate
-        integer :: i, nact, code, nsub, noff
+        integer :: i, nact, code, nsub, noff, nfill
         character(len=:), allocatable :: sdone
         logical :: l_fin, l_pl
         call seed_rnd_fixed(RND_SEED)
         do
             if( allocated(self%qpool) ) call self%qpool%service_persistent_worker_warmup()
+            call self%busy_update
             nact = 0
             nsub = 0
             i    = 0
@@ -318,7 +327,11 @@ contains
                     cycle
                 endif
                 if( code == -2 )then
-                    call self%start(i, self%nodes(i)%step)
+                    if( self%nodes(i)%step == S_SBATCH .and. file_exists(string(self%ndir(i)//'/sites/batch.txt')) )then
+                        nfill = self%sb_fill(i)
+                    else
+                        call self%start(i, self%nodes(i)%step)
+                    endif
                     nact = nact + 1
                     call self%write_table
                     cycle
@@ -700,29 +713,26 @@ contains
                     w(j)     = real(count(st == pres(j)), dp)
                 end do
                 call simple_mkdir(string(d//'/sites'))
-                call discover_sites(evens, odds, w, pres, self%p%mskdiam, d//'/sites', ks, trim(self%p%pgrp))
-                if( ks > 1 .and. (self%l_motion .or. self%l_strong) )then
-                    ! with every particle fitted and no junk set aside the per-site layer's ranking of a site is this batch's
-                    if( self%l_strong .and. self%p%site_layer .eq. 'yes' .and. self%p%junk_screen .eq. 'no' .and. &
-                        &size(rows) <= SITE_NFIT ) call write_ints(d//'/sites/'//SITE_REUSE, [1])
-                    call site_batch(ks)
-                    return
-                endif
-                if( ks > 1 .and. size(rows) > SBATCH_PTCLS )then
-                    call site_batch(ks)
-                    call write_ints(d//'/sites/rest_first.txt', [1])
-                    return
-                endif
-                if( ks > 0 )then
-                    ! a site step restarted after losing its record ranks the site its directory belongs to, not site 1
-                    j = seed_site(d)
-                    if( j > ks ) THROW_HARD('node '//self%nodes(i)%id//': seed site '//int2str(j)//' beyond the '//int2str(ks)//' sites found again')
-                    sitemask = d//'/sites/site_'//pad2(j)//'.mrc'
+                if( size(pres) < 2 )then
+                    call discover_sites(evens, odds, w, pres, self%p%mskdiam, d//'/sites', ks, trim(self%p%pgrp))
                 else
-                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no local site found, the node mask ranks the poles'
-                    sitemask = mask
+                    ! the full-box discovery takes the master tens of minutes and up to 64 GB: a worker job runs it
+                    call write_ints(d//'/sites/disc_labels.txt', merge(st, 0, [(any(pres == st(j)), j=1,size(st))]))
+                    call cl%set('prg',     'site_discover')
+                    call cl%set('dir',     d//'/recB0')
+                    call cl%set('infile',  'disc_labels.txt')
+                    call cl%set('mskdiam', self%p%mskdiam)
+                    call cl%set('pgrp',    trim(self%p%pgrp))
+                    call cl%set('nthr',    self%p%nthr)
+                    call self%submit_in(d//'/sites', cl, memmb=SDISC_MEM)
+                    self%nodes(i)%step = S_SDISC
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site discovery submitted'
+                    return
                 endif
-                call site_step(sitemask)
+                call sites_found
+            case(S_SDISC)
+                ks = nsites(d)
+                call sites_found
             case(S_SITE, S_SBATCH)
                 sd    = seed_dir(d)
                 seeds = read_ints(sd//'/site_seeds.txt')
@@ -890,6 +900,31 @@ contains
 
     contains
 
+        subroutine sites_found
+            if( ks > 1 .and. (self%l_motion .or. self%l_strong) )then
+                ! with every particle fitted the per-site layer's ranking of a site is this batch's (the seed site's junk moves no pole)
+                if( self%l_strong .and. self%p%site_layer .eq. 'yes' .and. size(rows) <= SITE_NFIT ) &
+                    &call write_ints(d//'/sites/'//SITE_REUSE, [1])
+                call site_batch(ks)
+                return
+            endif
+            if( ks > 1 .and. size(rows) > SBATCH_PTCLS )then
+                call site_batch(ks)
+                call write_ints(d//'/sites/rest_first.txt', [1])
+                return
+            endif
+            if( ks > 0 )then
+                ! a site step restarted after losing its record ranks the site its directory belongs to, not site 1
+                j = seed_site(d)
+                if( j > ks ) THROW_HARD('node '//self%nodes(i)%id//': seed site '//int2str(j)//' beyond the '//int2str(ks)//' sites found again')
+                sitemask = d//'/sites/site_'//pad2(j)//'.mrc'
+            else
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no local site found, the node mask ranks the poles'
+                sitemask = mask
+            endif
+            call site_step(sitemask)
+        end subroutine sites_found
+
         subroutine site_step( smask )
             character(len=*), intent(in) :: smask
             call site_submit(smask, seed_dir(d))
@@ -898,24 +933,7 @@ contains
 
         subroutine site_submit( smask, sdir )
             character(len=*), intent(in) :: smask, sdir
-            type(cmdline) :: cj
-            call simple_mkdir(string(sdir))
-            call simple_copy_file(string(d//'/'//NODE_PROJ), string(sdir//'/s.simple'))
-            if( local_rows(d) ) call simple_copy_file(string(d//'/rows.txt'), string(sdir//'/'//SITE_ROWS))
-            call cj%set('prg',         'site_rank')
-            call cj%set('projfile',    's.simple')
-            call cj%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
-            call cj%set('site_dirs',   trim(self%p%site_dirs))
-            call cj%set('pole_merge',  self%p%pole_merge)
-            if( self%p%pooled_poles .eq. 'yes' ) call cj%set('pooled_poles', 'yes')
-            call cj%set('junk_screen', trim(self%p%junk_screen))
-            call cj%set('pcg_mskfile', smask)
-            call cj%set('pgrp',        trim(self%p%pgrp))
-            call cj%set('mskdiam',     self%p%mskdiam)
-            ! a site rank gets a thread per PTCLS_PER_THR particles (the root keeps SITE_NTHR)
-            call cj%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(size(rows)) / real(PTCLS_PER_THR)))))
-            if( local_rows(d) ) call cj%set('rowmap', d//'/rows.txt')
-            call self%submit_in(sdir, cj, size(rows))
+            call self%site_job(i, smask, sdir)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//sdir(index(sdir, '/', back=.true.)+1:)//&
                 &' submitted'
         end subroutine site_submit
@@ -927,20 +945,17 @@ contains
             character(len=:), allocatable :: sdir
             integer :: kk, nsub
             allocate(sds(0))
-            nsub = 0
             do kk = 1, kss
                 if( kk > 1 ) call simple_mkdir(string(d//'/nsite_'//self%nodes(i)%id//'_s'//int2str(kk)))
                 sdir = site_dir_of(d, kk)
                 sds  = [sds, string(sdir)]
-                if( self%dir_status(sdir) /= -2 ) cycle
-                call site_submit(d//'/sites/site_'//pad2(kk)//'.mrc', sdir)
-                nsub = nsub + 1
             end do
             call write_ints(d//'/sites/seed_site.txt', [kss])
             call write_lines(d//'/sites/batch.txt', sds)
             self%nodes(i)%step = S_SBATCH
+            nsub = self%sb_fill(i)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': its '//int2str(kss)//' sites are ranked at '//&
-                &'once, '//int2str(nsub)//' jobs submitted'
+                &'once, '//int2str(nsub)//' jobs submitted, the rest as the core budget frees'
         end subroutine site_batch
 
         subroutine rest_batch( jf )
@@ -950,19 +965,16 @@ contains
             integer :: kk, nsub, ns
             ns = nsites(d)
             allocate(sds(0))
-            nsub = 0
             do kk = jf + 1, ns
                 call simple_mkdir(string(d//'/nsite_'//self%nodes(i)%id//'_s'//int2str(kk)))
                 sdir = site_dir_of(d, kk)
                 sds  = [sds, string(sdir)]
-                if( self%dir_status(sdir) /= -2 ) cycle
-                call site_submit(d//'/sites/site_'//pad2(kk)//'.mrc', sdir)
-                nsub = nsub + 1
             end do
             call write_ints(d//'/sites/rest_first.txt', [jf + 1])
             call write_lines(d//'/sites/batch.txt', sds)
             call write_ints(d//'/sites/seed_site.txt', [ns])
             self%nodes(i)%step = S_SBATCH
+            nsub = self%sb_fill(i)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(jf)//' gives no split, sites '//&
                 &int2str(jf + 1)//'..'//int2str(ns)//' are ranked at once, '//int2str(nsub)//' jobs submitted'
         end subroutine rest_batch
@@ -1694,9 +1706,11 @@ contains
                     prev_step = S_FLEX
                 endif
             case(S_SITE)
-                if( self%p%site_disc .ne. 'yes' ) prev_step = S_FFLEX
+                prev_step = merge(S_SDISC, S_FFLEX, self%p%site_disc .eq. 'yes')
+            case(S_SDISC)
+                prev_step = S_RECB0
             case(S_SBATCH)
-                prev_step = merge(S_RECB0, S_SITE, self%l_motion .or. self%l_strong .or. &
+                prev_step = merge(S_SDISC, S_SITE, self%l_motion .or. self%l_strong .or. &
                     &first_line(self%ndir(i)//'/sites/rest_first.txt', '2') == '1')
             case(S_MOTION, S_MBATCH, S_GATEW)
                 prev_step = S_SITE
@@ -1739,11 +1753,12 @@ contains
         write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//trim(STEP_DIRS(istep))//' submitted'
     end subroutine submit
 
-    subroutine submit_in( self, sd, cl, nmem )
+    subroutine submit_in( self, sd, cl, nmem, memmb )
         class(hetero_tree), intent(inout) :: self
         character(len=*),   intent(in)    :: sd
         class(cmdline),     intent(inout) :: cl
-        integer, optional,  intent(in)    :: nmem
+        integer, optional,  intent(in)    :: nmem, memmb
+        integer :: ncj
         call cl%set('mkdir', 'no')
         call simple_chdir(string(sd))
         CWD_GLOB = sd
@@ -1756,6 +1771,14 @@ contains
         CWD_GLOB = self%root
         if( .not. allocated(self%subd) ) allocate(self%subd(0))
         self%subd = [self%subd, string(sd)]
+        ! the job's cores (a distributed step: its parts and the master) count against the tree's core budget
+        ncj = self%p%nthr
+        if( cl%defined('nthr') ) ncj = cl%get_iarg('nthr')
+        if( cl%defined('nparts') ) ncj = ncj * (1 + max(1, cl%get_iarg('nparts')))
+        if( .not. allocated(self%jdir) ) allocate(self%jdir(0), self%jnc(0))
+        self%jdir   = [self%jdir, string(sd)]
+        self%jnc    = [self%jnc, ncj]
+        self%ncbusy = self%ncbusy + ncj
 
     contains
 
@@ -1769,6 +1792,9 @@ contains
             if( present(nmem) )then
                 mem0 = q%qdescr%get('job_memory_per_task')
                 call q%qdescr%set('job_memory_per_task', int2str(8000 + nint(0.025 * real(nmem))))
+            else if( present(memmb) )then
+                mem0 = q%qdescr%get('job_memory_per_task')
+                call q%qdescr%set('job_memory_per_task', int2str(memmb))
             endif
             ncpu = 0
             if( cl%defined('nthr') ) ncpu = cl%get_iarg('nthr')
@@ -1826,7 +1852,7 @@ contains
                 call q%exec_simple_prg_in_queue_async(cl, string('./hetero_step.sh'), string('hetero_step.log'), &
                     &exit_code_fname=string(STEP_EXIT))
             endif
-            if( present(nmem) ) call q%qdescr%set('job_memory_per_task', mem0)
+            if( present(nmem) .or. present(memmb) ) call q%qdescr%set('job_memory_per_task', mem0)
             if( ncpu > 0 ) call q%qdescr%set('job_cpus_per_task', cpu0)
         end subroutine queue_in
 
@@ -2109,7 +2135,7 @@ contains
             code = self%dir_status(sd)
             if( code == -1 ) cycle
             if( code == -2 )then
-                if( self%fs(j)%k == 1 .or. nrun >= max(1, self%p%nodepar) .or. fs_reused(self, j) ) cycle
+                if( self%fs(j)%k == 1 .or. .not. self%fs_room(nrun) .or. fs_reused(self, j) ) cycle
                 call self%fs_rank(sd, self%fs(j)%home, site_mask(self, j), '', '', SITE_NFIT, .false.)
                 write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': ranking at its node submitted'
                 nrun = nrun + 1
@@ -2143,7 +2169,7 @@ contains
             code = self%dir_status(sd)
             if( code == -1 ) cycle
             if( code == -2 )then
-                if( nrun >= max(1, self%p%nodepar) ) cycle
+                if( .not. self%fs_room(nrun) ) cycle
                 call self%fs_climb(j)
                 nrun = nrun + 1
                 cycle
@@ -2163,7 +2189,7 @@ contains
             self%fs(j)%rho   = r
             if( len(self%fs(j)%level) == 1 )then
                 self%fs(j)%st = F_LEVEL
-            else if( nrun < max(1, self%p%nodepar) )then
+            else if( self%fs_room(nrun) )then
                 call self%fs_climb(j)
                 nrun = nrun + 1
             endif
@@ -2240,7 +2266,7 @@ contains
                 else if( len(self%fs(j)%home) == 1 )then
                     self%fs(j)%st = F_LEVEL
                 else
-                    if( nrun >= max(1, self%p%nodepar) ) cycle
+                    if( .not. self%fs_room(nrun) ) cycle
                     self%fs(j)%st  = F_UP
                     self%fs(j)%rho = rbest
                     call self%fs_climb(j)
@@ -2688,13 +2714,15 @@ contains
             do s = 1, size(pres)
                 where( lab == pres(s) ) st = s
             end do
+            call self%set_parts(count(st > 0))
+            ! class maps (a distributed step) go out while the core budget has room, or when nothing runs
+            if( self%ncbusy > 0 .and. .not. self%core_room(self%p%nthr * (1 + self%npcur)) ) return
             call simple_mkdir(string(wd//'/refine_rec'))
             call write_states(self%root//'/node_'//self%fs(j)%level//'/'//NODE_PROJ, wd//'/refine_rec/c.simple', &
                 &node_cut(st, self%root//'/node_'//self%fs(j)%level))
             call cl%set('prg',      'reconstruct3D')
             call cl%set('projfile', 'c.simple')
             call cl%set('nstates',  size(pres))
-            call self%set_parts(count(st > 0))
             call common_keys(self, cl)
             call halves_only_keys(cl)
             call self%submit_in(wd//'/refine_rec', cl)
@@ -2874,13 +2902,14 @@ contains
             do s = 1, size(pres)
                 where( lab == pres(s) ) st = s
             end do
+            call self%set_parts(count(st > 0))
+            if( self%ncbusy > 0 .and. .not. self%core_room(self%p%nthr * (1 + self%npcur)) ) return
             call simple_mkdir(string(wd//'/pre_rec'))
             call write_states(self%root//'/node_'//self%fs(j)%home//'/'//NODE_PROJ, wd//'/pre_rec/c.simple', &
                 &node_cut(st, self%root//'/node_'//self%fs(j)%home))
             call cl%set('prg',      'reconstruct3D')
             call cl%set('projfile', 'c.simple')
             call cl%set('nstates',  size(pres))
-            call self%set_parts(count(st > 0))
             call common_keys(self, cl)
             call halves_only_keys(cl)
             call self%submit_in(wd//'/pre_rec', cl)
@@ -3150,6 +3179,94 @@ contains
             end select
         end do
     end function fs_nrun
+
+    ! single-job site rankings run while the tree's core budget has room; one always runs
+    logical function fs_room( self, nrun )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: nrun
+        fs_room = nrun < 1 .or. self%core_room(SITE_NTHR)
+    end function fs_room
+
+    ! the tree's core budget: the cores nodepar gives the node steps (nodepar x nparts x nthr), shared by every job it submits
+    logical function core_room( self, ncj )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: ncj
+        core_room = self%ncbusy + ncj <= max(1, self%p%nodepar) * max(1, self%p%nparts) * self%p%nthr
+    end function core_room
+
+    subroutine busy_update( self )
+        class(hetero_tree), intent(inout) :: self
+        logical, allocatable :: l_run(:)
+        integer :: j
+        self%ncbusy = 0
+        if( .not. allocated(self%jdir) ) return
+        allocate(l_run(size(self%jdir)))
+        do j = 1, size(self%jdir)
+            l_run(j) = self%dir_status(self%jdir(j)%to_char()) == -1
+        end do
+        self%jdir   = pack(self%jdir, l_run)
+        self%jnc    = pack(self%jnc,  l_run)
+        self%ncbusy = sum(self%jnc)
+    end subroutine busy_update
+
+    ! the site rankings of a node's batch not yet submitted go out while the core budget has room; one always runs
+    integer function sb_fill( self, i ) result( nsub )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        type(string), allocatable :: sds(:)
+        integer,      allocatable :: code(:)
+        character(len=:), allocatable :: d, sdir
+        integer :: j, kk, nrun, ncj
+        d    = self%ndir(i)
+        sds  = read_lines(d//'/sites/batch.txt')
+        ncj  = rank_nthr(nlines(string(d//'/rows.txt')), self%p%nthr)
+        code = [(self%dir_status(sds(j)%to_char()), j=1,size(sds))]
+        nrun = count(code == -1)
+        nsub = 0
+        do j = 1, size(sds)
+            if( code(j) /= -2 ) cycle
+            if( nrun > 0 .and. .not. self%core_room(ncj) ) exit
+            sdir = sds(j)%to_char()
+            kk   = 1
+            if( sdir(len(sdir)-4:) /= '/site' ) kk = str2int(sdir(index(sdir, '_s', back=.true.)+2:))
+            call self%site_job(i, d//'/sites/site_'//pad2(kk)//'.mrc', sdir)
+            nrun = nrun + 1
+            nsub = nsub + 1
+        end do
+    end function sb_fill
+
+    subroutine site_job( self, i, smask, sdir )
+        class(hetero_tree), intent(inout) :: self
+        integer,            intent(in)    :: i
+        character(len=*),   intent(in)    :: smask, sdir
+        type(cmdline) :: cj
+        character(len=:), allocatable :: d
+        integer :: n
+        d = self%ndir(i)
+        n = nlines(string(d//'/rows.txt'))
+        call simple_mkdir(string(sdir))
+        call simple_copy_file(string(d//'/'//NODE_PROJ), string(sdir//'/s.simple'))
+        if( local_rows(d) ) call simple_copy_file(string(d//'/rows.txt'), string(sdir//'/'//SITE_ROWS))
+        call cj%set('prg',         'site_rank')
+        call cj%set('projfile',    's.simple')
+        call cj%set('infile',      d//'/fflex/flex_pca_coordinates.txt')
+        call cj%set('site_dirs',   trim(self%p%site_dirs))
+        call cj%set('pole_merge',  self%p%pole_merge)
+        if( self%p%pooled_poles .eq. 'yes' ) call cj%set('pooled_poles', 'yes')
+        call cj%set('junk_screen', trim(self%p%junk_screen))
+        call cj%set('pcg_mskfile', smask)
+        call cj%set('pgrp',        trim(self%p%pgrp))
+        call cj%set('mskdiam',     self%p%mskdiam)
+        call cj%set('nthr',        rank_nthr(n, self%p%nthr))
+        if( local_rows(d) ) call cj%set('rowmap', d//'/rows.txt')
+        call self%submit_in(sdir, cj, n)
+    end subroutine site_job
+
+    ! a site rank gets a thread per PTCLS_PER_THR particles (the root keeps SITE_NTHR)
+    integer function rank_nthr( n, nthr0 )
+        integer, intent(in) :: n, nthr0
+        rank_nthr = max(nthr0, min(SITE_NTHR, ceiling(real(n) / real(PTCLS_PER_THR))))
+    end function rank_nthr
 
     real function fs_rho( self, sda, sdb, ev, l_first )
         class(hetero_tree), intent(in) :: self
@@ -3694,6 +3811,8 @@ contains
         if( allocated(self%fs)    ) deallocate(self%fs)
         if( allocated(self%tjunk) ) deallocate(self%tjunk)
         if( allocated(self%subd)  ) deallocate(self%subd)
+        if( allocated(self%jdir)  ) deallocate(self%jdir, self%jnc)
+        self%ncbusy = 0
         if( allocated(self%cl0)   ) deallocate(self%cl0)
         self%l_fsread = .false.
         call self%qenv%kill
@@ -4445,7 +4564,8 @@ contains
         integer,          intent(out) :: nsite
         character(len=*), optional, intent(in) :: pgrp
         type :: dcand
-            real, allocatable :: m(:,:,:)
+            real,    allocatable :: m(:,:,:)
+            integer, allocatable :: on(:)
             real    :: r = 0., share = 0., mol = 0., rad = 0.
             integer :: comp = 0, fac = 0, ncore = 0, seed = 0, vox = 0
         end type dcand
@@ -4460,32 +4580,31 @@ contains
         type(image)              :: img
         real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pn(:,:), cc(:,:), vv(:)
         logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:), cm(:,:,:), b(:,:,:), okk(:)
-        integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:)
+        integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:), psz(:)
         real(dp), allocatable :: wn(:)
         real,     allocatable :: rots(:,:,:)
         character(len=:), allocatable :: mlist
         real    :: smpd, tot, cosv, sh(2), cut2, dm
-        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios, ir, nc0, np2
+        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios, ir, nc0, np2, nsup
         logical :: l_sib, l_fac
         wn  = counts / sum(counts)
         nk  = size(evens)
         okk = counts >= real(DSEEDMIN,dp)
         call half_variance(evens, odds, counts, mskdiam, n, smpd, sph, sup, vs, de, dv)
+        nsup = count(sup)
         core = vs > MFRAC * maxval(vs)
         call label6(core, lab, nl)
         tot  = sum(vs, mask=core)
         allocate(cands(0), regs(0))
-        do ic = 1, nl
-            call push(lab == ic, MFRAC * maxval(vs), .true., ic)
-        end do
+        call push_labels(lab, nl, MFRAC * maxval(vs))
         ir  = 0
         np2 = nl
         do while( ir < size(regs) )
             ir = ir + 1
+            if( size(regs(ir)%v) < DMINVOX ) cycle
             if( allocated(cm) ) deallocate(cm)
             allocate(cm(n,n,n), source=.false.)
             call set_voxels(cm, regs(ir)%v)
-            if( count(cm) < DMINVOX ) cycle
             if( regs(ir)%top .and. sum(vs, mask=cm) / tot < DMINSHARE ) cycle
             ic    = regs(ir)%comp
             nc0   = size(cands)
@@ -4524,8 +4643,13 @@ contains
                             if( asg(iv) == j ) b(vidx(1,iv),vidx(2,iv),vidx(3,iv)) = .true.
                         end do
                         call label6(b, lb, nb)
-                        do k = 1, nb
-                            if( count(lb == k) < max(20, DMINVOX / 4) ) where( lb == k ) b = .false.
+                        psz = piece_sizes(lb, nb)
+                        do z = 1, n
+                            do y = 1, n
+                                do x = 1, n
+                                    if( lb(x,y,z) > 0 ) b(x,y,z) = psz(lb(x,y,z)) >= max(20, DMINVOX / 4)
+                                end do
+                            end do
                         end do
                         call add(b, ic, j, cc(j,:) / real(sqrt(wn)))
                         deallocate(b)
@@ -4542,11 +4666,12 @@ contains
             ! a component whose candidates are not local is re-cut inside itself at its cut plus MFRAC of its excess, while that splits it
             cut2 = regs(ir)%cut + MFRAC * (maxval(vs, mask=cm) - regs(ir)%cut)
             call label6(cm .and. vs > cut2, lb, nb)
+            psz = piece_sizes(lb, nb)
             write(logfhandle,'(A,I0,A,F6.3,A,I0,A)') '>>> SITE_DISCOVER component ', ic, ' is not local: re-cut at ', cut2 / maxval(vs), &
-                &' x max gives ', count([(count(lb == k) >= DMINVOX, k=1,nb)]), ' piece(s) of at least '//int2str(DMINVOX)//' voxels'
-            if( count([(count(lb == k) >= DMINVOX, k=1,nb)]) < 2 ) cycle
+                &' x max gives ', count(psz >= DMINVOX), ' piece(s) of at least '//int2str(DMINVOX)//' voxels'
+            if( count(psz >= DMINVOX) < 2 ) cycle
             do k = 1, nb
-                if( count(lb == k) < DMINVOX ) cycle
+                if( psz(k) < DMINVOX ) cycle
                 np2 = np2 + 1
                 call push(lb == k, cut2, .false., np2)
             end do
@@ -4579,7 +4704,7 @@ contains
                     k = j
                     exit
                 endif
-                if( dice(cands(ord(i))%m, cands(rep(j))%m) < DDICE ) cycle
+                if( dice(ord(i), rep(j)) < DDICE ) cycle
                 l_sib = .false.
                 do it = 1, size(cands)
                     if( memb(it) /= j ) cycle
@@ -4625,13 +4750,53 @@ contains
             integer, intent(in) :: comp
             integer :: q
             allocate(rtmp(size(regs)+1))
-            rtmp(1:size(regs)) = regs
+            do q = 1, size(regs)
+                call move_alloc(regs(q)%v, rtmp(q)%v)
+                rtmp(q)%cut  = regs(q)%cut
+                rtmp(q)%comp = regs(q)%comp
+                rtmp(q)%top  = regs(q)%top
+            end do
             call move_alloc(rtmp, regs)
             regs(size(regs))%v   = pack([(q, q=1,size(m))], reshape(m, [size(m)]))
             regs(size(regs))%cut = cut
             regs(size(regs))%top  = top
             regs(size(regs))%comp = comp
         end subroutine push
+
+        ! the regions of every label of lab in one pass, each voxel list in column order as pack gives it
+        subroutine push_labels( lab, nl, cut )
+            integer, intent(in) :: lab(:,:,:), nl
+            real,    intent(in) :: cut
+            integer, allocatable :: sz(:), fill(:)
+            integer :: q, r0, xx, yy, zz
+            r0 = size(regs)
+            sz = piece_sizes(lab, nl)
+            allocate(rtmp(r0 + nl))
+            do q = 1, r0
+                call move_alloc(regs(q)%v, rtmp(q)%v)
+                rtmp(q)%cut  = regs(q)%cut
+                rtmp(q)%comp = regs(q)%comp
+                rtmp(q)%top  = regs(q)%top
+            end do
+            call move_alloc(rtmp, regs)
+            do q = 1, nl
+                allocate(regs(r0+q)%v(sz(q)))
+                regs(r0+q)%cut  = cut
+                regs(r0+q)%top  = .true.
+                regs(r0+q)%comp = q
+            end do
+            allocate(fill(nl), source=0)
+            do zz = 1, size(lab,3)
+                do yy = 1, size(lab,2)
+                    do xx = 1, size(lab,1)
+                        q = lab(xx,yy,zz)
+                        if( q == 0 ) cycle
+                        fill(q) = fill(q) + 1
+                        regs(r0+q)%v(fill(q)) = xx + size(lab,1) * (yy - 1 + size(lab,2) * (zz - 1))
+                    end do
+                end do
+            end do
+        end subroutine push_labels
 
         subroutine set_voxels( m, v )
             logical, intent(inout) :: m(:,:,:)
@@ -4647,41 +4812,90 @@ contains
             logical,        intent(in) :: c(:,:,:)
             integer,        intent(in) :: comp, fac
             real, optional, intent(in) :: prof(:)
-            real(dp) :: num, dsq, osq, ek(nk)
+            real(dp) :: num, dsq, osq, ek(nk), pe, po
+            real(dp), allocatable :: zs(:,:,:)
             real     :: cen(3)
-            integer  :: kk, nc, xx, yy, zz
+            integer  :: kk, nc, xx, yy, zz, pad, lo(3), hi(3), nsp
+            real,    allocatable :: mt(:,:,:)
+            integer, allocatable :: mon(:)
+            ! moving the candidate masks, not copying them: a full-box copy per candidate made discovery quadratic
             allocate(tmp(size(cands)+1))
-            tmp(1:size(cands)) = cands
+            do kk = 1, size(cands)
+                call move_alloc(cands(kk)%m, mt)
+                call move_alloc(cands(kk)%on, mon)
+                tmp(kk) = cands(kk)
+                call move_alloc(mt, tmp(kk)%m)
+                call move_alloc(mon, tmp(kk)%on)
+            end do
             call move_alloc(tmp, cands)
             nc = size(cands)
-            cands(nc)%m = dist_px(dilate6(c, nint(MDIL)), n, smpd)
-            cands(nc)%m = exp(-cands(nc)%m**2 / (2. * MFALL**2))
+            ! the mask is computed in the core's box padded by MDIL + 8 MFALL: outside it the falloff is below 1e-13
+            pad = nint(MDIL) + 8 * nint(MFALL)
+            lo  = n
+            hi  = 1
+            do zz = 1, n
+                do yy = 1, n
+                    do xx = 1, n
+                        if( .not. c(xx,yy,zz) ) cycle
+                        lo = min(lo, [xx, yy, zz])
+                        hi = max(hi, [xx, yy, zz])
+                    end do
+                end do
+            end do
+            lo = max(1, lo - pad)
+            hi = min(n, hi + pad)
+            allocate(cands(nc)%m(n,n,n), source=0.)
+            cands(nc)%m(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)) = exp(-dist_box(dilate6(c(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)), &
+                &nint(MDIL)), smpd)**2 / (2. * MFALL**2))
             where( .not. sph ) cands(nc)%m = 0.
             num = 0._dp
             dsq = 0._dp
             osq = 0._dp
-            do kk = 1, nk
-                ek(kk) = sum(real(de(:,:,:,kk) * cands(nc)%m, dp) * real(dv(:,:,:,kk) * cands(nc)%m, dp))
-                num    = num + wn(kk) * ek(kk)
-                dsq    = dsq + wn(kk) * sum(real(de(:,:,:,kk) * cands(nc)%m, dp)**2)
-                osq    = osq + wn(kk) * sum(real(dv(:,:,:,kk) * cands(nc)%m, dp)**2)
-            end do
-            cands(nc)%r     = real(num / max(sqrt(dsq * osq), 1.e-300_dp))
-            cands(nc)%comp  = comp
-            cands(nc)%fac   = fac
-            cands(nc)%ncore = count(c)
-            cands(nc)%vox   = count(cands(nc)%m > 0.5)
-            cands(nc)%mol   = real(count(cands(nc)%m > 0.5 .and. sup)) / real(max(1, count(sup)))
-            cands(nc)%share = sum(vs, mask=c) / tot
-            cen = 0.
-            do zz = 1, n
-                do yy = 1, n
-                    do xx = 1, n
-                        if( c(xx,yy,zz) ) cen = cen + real([xx, yy, zz] - 1)
+            ! per-slice partial sums added in slice order: threaded and independent of the thread count
+            allocate(zs(3,nk,lo(3):hi(3)), source=0._dp)
+            !$omp parallel do default(shared) private(zz,yy,xx,kk,pe,po) schedule(static) proc_bind(close)
+            do zz = lo(3), hi(3)
+                do kk = 1, nk
+                    do yy = lo(2), hi(2)
+                        do xx = lo(1), hi(1)
+                            pe = real(de(xx,yy,zz,kk) * cands(nc)%m(xx,yy,zz), dp)
+                            po = real(dv(xx,yy,zz,kk) * cands(nc)%m(xx,yy,zz), dp)
+                            zs(:,kk,zz) = zs(:,kk,zz) + [pe * po, pe * pe, po * po]
+                        end do
                     end do
                 end do
             end do
-            cen = cen / real(max(1, count(c)))
+            !$omp end parallel do
+            do kk = 1, nk
+                ek(kk) = sum(zs(1,kk,:))
+                num    = num + wn(kk) * ek(kk)
+                dsq    = dsq + wn(kk) * sum(zs(2,kk,:))
+                osq    = osq + wn(kk) * sum(zs(3,kk,:))
+            end do
+            deallocate(zs)
+            cands(nc)%r     = real(num / max(sqrt(dsq * osq), 1.e-300_dp))
+            cands(nc)%comp  = comp
+            cands(nc)%fac   = fac
+            cands(nc)%ncore = count(c(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)))
+            cands(nc)%vox   = count(cands(nc)%m(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)) > 0.5)
+            allocate(cands(nc)%on(cands(nc)%vox))
+            kk  = 0
+            nsp = 0
+            cen = 0.
+            do zz = lo(3), hi(3)
+                do yy = lo(2), hi(2)
+                    do xx = lo(1), hi(1)
+                        if( c(xx,yy,zz) ) cen = cen + real([xx, yy, zz] - 1)
+                        if( cands(nc)%m(xx,yy,zz) <= 0.5 ) cycle
+                        kk = kk + 1
+                        cands(nc)%on(kk) = xx + n * (yy - 1 + n * (zz - 1))
+                        if( sup(xx,yy,zz) ) nsp = nsp + 1
+                    end do
+                end do
+            end do
+            cands(nc)%mol   = real(nsp) / real(max(1, nsup))
+            cands(nc)%share = sum(vs(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)), mask=c(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3))) / tot
+            cen = cen / real(max(1, cands(nc)%ncore))
             cands(nc)%rad = sqrt(sum((cen - real(n / 2))**2)) * smpd
             if( present(prof) )then
                 cands(nc)%seed = names(maxloc(merge(abs(prof), -huge(1.), okk), dim=1))
@@ -4705,9 +4919,22 @@ contains
             ranks_above = cands(a)%share > cands(bb)%share .or. (cands(a)%share == cands(bb)%share .and. cands(a)%r > cands(bb)%r)
         end function ranks_above
 
-        real function dice( m1, m2 )
-            real, intent(in) :: m1(:,:,:), m2(:,:,:)
-            dice = 2. * real(count(m1 > 0.5 .and. m2 > 0.5)) / real(max(1, count(m1 > 0.5) + count(m2 > 0.5)))
+        ! the voxel lists of the masks above 0.5 give the overlap without a full-box pass per candidate pair
+        real function dice( c1, c2 )
+            integer, intent(in) :: c1, c2
+            integer :: a, bb, q, v, nin
+            a  = c1
+            bb = c2
+            if( size(cands(c2)%on) < size(cands(c1)%on) )then
+                a  = c2
+                bb = c1
+            endif
+            nin = 0
+            do q = 1, size(cands(a)%on)
+                v = cands(a)%on(q) - 1
+                if( cands(bb)%m(mod(v, n) + 1, mod(v / n, n) + 1, v / (n * n) + 1) > 0.5 ) nin = nin + 1
+            end do
+            dice = 2. * real(nin) / real(max(1, size(cands(c1)%on) + size(cands(c2)%on)))
         end function dice
 
     end subroutine discover_sites
@@ -4768,6 +4995,20 @@ contains
         end do
     end subroutine label6
 
+    function piece_sizes( lab, nl ) result( sz )
+        integer, intent(in)  :: lab(:,:,:), nl
+        integer, allocatable :: sz(:)
+        integer :: x, y, z
+        allocate(sz(nl), source=0)
+        do z = 1, size(lab,3)
+            do y = 1, size(lab,2)
+                do x = 1, size(lab,1)
+                    if( lab(x,y,z) > 0 ) sz(lab(x,y,z)) = sz(lab(x,y,z)) + 1
+                end do
+            end do
+        end do
+    end function piece_sizes
+
     function dilate6( mk, nit ) result( d )
         logical, intent(in) :: mk(:,:,:)
         integer, intent(in) :: nit
@@ -4800,6 +5041,18 @@ contains
         y = vol%get_rmat()
         call vol%kill
     end function filtered_vol
+
+    function dist_box( mk, smpd ) result( dpx )
+        logical, intent(in) :: mk(:,:,:)
+        real,    intent(in) :: smpd
+        real, allocatable :: dpx(:,:,:)
+        type(image) :: vol
+        call vol%new([size(mk,1), size(mk,2), size(mk,3)], smpd)
+        call vol%set_rmat(merge(0., 1., mk), .false.)
+        call vol%distance_transform
+        dpx = vol%get_rmat() / smpd
+        call vol%kill
+    end function dist_box
 
     function dist_px( mk, n, smpd ) result( dpx )
         logical, intent(in) :: mk(:,:,:)
@@ -5891,7 +6144,8 @@ contains
 
     logical function live_step( s )
         integer, intent(in) :: s
-        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_MOTION .or. s == S_MBATCH .or. s == S_GATEW .or. s == S_SBATCH
+        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_MOTION .or. s == S_MBATCH .or. s == S_GATEW .or. s == S_SBATCH .or. &
+            &s == S_SDISC
     end function live_step
 
     function step_label( s ) result( lb )
@@ -5908,6 +6162,8 @@ contains
                 lb = 'gate floor wait'
             case(S_SBATCH)
                 lb = 'site batch'
+            case(S_SDISC)
+                lb = 'site discovery'
             case default
                 lb = 'step '//int2str(s)
         end select
@@ -5924,7 +6180,7 @@ contains
                 sd = motion_dir(self%ndir(i), motion_cur(self%ndir(i)))
             case(S_MBATCH, S_GATEW)
                 sd = self%ndir(i)//'/motion'
-            case(S_SBATCH)
+            case(S_SBATCH, S_SDISC)
                 sd = self%ndir(i)//'/sites'
             case(S_MEAN:S_RECB0, S_SEEDS:S_SPLIT)
                 sd = self%ndir(i)//'/'//trim(STEP_DIRS(s))
@@ -6157,6 +6413,22 @@ contains
         end do
         call fclose(fu)
     end subroutine write_lines
+
+    function read_lines( fname ) result( lines )
+        character(len=*), intent(in) :: fname
+        type(string), allocatable :: lines(:)
+        character(len=4096) :: ln
+        integer :: fu, io
+        allocate(lines(0))
+        call fopen(fu, string(fname), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) > 0 ) lines = [lines, string(trim(ln))]
+        end do
+        call fclose(fu)
+    end function read_lines
 
     function cand_mask( nd, kk ) result( mf )
         character(len=*), intent(in) :: nd
