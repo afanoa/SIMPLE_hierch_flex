@@ -1,0 +1,6 @@
+ole_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r 240
+ole_r1 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r1 240 parent=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r nodisc
+ole_r2 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r2 240 parent=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r nodisc
+ole_r3 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r3 240 parent=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r nodisc
+ole_r4 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r4 240 parent=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r nodisc
+ole_r5 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r5 240 parent=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/base_ole/1_hetero_tree/node_r nodisc
