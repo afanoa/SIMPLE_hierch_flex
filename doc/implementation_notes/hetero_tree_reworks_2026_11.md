@@ -438,3 +438,35 @@ The three rework arms give the same OLE tree to the particle, and all three diff
 baseline differs from its own shuffled null, so the OLE span is retained. At maxdepth 1 the leaf means barely spread
 along the leading flex axes (ends at 0.48-0.56 of the span), so this gate has little power here; a deliverable OLE tree
 at maxdepth 4 is where span differences would show. Variant D's OLE tree is appended when it finishes.
+
+## 8. The draw-free pair statistic (overnight item, 2026-11-02)
+
+### 8.1 Definition (commit a91e5e6a9, `pair_stat_df`, `noise_power`, `null_upto_df`)
+
+Every group's maps are built from all its particles in each half (merged groups are the particle-weighted means of
+their members, no redraw). Per shell k, the between-group signal is the cross-half product of the full-N difference maps,
+C_k = <A_p - A_q, B_p - B_q>_k (the halves' noise is independent and cancels), and each group's per-particle noise power
+is its half difference over the half sizes, sigma_k^2 = |A_g - B_g|_k^2 / (1/nA + 1/nB). The statistic is the expected
+cross-half FSC of a pair of n-particle difference maps, FSC_k(n) = C_k / (max(C_k, 0) + (sigma_p,k^2 + sigma_q,k^2) / n),
+3-shell smoothed and peaked over the hold-out band as `pair_stat` does, with n the smallest EM group in either half (the
+same n the one-N pass used). The null is the same quantity from within-strata label shuffles at full N, stored whole and
+evaluated at the same n. Nothing in the statistic or the null is drawn, so its only randomness is the shuffles'.
+
+### 8.2 Python on the saved stage-B half maps (`drawfree_proto.py`, box 88 cropped to the test's 48, node mask, per-half state counts from the split log)
+
+| node | states per half (A / B) | n | draw-free T at n/4, n/2, n, 2n | actual full-N cross-half FSC peak | old one-draw T (log) |
+|---|---|---|---|---|---|
+| r131 r1, seed 2 | 6103+6712 / 5966+6620 | 1923 | 0.121 0.215 0.350 0.513 | 0.671 | 0.154 |
+| r131 r1, seed 1 (baseline) | 5231+5931 / 5147+6050 | 2878 | 0.234 0.372 0.534 0.689 | 0.718 | 0.210 |
+| r131 r1, seed 1 (variant D) | 5533+6148 / 5497+6141 | 2718 | 0.244 0.387 0.551 0.705 | 0.761 | 0.116 |
+| qtoy2 r3 (seed 1, D) | 2434+2885 / 2358+2845 | 1967 | 0.164 0.280 0.434 0.602 | 0.515 | 0.165 |
+| qtoy2 r5 (seed 1, D) | 1671+1703 / 1588+1655 | 1268 | 0.089 0.164 0.281 0.439 | 0.382 | 0.113 |
+| qtoynull root | 15643+14357 / 15496+14504 | 6828 | 0.079 0.146 0.252 0.398 | 0.420 | 0.089 |
+| olenull root | 16544+23756 / 16524+23775 | 7992 | 0.215 0.350 0.512 0.672 | 0.722 | 0.088 |
+| micnull root | 12139+16265 / 12184+16220 | 12580 | 0.655 0.786 0.878 0.934 | 0.888 | 0.801 |
+
+The construction behaves as intended: deterministic given the labels, monotone in n, and at full N it reproduces the
+actual cross-half FSC of the stage-B states. Its values on the stage-B states are not the Fortran test's values, which
+are read on the cross-half EM's groups (a third of the particles move, and at r131 r1 the EM leaves one group at a
+third of the stage-B size), so the comparison with the old statistic's draw spread is made in Fortran below, on the
+same EM groups, by an instrumented replay build that logs the production test and then runs the single pass.
