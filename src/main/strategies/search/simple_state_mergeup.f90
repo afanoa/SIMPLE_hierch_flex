@@ -24,7 +24,7 @@ public :: SITE_GRID
 private
 #include "simple_local_flags.inc"
 
-integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MAXJOBS = 1000, RND_SEED = 0
 real(dp), parameter :: ALPHA_SPLIT = 1._dp / 21._dp
 integer,  parameter :: NSHUF_STEP = 10
 real,     parameter :: NSHUF_KSIG = 4.
@@ -32,7 +32,7 @@ integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_IT
 real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
 real,    parameter :: SITE_PFLOOR = 1.e-3
-real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_CORR = 0.8, JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
+real,    parameter :: EPS_REG = 0.05, EM_LIM = 20., JUNK_SSNR = 0.35, JUNK_PROJ = 0.75, DOCK_MAX = 3.
 real,    parameter :: JUNK_LIM = 12., JUNK_GAP = 2., JUNK_MINW = 0.005, MAD_SD = 1.4826
 integer, parameter :: JUNK_ITS = 500, NQ_CON = 81, LOC_BOX = 88
 
@@ -42,10 +42,10 @@ end type ivec
 
 type :: shuffle_null
     integer, allocatable :: sjidx(:), soff(:)
-    real,    allocatable :: nul(:), nul2(:)
+    real,    allocatable :: nul2(:)
     integer :: ng = 0, neq = 0, nsh = 0, ndone = 0, nstep = 0, neqref = 0
-    real    :: zc = 0., jsc = 1.
-    logical :: l_z = .false., l_df = .false.
+    real    :: zc = 0.
+    logical :: l_z = .false.
 end type shuffle_null
 
 type :: state_mergeup
@@ -68,8 +68,8 @@ type :: state_mergeup
     ! mdelta, never across cnl
     logical, allocatable :: cnl(:,:)
     logical :: l_equiv = .false.
-    real    :: mdelta = 0., nmed = 0., nmax = 0.
-    integer :: nnull = 0, mtests = 1
+    real    :: mdelta = 0.
+    integer :: mtests = 1
     integer :: audit_calls = 0
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
@@ -86,7 +86,6 @@ type :: state_mergeup
     procedure :: focus
     procedure :: leaf_focus
     procedure :: run
-    procedure :: test
     procedure :: test_once
     procedure :: quality_flag
     procedure :: pose_lines
@@ -101,14 +100,11 @@ type :: state_mergeup
     procedure :: audit_em_wrapper
     procedure, private :: consensus
     procedure, private :: screen
-    procedure, private :: decide
     procedure, private :: decide_once
     procedure, private :: null_upto_df
     procedure, private :: pair_stat_df
     procedure, private :: noise_power
-    procedure, private :: null_upto
     procedure, private :: null_resolve
-    procedure, private :: eqn_stats
     procedure, private :: cross_em
     procedure, private :: em_maps
     procedure, private :: write_em_audit
@@ -120,7 +116,6 @@ type :: state_mergeup
     procedure, private :: finish
     procedure, private :: dock
     procedure, private :: strata
-    procedure, private :: pair_stat
     procedure, private :: shell_fsc
     procedure, private :: shell_corr
     procedure, private :: shell_dot
@@ -456,11 +451,11 @@ contains
         integer,              intent(in)    :: labels(:)
         integer, allocatable, intent(out)   :: units(:)
         type(ivec), allocatable :: ul(:), nl(:), nodes(:)
-        integer,    allocatable :: grp(:), names(:), l2u(:), uptcl(:), cand(:), child(:), chrow(:), newu(:)
-        integer,    allocatable :: to(:), cnt(:), merged(:), junk(:), tst(:), pop(:)
+        integer,    allocatable :: grp(:), names(:), l2u(:), uptcl(:), cand(:), child(:), newu(:)
+        integer,    allocatable :: to(:), merged(:), junk(:), tst(:)
         logical,    allocatable :: isj(:), newj(:)
         integer,    allocatable :: dpairs(:,:), ugrp(:)
-        integer :: g, lv, gi, il, u, nid, i, j, kstar, c, nmerge, ntest, nbefore, big
+        integer :: g, lv, gi, il, u, nid, j, kstar, c, nmerge, ntest, nbefore
         units = max(labels, 0)
         call merge_rule_setup
         allocate(ul(maxval(units)))
@@ -528,48 +523,23 @@ contains
                 end do
                 write(logfhandle,'(A)') '>>> level '//int2str(lv)//' node '//int2str(gi)//': units '//joined(tst)
                 if( allocated(self%lslot) ) call group_mask(tst)
-                if( self%l_equiv )then
-                    call link_matrix(tst)
-                    call self%test(cand, size(tst), child, kstar, junk, ugrp=ugrp)
-                    deallocate(self%cnl)
-                else
-                    call self%test(cand, size(tst), child, kstar, junk)
-                endif
+                call link_matrix(tst)
+                call self%test_once(cand, size(tst), child, kstar, junk, self%mtests, ugrp=ugrp)
+                deallocate(self%cnl)
                 if( allocated(self%lslot) ) self%msk3 = self%msk0
                 do j = 1, size(junk)
                     call pass(tst(junk(j)), .true.)
                 end do
-                allocate(chrow(size(units)), source=0)
-                chrow(self%rows) = child
+                ! units follow decide_once's groups, so a unit the EM drained (group 0) passes alone
                 allocate(to(size(tst)), source=0)
-                allocate(pop(max(1,kstar)), source=0)
-                do c = 1, kstar
-                    pop(c) = count(chrow == c)
-                end do
                 do j = 1, size(tst)
                     if( any(junk == j) )then
                         to(j) = -1
                         cycle
                     endif
-                    u = tst(j)
-                    allocate(cnt(max(1,kstar)), source=0)
-                    do i = 1, size(units)
-                        if( units(i) == u .and. chrow(i) > 0 ) cnt(chrow(i)) = cnt(chrow(i)) + 1
-                    end do
-                    if( sum(cnt) > 0 ) to(j) = maxloc(cnt, dim=1)
-                    deallocate(cnt)
+                    to(j) = ugrp(j)
+                    if( to(j) == 0 ) call pass(tst(j), .false.)
                 end do
-                big = 1
-                if( any(to > 0) ) big = maxloc(pop, dim=1, mask=[(any(to == c), c=1,size(pop))])
-                where( to == 0 ) to = big
-                if( self%l_equiv )then
-                    ! units follow decide's groups, so a group the EM drained cannot carry a unit into a merge decide refused
-                    do j = 1, size(tst)
-                        if( to(j) < 0 ) cycle
-                        to(j) = ugrp(j)
-                        if( to(j) == 0 ) call pass(tst(j), .false.)
-                    end do
-                endif
                 do c = 1, max(1,kstar)
                     if( .not. any(to == c) ) cycle
                     nid = nid + 1
@@ -587,7 +557,7 @@ contains
                 end do
                 write(logfhandle,'(A)') '>>>   level '//int2str(lv)//' node '//int2str(gi)//': '//&
                     &int2str(size(tst))//' units -> K* '//int2str(kstar)//', '//int2str(size(junk))//' junk'
-                deallocate(cand, chrow, to, pop, child, junk)
+                deallocate(cand, to, child, junk)
             end do
             units = newu
             ul    = nl(1:nid)
@@ -702,321 +672,6 @@ contains
 
     end subroutine run
 
-    subroutine test( self, cand, k0, child, kstar, junk, ntests, ugrp )
-        class(state_mergeup), intent(inout) :: self
-        integer,              intent(in)    :: cand(:), k0
-        integer, allocatable, intent(out)   :: child(:), junk(:)
-        integer,              intent(out)   :: kstar
-        integer, optional,    intent(in)    :: ntests
-        integer, allocatable, optional, intent(out) :: ugrp(:)
-        logical, allocatable :: cg(:,:)
-        integer, allocatable :: mapb(:), mape(:)
-        logical :: l_em
-        integer :: m2
-        complex, allocatable :: cons(:,:,:,:)
-        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:)
-        integer, allocatable :: plist(:), gof(:), exa(:), exb(:), starta(:), startb(:), sizes(:), order(:), rank(:)
-        real,    allocatable :: eps(:)
-        type(shuffle_null) :: nl
-        real    :: thr, thr2, mu2, sd2, zc, rst
-        integer :: neq, s, g, m, npair, ii, jj, kem, ng, nsh, nsj, nthr
-        nsh = merge(NSHUF_BONF, NSHUF, present(ntests))
-        ia = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 0)
-        ib = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 1)
-        la = cand(ia)
-        lb = cand(ib)
-        write(logfhandle,'(A)') 'A: '//int2str(size(ia))//' node particles (labels '//joined(counts(la, k0))//&
-            &'); B: '//int2str(size(ib))//' (labels '//joined(counts(lb, k0))//')'
-        call self%consensus(ia, ib, la, lb, k0, neq, eps, cons)
-        call self%screen(ia, ib, la, lb, k0, neq, eps, cons, junk)
-        gcom = pack([(g, g=1,k0)], [(count(la == g) > 0 .and. count(lb == g) > 0, g=1,k0)])
-        ng   = size(gcom)
-        sta  = self%strata(ia)
-        stb  = self%strata(ib)
-        write(logfhandle,'(A)') 'equal N '//int2str(neq)//' per group; band '//int2str(self%klo)//'..'//int2str(self%khi)//&
-            &', re-test band '//int2str(self%kt)//'..'//int2str(self%khi)//'; '//int2str(nsh)//&
-            &' shuffles; stratified null: '//int2str(nuniq(sta))//' / '//int2str(nuniq(stb))//&
-            &' nuisance strata (view x defocus)'
-        nl%ng  = ng
-        nl%neq = neq
-        nl%nsh = nsh
-        nl%l_z = present(ntests)
-        if( nl%l_z ) nl%zc = split_zcrit(ntests)
-        nthr = 1
-        !$ nthr = omp_get_max_threads()
-        nl%nstep = max(NSHUF_STEP, ceiling(real(nthr) / real(max(1, 2*ng))))
-        allocate(nl%nul(0), nl%nul2(0))
-        if( ng >= 2 )then
-            ! all shuffles' subsets are drawn here, in the original order; maps past NSHUF only when the re-test needs them
-            allocate(nl%sjidx(2*ng*neq*nsh))
-            nsj = 0
-            do s = 1, nsh
-                pa = sshuf(la, sta)
-                pb = sshuf(lb, stb)
-                call add_subset_jobs(ia, pa)
-                call add_subset_jobs(ib, pb)
-            end do
-            call self%null_upto(nl, NSHUF, eps, cons)
-        endif
-        thr  = huge(thr)
-        thr2 = huge(thr2)
-        mu2  = 0.
-        sd2  = 0.
-        zc   = nl%zc
-        if( size(nl%nul) > 0 )then
-            thr = maxval(nl%nul)
-            call null_thr(nl, mu2, sd2, thr2)
-            write(logfhandle,'(A)') 'shuffle null ('//int2str(size(nl%nul))//' pair statistics): median '//&
-                &fmtr(real(medianr(nl%nul),dp),3)//', 95 % '//fmtr(real(quantr(nl%nul,0.95),dp),3)//', max '//&
-                &fmtr(real(thr,dp),3)//' -> threshold '//fmtr(real(thr,dp),3)//' (the max of its first '//&
-                &int2str(NSHUF)//' shuffles)'
-            if( .not. nl%l_z ) write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//&
-                &': shuffle null median '//fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//&
-                &' -> threshold '//fmtr(real(thr2,dp),3)
-        endif
-        if( size(nl%nul) > 0 ) call stash(nl%nul, thr)
-        call self%decide(ia, ib, la, lb, k0, eps, neq, cons, self%klo, thr, 'board groups', plist, gof, exa, exb, kstar)
-        allocate(mapb(k0), source=0)
-        do m = 1, size(plist)
-            mapb(plist(m)) = gof(m)
-        end do
-        l_em = kstar >= 2
-        if( kstar >= 2 )then
-            allocate(starta(size(ia)), startb(size(ib)), source=0)
-            do m = 1, size(plist)
-                where( la == plist(m) ) starta = gof(m)
-                where( lb == plist(m) ) startb = gof(m)
-            end do
-            kem = kstar
-            call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
-            write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
-                &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
-            if( size(nl%nul2) > 0 ) call stash(nl%nul2, thr2)
-            if( allocated(self%cnl) )then
-                allocate(cg(kem,kem), source=.false.)
-                do m = 1, size(plist)
-                    do m2 = 1, size(plist)
-                        if( gof(m) /= gof(m2) ) cg(gof(m),gof(m2)) = cg(gof(m),gof(m2)) .or. self%cnl(plist(m),plist(m2))
-                    end do
-                end do
-                call move_alloc(cg, self%cnl)
-            endif
-            if( nl%l_z .and. ng >= 2 )then
-                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
-                    &exa, exb, kstar, rst, nl)
-                call null_thr(nl, mu2, sd2, thr2)
-                write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
-                    &fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(maxval(nl%nul2),dp),3)//', mean / sd '//&
-                    &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)//'; z_crit '//fmtr(real(zc,dp),2)//&
-                    &' (alpha 1/21 over '//int2str(ntests)//' split tests) -> threshold '//fmtr(real(thr2,dp),3)//&
-                    &' from '//int2str(nl%ndone)//' of '//int2str(nsh)//' shuffles'
-                write(logfhandle,'(A)') 're-test: weakest pair '//fmtr(real(rst,dp),3)//' at z '//&
-                    &fmtr(real((rst - mu2) / max(sd2, 1.e-12),dp),2)//' vs z_crit '//fmtr(real(zc,dp),2)//' (m '//&
-                    &int2str(ntests)//') -> '//merge('PASS', 'FAIL', kstar >= 2)//', K* '//int2str(kstar)
-            else
-                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
-                    &exa, exb, kstar, rst)
-            endif
-        endif
-        npair = size(plist)
-        allocate(sizes(kstar), order(kstar), rank(kstar), source=0)
-        do m = 1, npair
-            sizes(gof(m)) = sizes(gof(m)) + count(la == plist(m)) + count(lb == plist(m))
-        end do
-        order = [(ii, ii=1,kstar)]
-        do ii = 2, kstar
-            jj = ii
-            do while( jj > 1 )
-                if( sizes(order(jj-1)) >= sizes(order(jj)) ) exit
-                order(jj-1:jj) = [order(jj), order(jj-1)]
-                jj = jj - 1
-            end do
-        end do
-        do ii = 1, kstar
-            rank(order(ii)) = ii
-        end do
-        allocate(child(self%n), source=0)
-        do ii = 1, size(ia)
-            child(ia(ii)) = group_of(la(ii), exa)
-        end do
-        do ii = 1, size(ib)
-            child(ib(ii)) = group_of(lb(ii), exb)
-        end do
-        if( present(ugrp) )then
-            allocate(ugrp(k0), source=0)
-            if( l_em )then
-                allocate(mape(kem), source=0)
-                do m = 1, size(plist)
-                    mape(plist(m)) = gof(m)
-                end do
-                do ii = 1, k0
-                    if( mapb(ii) > 0 )then
-                        if( mape(mapb(ii)) > 0 ) ugrp(ii) = rank(mape(mapb(ii)))
-                    endif
-                end do
-            else
-                do ii = 1, k0
-                    if( mapb(ii) > 0 ) ugrp(ii) = rank(mapb(ii))
-                end do
-            endif
-        endif
-        if( kstar >= 2 ) call route_members
-        call junk_report(ia, 1, 'A')
-        call junk_report(ib, 2, 'B')
-        write(logfhandle,'(A)') 'K* = '//int2str(kstar)//'; sizes '//joined([(count(child == ii), ii=1,kstar)])//&
-            &'; junk units '//joined(junk)
-        deallocate(cons)
-
-    contains
-
-        subroutine stash( nul_, th )
-            real, intent(in) :: nul_(:), th
-            self%nmed  = medianr(nul_)
-            self%nmax  = th
-            self%nnull = size(nul_)
-        end subroutine stash
-
-        integer function group_of( lab, ex )
-            integer, intent(in) :: lab, ex(0:)
-            integer :: mm, lab_here
-            group_of = 0
-            lab_here = lab
-            if( lab_here <= ubound(ex,1) )then
-                if( ex(lab_here) > 0 ) lab_here = ex(lab_here)
-            endif
-            do mm = 1, npair
-                if( plist(mm) == lab_here ) group_of = rank(gof(mm))
-            end do
-        end function group_of
-
-        ! the K* groups' members from one cross-half pass over shells 2..khi, started from the EM groups and from the stage-B
-        ! states (each to the group holding most of its particles); the higher cross-half log-likelihood decides
-        subroutine route_members
-            integer, allocatable :: ja(:), jb(:), a1(:), b1(:), a2(:), b2(:), smap(:), cnt(:,:), sz(:), rk(:)
-            real(dp), allocatable :: pa1(:), pb1(:), pa2(:), pb2(:), dl(:)
-            real(dp) :: lb1(2), lb2(2), dmg, dse
-            integer  :: ss, gg, mm, nchg, k1
-            logical  :: l_two, l_win2
-            k1 = kstar
-            ja = pack(ia, child(ia) > 0)
-            jb = pack(ib, child(ib) > 0)
-            allocate(cnt(k0,k1), source=0)
-            do mm = 1, size(ja)
-                cnt(cand(ja(mm)),child(ja(mm))) = cnt(cand(ja(mm)),child(ja(mm))) + 1
-            end do
-            do mm = 1, size(jb)
-                cnt(cand(jb(mm)),child(jb(mm))) = cnt(cand(jb(mm)),child(jb(mm))) + 1
-            end do
-            allocate(smap(k0), source=0)
-            do ss = 1, k0
-                if( sum(cnt(ss,:)) > 0 ) smap(ss) = maxloc(cnt(ss,:), dim=1)
-            end do
-            l_two = all([(any(smap == gg), gg=1,k1)])
-            ! as many groups as stage-B states: the states themselves are the K* groups
-            if( k0 == k1 .and. .not. l_two )then
-                smap  = [(ss, ss=1,k0)]
-                l_two = .true.
-            endif
-            ! choose: the re-test band decides between the raw label sets, stage-B only when its margin exceeds 3 SE
-            nchg   = 0
-            l_win2 = .false.
-            dmg    = 0._dp
-            dse    = 0._dp
-            if( l_two )then
-                a1 = child(ja)
-                b1 = child(jb)
-                a2 = smap(cand(ja))
-                b2 = smap(cand(jb))
-                call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., kcut=self%kt, &
-                    &llband=lb1, niter=1, lpa=pa1, lpb=pb1)
-                call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., &
-                    &kcut=self%kt, llband=lb2, niter=1, lpa=pa2, lpb=pb2)
-                a2  = smap(cand(ja))
-                b2  = smap(cand(jb))
-                dl  = [pa2 - pa1, pb2 - pb1]
-                dmg = sum(dl)
-                dse = sqrt(real(size(dl),dp)) * sqrt(sum((dl - dmg / real(size(dl),dp))**2) / real(max(size(dl) - 1, 1),dp))
-                l_win2 = dmg > 3._dp * dse
-                if( l_win2 )then
-                    nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
-                    child(ja) = a2
-                    child(jb) = b2
-                endif
-            endif
-            sz = [(count(child == gg), gg=1,k1)]
-            allocate(rk(0:k1), source=0)
-            do gg = 1, k1
-                if( sz(gg) > 0 ) rk(gg) = count(sz > sz(gg)) + count(sz(1:gg-1) == sz(gg)) + 1
-            end do
-            child = rk(child)
-            kstar = count(sz > 0)
-            if( l_two )then
-                write(logfhandle,'(A)') 'membership by the choose rule, re-test band '//int2str(self%kt)//'..'//&
-                    &int2str(self%khi)//': cross-half log-likelihood of the raw stage-B states minus the raw EM groups '//&
-                    &fmtr(dmg,1)//', SE '//fmtr(dse,1)//' (sqrt(N) x the sd of '//int2str(size(dl))//&
-                    &' per-particle deltas), 3 SE '//fmtr(3._dp*dse,1)//' -> '//&
-                    &trim(merge('stage-B states', 'EM groups     ', l_win2))//' (raw); '//int2str(nchg)//' particles change group'
-            else
-                write(logfhandle,'(A)') 'membership by the choose rule: the stage-B states do not cover the '//int2str(k1)//&
-                    &' groups; the EM groups (raw) stand'
-            endif
-        end subroutine route_members
-
-        subroutine add_subset_jobs( idx, lab )
-            integer, intent(in) :: idx(:), lab(:)
-            integer, allocatable :: sel(:)
-            integer :: gg
-            do gg = 1, ng
-                sel = pack(idx, lab == gcom(gg))
-                if( size(sel) < neq ) THROW_HARD('a shuffled group is smaller than the equal N')
-                call rnd_subset(sel, neq)
-                nl%sjidx(nsj+1:nsj+neq) = sel(1:neq)
-                nsj = nsj + neq
-            end do
-        end subroutine add_subset_jobs
-
-        subroutine junk_report( idx, hh, side )
-            integer,          intent(in) :: idx(:), hh
-            character(len=*), intent(in) :: side
-            complex, allocatable :: jm(:,:,:,:)
-            integer, allocatable :: sel(:), jo(:), ji(:)
-            real,    allocatable :: js(:)
-            character(len=:), allocatable :: line
-            real    :: cc
-            integer :: gg, nsel, mm
-            allocate(ji(0), jo(1), js(0))
-            jo(1) = 1
-            do gg = 1, kstar
-                sel  = pack(idx, [(child(idx(mm)) == gg, mm=1,size(idx))])
-                nsel = 0
-                if( size(sel) >= MINSEL_JUNK )then
-                    nsel = min(size(sel), neq)
-                    call rnd_subset(sel, nsel)
-                endif
-                ji = [ji, sel(1:nsel)]
-                jo = [jo, size(ji) + 1]
-                js = [js, real(max(nsel,1)) / real(neq)]
-            end do
-            allocate(jm(self%nh,self%box,self%box,kstar))
-            call self%maps(ji, jo, js, eps, .true., .false., jm)
-            line = ' half '//side//' states:'
-            do gg = 1, kstar
-                nsel = count([(child(idx(mm)) == gg, mm=1,size(idx))])
-                if( nsel < MINSEL_JUNK )then
-                    line = line//' '//int2str(gg)//':(n='//int2str(nsel)//')'
-                else
-                    cc   = self%shell_corr(jm(:,:,:,gg), cons(:,:,:,hh), 2, self%klo - 1)
-                    line = line//' '//int2str(gg)//':(n='//int2str(nsel)//', consensus corr '//fmtr(real(cc,dp),2)
-                    if( cc < JUNK_CORR ) line = line//', junk-like'
-                    line = line//')'
-                endif
-            end do
-            write(logfhandle,'(A)') line
-            deallocate(jm)
-        end subroutine junk_report
-
-    end subroutine test
-
     ! the single-pass split test (audit 6.7): the SSNR junk screen, one cross-half EM from the stage-B labels, one equal N (the
     ! smallest EM group in either half), maps of every group built once at it, every pair statistic read off them in the hold-out
     ! band, one stratified shuffle null at the same N and one z_crit; the weakest kept pair, the null's mean and sd and N as numbers
@@ -1029,7 +684,7 @@ contains
         real,    optional,    intent(out)   :: stats(6)
         complex, allocatable :: cons(:,:,:,:)
         integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:), starta(:), startb(:)
-        integer, allocatable :: plist(:), gof(:), exa(:), exb(:), sizes(:), order(:), rank(:), mapb(:)
+        integer, allocatable :: plist(:), gof(:), exa(:), exb(:), sizes(:), order(:), rank(:), rkc(:)
         real,    allocatable :: eps(:)
         type(shuffle_null) :: nl
         real    :: mu2, sd2, tmin, tmin0, thr
@@ -1054,7 +709,7 @@ contains
         nthr   = 1
         !$ nthr = omp_get_max_threads()
         nl%nstep = max(NSHUF_STEP, ceiling(real(nthr) / real(max(1, 2*ng))))
-        allocate(nl%nul(0), nl%nul2(0))
+        allocate(nl%nul2(0))
         write(logfhandle,'(A)') 'single pass: equal N '//int2str(neq)//' per group; test band '//int2str(self%kt)//'..'//&
             &int2str(self%khi)//'; up to '//int2str(nl%nsh)//' shuffles; stratified null: '//int2str(nuniq(sta))//' / '//&
             &int2str(nuniq(stb))//' nuisance strata (view x defocus); z_crit '//fmtr(real(nl%zc,dp),2)//' (alpha 1/21 over '//&
@@ -1088,7 +743,6 @@ contains
             end do
             nl%neq    = neq2
             nl%neqref = neq
-            nl%l_df   = .true.
             allocate(nl%sjidx(nl%nsh * (size(ia) + size(ib))), nl%soff(0:2*ng*nl%nsh))
             nl%soff(0) = 0
             nsj = 0
@@ -1135,6 +789,8 @@ contains
         do ii = 1, max(1,kstar)
             rank(order(ii)) = ii
         end do
+        allocate(rkc(0:max(1,kstar)))
+        rkc = [(ii, ii=0,max(1,kstar))]
         allocate(child(self%n), source=0)
         do ii = 1, size(ia)
             child(ia(ii)) = group_of(la(ii), exa)
@@ -1144,13 +800,11 @@ contains
         end do
         if( kstar >= 2 ) call choose_members
         if( present(ugrp) )then
-            ! a stage-B unit follows the EM group that holds most of its particles
+            ! a unit's group is the final one of the EM group it started (decide_once's merges, the choose renumbering), 0 if drained
             allocate(ugrp(k0), source=0)
-            allocate(mapb(k0), source=0)
-            do g = 1, k0
-                if( count(cand(ia) == g .and. child(ia) > 0) + count(cand(ib) == g .and. child(ib) > 0) == 0 ) cycle
-                ugrp(g) = mode_of_pos([pack(child(ia), cand(ia) == g .and. child(ia) > 0), &
-                    &pack(child(ib), cand(ib) == g .and. child(ib) > 0)])
+            do m = 1, ng
+                g = findloc(plist, m, dim=1)
+                if( g > 0 ) ugrp(gcom(m)) = rkc(rank(gof(g)))
             end do
         endif
         if( present(stats) ) stats = [tmin, tmin0, mu2, sd2, nl%zc, real(nl%neq)]
@@ -1172,20 +826,6 @@ contains
                 if( plist(mm) == lab_here ) group_of = rank(gof(mm))
             end do
         end function group_of
-
-        integer function mode_of_pos( v )
-            integer, intent(in) :: v(:)
-            integer :: c, best, mm
-            mode_of_pos = 0
-            best = 0
-            do mm = 1, maxval(v)
-                c = count(v == mm)
-                if( c > best )then
-                    best = c
-                    mode_of_pos = mm
-                endif
-            end do
-        end function mode_of_pos
 
         ! one shuffle's groups of one half, whole, as consecutive jobs j0+1..j0+ng of the null's storage
         subroutine add_full_jobs( idx, lab, j0 )
@@ -1259,6 +899,7 @@ contains
                 if( sz(gg) > 0 ) rk(gg) = count(sz > sz(gg)) + count(sz(1:gg-1) == sz(gg)) + 1
             end do
             child = rk(child)
+            rkc   = rk
             kstar = count(sz > 0)
             if( l_two )then
                 write(logfhandle,'(A)') 'membership by the choose rule, test band '//int2str(self%kt)//'..'//int2str(self%khi)//&
@@ -1416,12 +1057,12 @@ contains
 
     contains
 
-        ! one-sided equivalence at the margin: r_eq = r_hat(stat + 1.645 sd) <= mdelta, sd the null's own
+        ! one-sided equivalence at the margin: r_eq = r_hat(stat + 1.645 sd) at the statistic's n <= mdelta, sd the null's own
         logical function shown_equal( p, q, t )
             integer, intent(in) :: p, q
             real,    intent(in) :: t
             real    :: sg, y, req
-            integer :: nn, i, j
+            integer :: i, j
             logical :: lnk
             lnk = .false.
             if( allocated(self%cnl) )then
@@ -1432,26 +1073,16 @@ contains
                     end do
                 end do
             endif
-            nn  = min(members(la, p), members(la, q), members(lb, p), members(lb, q))
             call null_thr(nl, mu, sd, thr)
             sg  = max(sd, 1.e-3)
             y   = min(max((t + 1.645 * sg - mu) / (1. - mu), 1.e-4), 0.995)
-            req = 2. * y / ((1. - y) * real(max(nn, 1)))
+            req = 2. * y / ((1. - y) * real(max(ndraw, 1)))
             shown_equal = (.not. lnk) .and. req <= self%mdelta
             write(logfhandle,'(A)') 'equivalence: groups '//int2str(p)//' '//int2str(q)//' stat '//fmtr(real(t,dp),3)//' n '//&
-                &int2str(nn)//' null sd '//fmtr(real(sg,dp),3)//' r_eq '//fmtr(real(req,dp),6)//' margin '//&
+                &int2str(ndraw)//' null sd '//fmtr(real(sg,dp),3)//' r_eq '//fmtr(real(req,dp),6)//' margin '//&
                 &fmtr(real(self%mdelta,dp),6)//' -> '//trim(merge('merge             ', merge('keep (cannot-link)', &
                 &'keep (unresolved) ', lnk), shown_equal))
         end function shown_equal
-
-        integer function members( lab, g )
-            integer, intent(in) :: lab(:), g
-            integer :: i
-            members = 0
-            do i = 1, npair
-                if( groupof(i) == g ) members = members + count(lab == plist(i))
-            end do
-        end function members
 
         ! every particle of every present group, one job per group, eps scaled to the group's size over the consensus N
         subroutine add_jobs( idx, lab, pres, ns )
@@ -1792,249 +1423,8 @@ contains
 
     end subroutine screen
 
-    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin, nl )
-        class(state_mergeup), intent(inout) :: self
-        integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), kmax, neq, kl
-        real,                 intent(in)    :: eps(0:), thr
-        complex,              intent(in)    :: cons(:,:,:,:)
-        character(len=*),     intent(in)    :: tag
-        integer, allocatable, intent(out)   :: plist(:), gof(:), exa(:), exb(:)
-        integer,              intent(out)   :: kout
-        real,    optional,    intent(out)   :: rmin
-        type(shuffle_null), optional, intent(inout) :: nl
-        complex, allocatable :: allm(:,:,:,:)
-        integer, allocatable :: presa(:), presb(:), jidx(:), joff(:), mapa(:), mapb(:), groupof(:), pp(:), qq(:)
-        real,    allocatable :: jscale(:), rmat(:,:), merged(:), lowc(:), vals(:)
-        logical, allocatable :: l_alive(:)
-        real    :: best
-        logical :: l_merge
-        integer :: neq_, g, npair, p, q, bp, bq, mm
-        presa = pack([(g, g=1,kmax)], [(count(la == g) > 0, g=1,kmax)])
-        presb = pack([(g, g=1,kmax)], [(count(lb == g) > 0, g=1,kmax)])
-        neq_  = min(minval([(count(la == presa(g)), g=1,size(presa))]), minval([(count(lb == presb(g)), g=1,size(presb))]))
-        allocate(jidx(0), joff(1), jscale(0))
-        joff(1) = 1
-        call add_jobs(ia, la, presa)
-        call add_jobs(ib, lb, presb)
-        allocate(allm(self%nh,self%box,self%box,size(jscale)))
-        call self%maps(jidx, joff, jscale, eps, .true., .false., allm)
-        !$omp parallel do default(shared) private(mm) schedule(dynamic) proc_bind(close)
-        do mm = 1, size(jscale)
-            call self%dock(allm(:,:,:,mm), cons(:,:,:,merge(2,1,mm <= size(presa))), self%kt, self%khi)
-        end do
-        !$omp end parallel do
-        plist = pack(presa, [(any(presb == presa(g)), g=1,size(presa))])
-        npair = size(plist)
-        allocate(mapa(npair), mapb(npair))
-        do mm = 1, npair
-            mapa(mm) = findloc(presa, plist(mm), dim=1)
-            mapb(mm) = size(presa) + findloc(presb, plist(mm), dim=1)
-        end do
-        allocate(exa(0:kmax), exb(0:kmax), source=0)
-        call extras(presa, 0, 1, exa)
-        call extras(presb, size(presa), 2, exb)
-        allocate(lowc(npair))
-        do mm = 1, npair
-            lowc(mm) = self%shell_corr(allm(:,:,:,mapa(mm)) - cons(:,:,:,1), allm(:,:,:,mapb(mm)) - cons(:,:,:,2), &
-                &2, self%klo - 2)
-        end do
-        write(logfhandle,'(A)') '['//tag//'] equal N '//int2str(neq_)//'; test band '//int2str(kl)//'..'//&
-            &int2str(self%khi)//'; paired '//int2str(npair)//' groups (coarse-shell correlation median '//&
-            &fmtr(real(medianr(lowc),dp),3)//')'
-        deallocate(allm)
-        groupof = [(p, p=1,npair)]
-        allocate(rmat(npair,npair), source=0.)
-        allocate(pp(0), qq(0))
-        do p = 1, npair
-            do q = p+1, npair
-                pp = [pp, p]
-                qq = [qq, q]
-            end do
-        end do
-        if( present(rmin) ) rmin = huge(rmin)
-        if( size(pp) > 0 )then
-            allocate(vals(size(pp)))
-            call self%eqn_stats(ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals)
-            do mm = 1, size(pp)
-                rmat(pp(mm),qq(mm)) = vals(mm)
-            end do
-            if( present(rmin) ) rmin = minval(vals)
-            deallocate(vals)
-        endif
-        write(logfhandle,'(A)') 'pair statistics at the start (sorted): '//sorted_upper(rmat, npair)
-        allocate(l_alive(npair), source=.true.)
-        allocate(merged(0))
-        do
-            best = huge(best)
-            bp   = 0
-            bq   = 0
-            do p = 1, npair
-                if( .not. l_alive(p) ) cycle
-                do q = p+1, npair
-                    if( .not. l_alive(q) ) cycle
-                    if( rmat(p,q) < best )then
-                        best = rmat(p,q)
-                        bp   = p
-                        bq   = q
-                    endif
-                end do
-            end do
-            if( bp == 0 ) exit
-            if( present(nl) )then
-                call self%null_resolve(nl, best, eps, cons, l_merge)
-                if( .not. l_merge ) exit
-            else if( best >= thr )then
-                exit
-            endif
-            if( self%l_equiv )then
-                if( .not. shown_equal(bp, bq, best) )then
-                    rmat(bp,bq) = huge(best)
-                    cycle
-                endif
-            endif
-            merged = [merged, best]
-            l_alive(bq) = .false.
-            where( groupof == bq ) groupof = bp
-            pp = pack([(q, q=1,npair)], l_alive .and. [(q /= bp, q=1,npair)])
-            if( size(pp) == 0 ) cycle
-            qq = pp
-            pp = [(min(bp,qq(mm)), mm=1,size(qq))]
-            qq = [(max(bp,qq(mm)), mm=1,size(qq))]
-            allocate(vals(size(pp)))
-            call self%eqn_stats(ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals)
-            do mm = 1, size(pp)
-                rmat(pp(mm),qq(mm)) = vals(mm)
-            end do
-            deallocate(vals)
-        end do
-        allocate(gof(npair))
-        do mm = 1, npair
-            gof(mm) = count(l_alive(1:groupof(mm)))
-        end do
-        kout = count(l_alive)
-        write(logfhandle,'(A)') int2str(size(merged))//' merges at '//joinedr(merged)//' -> '//int2str(kout)//' groups'
-        deallocate(rmat, l_alive, groupof, merged, lowc, mapa, mapb, jidx, joff, jscale)
-
-    contains
-
-        ! one-sided equivalence at the margin: r_eq = r_hat(stat + 1.645 sd) <= mdelta, sd from the null's median and maximum
-        logical function shown_equal( p, q, t )
-            integer, intent(in) :: p, q
-            real,    intent(in) :: t
-            real    :: sg, y, req
-            integer :: nn, i, j
-            logical :: lnk
-            lnk = .false.
-            if( allocated(self%cnl) )then
-                do i = 1, npair
-                    if( groupof(i) /= p ) cycle
-                    do j = 1, npair
-                        if( groupof(j) == q ) lnk = lnk .or. self%cnl(plist(i), plist(j))
-                    end do
-                end do
-            endif
-            nn  = min(members(la, p), members(la, q), members(lb, p), members(lb, q))
-            sg  = max((self%nmax - self%nmed) / max(blom_emax(self%nnull), 1.e-6), 1.e-3)
-            y   = min(max((t + 1.645 * sg - self%nmed) / (1. - self%nmed), 1.e-4), 0.995)
-            req = 2. * y / ((1. - y) * real(max(nn, 1)))
-            shown_equal = (.not. lnk) .and. req <= self%mdelta
-            write(logfhandle,'(A)') 'equivalence: groups '//int2str(p)//' '//int2str(q)//' stat '//fmtr(real(t,dp),3)//' n '//&
-                &int2str(nn)//' null sd '//fmtr(real(sg,dp),3)//' r_eq '//fmtr(real(req,dp),6)//' margin '//&
-                &fmtr(real(self%mdelta,dp),6)//' -> '//trim(merge('merge             ', merge('keep (cannot-link)', &
-                &'keep (unresolved) ', lnk), shown_equal))
-        end function shown_equal
-
-        integer function members( lab, g )
-            integer, intent(in) :: lab(:), g
-            integer :: i
-            members = 0
-            do i = 1, npair
-                if( groupof(i) == g ) members = members + count(lab == plist(i))
-            end do
-        end function members
-
-        subroutine add_jobs( idx, lab, pres )
-            integer, intent(in) :: idx(:), lab(:), pres(:)
-            integer, allocatable :: sel(:)
-            integer :: gg
-            do gg = 1, size(pres)
-                sel = pack(idx, lab == pres(gg))
-                call rnd_subset(sel, neq_)
-                jidx   = [jidx, sel(1:neq_)]
-                joff   = [joff, size(jidx) + 1]
-                jscale = [jscale, real(neq_) / real(neq)]
-            end do
-        end subroutine add_jobs
-
-        subroutine extras( pres, off, hh, ex )
-            integer, intent(in)    :: pres(:), off, hh
-            integer, intent(inout) :: ex(0:)
-            real    :: cc, bestc
-            integer :: gg, mmm, ipair
-            do gg = 1, size(pres)
-                if( any(plist == pres(gg)) ) cycle
-                bestc = -huge(bestc)
-                do mmm = 1, npair
-                    ipair = findloc(pres, plist(mmm), dim=1)
-                    cc = self%shell_corr(allm(:,:,:,off+gg) - cons(:,:,:,hh), allm(:,:,:,off+ipair) - cons(:,:,:,hh), &
-                        &2, self%klo - 2)
-                    if( cc > bestc )then
-                        bestc = cc
-                        ex(pres(gg)) = plist(mmm)
-                    endif
-                end do
-            end do
-        end subroutine extras
-
-    end subroutine decide
-
-    subroutine null_upto( self, nl, n, eps, cons )
-        class(state_mergeup), intent(inout) :: self
-        type(shuffle_null),   intent(inout) :: nl
-        integer,              intent(in)    :: n
-        real,                 intent(in)    :: eps(0:)
-        complex,              intent(in)    :: cons(:,:,:,:)
-        complex, allocatable :: nm(:,:,:,:)
-        integer, allocatable :: joff(:)
-        real,    allocatable :: jscale(:), vals(:), vals2(:)
-        integer :: nbatch, s1, s2, nb, nj, npr, m, ipr, s, ii, g, q, j, ng
-        ng     = nl%ng
-        npr    = ng * (ng - 1) / 2
-        nbatch = max(1, min(nl%nsh, MAXJOBS / max(1, 2*ng)))
-        do s1 = nl%ndone + 1, n, nbatch
-            s2     = min(n, s1 + nbatch - 1)
-            nb     = s2 - s1 + 1
-            nj     = 2 * ng * nb
-            joff   = [(1 + j*nl%neq, j=0,nj)]
-            jscale = [(nl%jsc, j=1,nj)]
-            allocate(nm(self%nh,self%box,self%box,nj))
-            call self%maps(nl%sjidx((s1-1)*2*ng*nl%neq+1:s2*2*ng*nl%neq), joff, jscale, eps, .true., .false., nm)
-            !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
-            do m = 1, nj
-                call self%dock(nm(:,:,:,m), cons(:,:,:,2-mod((m-1)/ng,2)), self%kt, self%khi)
-            end do
-            !$omp end parallel do
-            allocate(vals(npr*nb), vals2(npr*nb))
-            !$omp parallel do default(shared) private(ipr,s,g,q,ii) schedule(dynamic) proc_bind(close)
-            do ipr = 1, npr*nb
-                s  = (ipr - 1) / npr
-                ii = ipr - s * npr
-                call pair_index(ii, ng, g, q)
-                vals(ipr)  = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
-                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%klo)
-                vals2(ipr) = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
-                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%kt)
-            end do
-            !$omp end parallel do
-            nl%nul  = [nl%nul, vals]
-            nl%nul2 = [nl%nul2, vals2]
-            deallocate(nm, vals, vals2)
-        end do
-        nl%ndone = max(nl%ndone, n)
-    end subroutine null_upto
-
     ! the shuffle null of the draw-free statistic: every shuffled group's maps from all its particles, the statistic at the
-    ! common n nl%neq; nul and nul2 both hold the test-band values
+    ! common n nl%neq; nul2 holds the test-band values
     subroutine null_upto_df( self, nl, n, eps, cons )
         class(state_mergeup), intent(inout) :: self
         type(shuffle_null),   intent(inout) :: nl
@@ -2081,7 +1471,6 @@ contains
                     &nm(:,:,:,s*2*ng+ng+q), s2(:,s*2*ng+g), s2(:,s*2*ng+q), nl%neq, self%kt)
             end do
             !$omp end parallel do
-            nl%nul  = [nl%nul, vals]
             nl%nul2 = [nl%nul2, vals]
             deallocate(nm, s2, vals)
         end do
@@ -2109,7 +1498,7 @@ contains
 
     ! the draw-free pair statistic: per shell the between-group signal from the cross-half product of the full-N difference maps
     ! (the noise cancels), the noise of a difference of two n-particle maps from the groups' per-particle noise powers, the
-    ! expected cross-half FSC at n, and as pair_stat the peak of its 3-shell means over the band
+    ! expected cross-half FSC at n, and the peak of its 3-shell means over the band
     real function pair_stat_df( self, ap, aq, bp, bq, s2p, s2q, n, kl )
         class(state_mergeup), intent(in) :: self
         complex,              intent(in) :: ap(:,:,:), aq(:,:,:), bp(:,:,:), bq(:,:,:)
@@ -2150,75 +1539,10 @@ contains
             call null_thr(nl, mu, sd, thr)
             if( nl%ndone >= nl%nsh ) exit
             if( abs(r - thr) > NSHUF_KSIG * sd * null_spread(nl%ndone, nl%nsh, nl%zc) ) exit
-            if( nl%l_df )then
-                call self%null_upto_df(nl, min(nl%nsh, nl%ndone + nl%nstep), eps, cons)
-            else
-                call self%null_upto(nl, min(nl%nsh, nl%ndone + nl%nstep), eps, cons)
-            endif
+            call self%null_upto_df(nl, min(nl%nsh, nl%ndone + nl%nstep), eps, cons)
         end do
         l_merge = r < thr
     end subroutine null_resolve
-
-    subroutine eqn_stats( self, ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals )
-        class(state_mergeup), intent(inout) :: self
-        integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), plist(:), groupof(:), pp(:), qq(:), neq, kl
-        real,                 intent(in)    :: eps(0:)
-        complex,              intent(in)    :: cons(:,:,:,:)
-        real,                 intent(out)   :: vals(:)
-        complex, allocatable :: pm(:,:,:,:)
-        integer, allocatable :: jidx(:), joff(:), ga(:), gb(:)
-        real,    allocatable :: jscale(:)
-        integer :: j, m
-        ga = [(group_of_label(la(m)), m=1,size(la))]
-        gb = [(group_of_label(lb(m)), m=1,size(lb))]
-        allocate(jidx(0), joff(1), jscale(0))
-        joff(1) = 1
-        do j = 1, size(pp)
-            call pair_jobs(ia, ga, pp(j), qq(j))
-            call pair_jobs(ib, gb, pp(j), qq(j))
-        end do
-        allocate(pm(self%nh,self%box,self%box,size(jscale)))
-        call self%maps(jidx, joff, jscale, eps, .true., .false., pm)
-        !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
-        do m = 1, size(jscale)
-            call self%dock(pm(:,:,:,m), cons(:,:,:,merge(2,1,mod(m-1,4) < 2)), self%kt, self%khi)
-        end do
-        !$omp end parallel do
-        !$omp parallel do default(shared) private(j) schedule(dynamic) proc_bind(close)
-        do j = 1, size(pp)
-            vals(j) = self%pair_stat(pm(:,:,:,4*j-3), pm(:,:,:,4*j-2), pm(:,:,:,4*j-1), pm(:,:,:,4*j), kl)
-        end do
-        !$omp end parallel do
-        deallocate(pm, jidx, joff, jscale)
-
-    contains
-
-        integer function group_of_label( lab )
-            integer, intent(in) :: lab
-            integer :: mm
-            group_of_label = 0
-            do mm = 1, size(plist)
-                if( plist(mm) == lab ) group_of_label = groupof(mm)
-            end do
-        end function group_of_label
-
-        subroutine pair_jobs( idx, grp, p, q )
-            integer, intent(in) :: idx(:), grp(:), p, q
-            integer, allocatable :: sp(:), sq(:)
-            integer :: nn
-            allocate(sp, source=pack(idx, grp == p))
-            allocate(sq, source=pack(idx, grp == q))
-            nn = max(1, min(size(sp), size(sq)))
-            call rnd_subset(sp, nn)
-            call rnd_subset(sq, nn)
-            jidx   = [jidx, sp(1:nn)]
-            joff   = [joff, size(jidx) + 1]
-            jidx   = [jidx, sq(1:nn)]
-            joff   = [joff, size(jidx) + 1]
-            jscale = [jscale, real(nn) / real(neq), real(nn) / real(neq)]
-        end subroutine pair_jobs
-
-    end subroutine eqn_stats
 
     subroutine cross_em( self, ia, ib, starta, startb, k, eps, neq, la, lb, l_full, ll, kcut, llband, niter, lpa, lpb )
         class(state_mergeup), intent(inout) :: self
@@ -4262,19 +3586,6 @@ contains
         end do
     end function strata
 
-    real function pair_stat( self, a1, a2, b1, b2, kl )
-        class(state_mergeup), intent(in) :: self
-        complex,              intent(in) :: a1(:,:,:), a2(:,:,:), b1(:,:,:), b2(:,:,:)
-        integer,              intent(in) :: kl
-        real    :: f(0:self%nyq)
-        integer :: k
-        call self%shell_fsc(a1 - a2, b1 - b2, f)
-        pair_stat = -huge(1.)
-        do k = kl, max(self%khi - 2, kl)
-            pair_stat = max(pair_stat, sum(f(k:k+2)) / 3.)
-        end do
-    end function pair_stat
-
     subroutine dock( self, cm, cref, b1, b2 )
         class(state_mergeup), intent(in)    :: self
         complex,              intent(inout) :: cm(:,:,:)
@@ -4548,13 +3859,6 @@ contains
         endif
     end subroutine zl_post
 
-    subroutine rnd_subset( sel, m )
-        use simple_rnd, only: partial_shuffle
-        integer, intent(inout) :: sel(:)
-        integer, intent(in)    :: m
-        call partial_shuffle(sel, m)
-    end subroutine rnd_subset
-
     function sshuf( lab, st ) result( out )
         use simple_rnd, only: shuffle
         integer, intent(in)  :: lab(:), st(:)
@@ -4610,27 +3914,6 @@ contains
             v(j+1) = t
         end do
     end subroutine isort
-
-    ! expected maximum of k standard normals (Blom), by bisection on the normal tail
-    real function blom_emax( k )
-        integer, intent(in) :: k
-        real(dp) :: p, lo, hi, mid
-        integer  :: it
-        blom_emax = 0.
-        if( k < 2 ) return
-        p  = 1._dp - (real(k,dp) - 0.375_dp) / (real(k,dp) + 0.25_dp)
-        lo = 0._dp
-        hi = 12._dp
-        do it = 1, 80
-            mid = 0.5_dp * (lo + hi)
-            if( 0.5_dp * erfc(mid / sqrt(2._dp)) > p )then
-                lo = mid
-            else
-                hi = mid
-            endif
-        end do
-        blom_emax = real(0.5_dp * (lo + hi))
-    end function blom_emax
 
     ! the equivalence merge-up's inputs from a tree's own tables: every node whose split wrote K* >= 2 to split/split_stats.txt
     ! gives the effect r_hat of its weakest kept pair (the margin is the smallest); its stage-B leaves <node>_s1 / _s2 are
