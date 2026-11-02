@@ -2144,7 +2144,7 @@ contains
     end subroutine exec_state_mergeup
 
     subroutine exec_state_split( self, cline )
-        use simple_state_mergeup, only: state_mergeup, EM_LIM, locality_guard, write_split_stats
+        use simple_state_mergeup, only: state_mergeup, EM_LIM, locality_guard, effect_floor, write_split_stats
         use simple_eo_partition,  only: ensure_field_halves
         class(commander_state_split), intent(inout) :: self
         class(cmdline),               intent(inout) :: cline
@@ -2201,6 +2201,7 @@ contains
         call fclose(funit)
         deallocate(out)
         call locality_guard(labels(rows), child, kstar, params%mskdiam, split)
+        call effect_floor(labels(rows), child, kstar, params%mskdiam)
         call write_split_stats('split_stats.txt', st, kstar, params%split_ntests, kpre)
         call split%write_weights('ptcl_weights.txt')
         call fopen(funit, string('split_stats.txt'), status='old', action='write', position='append', iostat=ios)

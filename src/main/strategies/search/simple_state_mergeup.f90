@@ -19,7 +19,8 @@ use simple_linalg,        only: matinv
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_subspace, gram_corr, gram_resid, fisher_z, ivec, EM_LIM
-public :: HALVES_KSIG, mask_neff, seed_poles, split_zcrit, locality_guard, write_split_stats, read_split_stats, SITE_GRID
+public :: HALVES_KSIG, mask_neff, seed_poles, split_zcrit, locality_guard, effect_floor, write_split_stats, read_split_stats
+public :: SITE_GRID
 private
 #include "simple_local_flags.inc"
 
@@ -5039,25 +5040,161 @@ contains
     end subroutine group_halves
 
     real function pair_locality( stb, s, t, mskdiam ) result( ratio )
-        use simple_imghead,       only: get_mrcfile_info
-        use simple_srch_sort_loc, only: hpsort
+        use simple_imghead, only: get_mrcfile_info
         character(len=*), intent(in) :: stb
         integer,          intent(in) :: s, t
         real,             intent(in) :: mskdiam
-        real, parameter :: SIG = 3., TOPQ = 0.05, EDGE = 6.
-        type(image)       :: img(4), w
+        type(image) :: img(4)
         character(len=:), allocatable :: fn(:)
-        real, allocatable :: pw(:,:), fb(:), c14(:), c23(:), g(:), gk(:), bf(:), m(:,:,:), sp(:)
-        real, allocatable :: r1(:,:,:), r2(:,:,:), r3(:,:,:), r4(:,:,:), res(:,:,:), nse(:,:,:), con(:,:,:), ex(:,:,:)
-        real    :: smpd, rad, d, den, lsh, lref
-        integer :: ldim(3), i, j, k, n, sh
+        real    :: smpd, p
+        integer :: ldim(3), i
         allocate(character(len=len(stb)+40) :: fn(4))
         fn(1) = stb//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc'
         fn(2) = stb//'/recvol_state'//int2str_pad(s,2)//'_odd_unfil.mrc'
         fn(3) = stb//'/recvol_state'//int2str_pad(t,2)//'_even_unfil.mrc'
         fn(4) = stb//'/recvol_state'//int2str_pad(t,2)//'_odd_unfil.mrc'
         call get_mrcfile_info(string(trim(fn(1))), ldim, 'M', smpd, .false.)
-        rad = 0.5 * mskdiam / smpd
+        do i = 1, 4
+            call img(i)%new(ldim, smpd)
+            call img(i)%read(string(trim(fn(i))))
+        end do
+        call pair_maps(img, mskdiam, ratio, p)
+        do i = 1, 4
+            call img(i)%kill
+        end do
+    end function pair_locality
+
+    ! the effect floor: a child pair whose reproducible difference power is under EFF_MIN x the node's half-map noise power merges
+    subroutine effect_floor( lab, child, kstar, mskdiam )
+        use simple_imghead, only: get_mrcfile_info
+        integer, intent(in)    :: lab(:)
+        integer, intent(inout) :: child(:), kstar
+        real,    intent(in)    :: mskdiam
+        real, parameter :: EFF_MIN = 2.
+        character(len=*), parameter :: STB = '../stageB'
+        type(image)       :: img(4)
+        real, allocatable :: em(:,:,:,:), om(:,:,:,:), eu(:,:,:), ou(:,:,:), ge(:,:,:), go(:,:,:), he(:,:,:), ho(:,:,:)
+        integer, allocatable :: cnt(:,:), sz(:), rk(:)
+        real    :: smpd, nnode, p, r, rmin, dum
+        integer :: ldim(3), nst, ng, s, g, h, gm, hm, kold, i
+        logical :: l_ex
+        if( kstar < 2 ) return
+        nst = maxval(lab)
+        ng  = maxval(child)
+        allocate(cnt(nst,ng))
+        do s = 1, nst
+            cnt(s,:) = [(count(lab == s .and. child == g), g=1,ng)]
+        end do
+        do s = 1, nst
+            if( sum(cnt(s,:)) == 0 ) cycle
+            inquire(file=STB//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc', exist=l_ex)
+            if( .not. l_ex )then
+                write(logfhandle,'(A)') 'effect floor: stage-B half maps not found under '//STB//'; skipped'
+                return
+            endif
+            call get_mrcfile_info(string(STB//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc'), ldim, 'M', smpd, .false.)
+        end do
+        allocate(em(ldim(1),ldim(2),ldim(3),nst), om(ldim(1),ldim(2),ldim(3),nst), source=0.)
+        allocate(eu(ldim(1),ldim(2),ldim(3)), ou(ldim(1),ldim(2),ldim(3)), source=0.)
+        do i = 1, 4
+            call img(i)%new(ldim, smpd)
+        end do
+        do s = 1, nst
+            if( sum(cnt(s,:)) == 0 ) cycle
+            call img(1)%read(string(STB//'/recvol_state'//int2str_pad(s,2)//'_even_unfil.mrc'))
+            call img(2)%read(string(STB//'/recvol_state'//int2str_pad(s,2)//'_odd_unfil.mrc'))
+            em(:,:,:,s) = img(1)%get_rmat()
+            om(:,:,:,s) = img(2)%get_rmat()
+            eu = eu + real(sum(cnt(s,:))) * em(:,:,:,s)
+            ou = ou + real(sum(cnt(s,:))) * om(:,:,:,s)
+        end do
+        eu = eu / real(max(sum(cnt), 1))
+        ou = ou / real(max(sum(cnt), 1))
+        call img(1)%set_rmat(eu, .false.)
+        call img(2)%set_rmat(ou, .false.)
+        call img(3)%set_rmat(eu, .false.)
+        call img(4)%set_rmat(ou, .false.)
+        call pair_maps(img, mskdiam, dum, p, nnode)
+        kold = kstar
+        do
+            if( count([(any(child == g), g=1,ng)]) < 2 ) exit
+            rmin = huge(rmin)
+            gm   = 0
+            hm   = 0
+            do g = 1, ng - 1
+                if( .not. any(child == g) ) cycle
+                call group_maps(g, ge, go)
+                do h = g + 1, ng
+                    if( .not. any(child == h) ) cycle
+                    call group_maps(h, he, ho)
+                    call img(1)%set_rmat(ge, .false.)
+                    call img(2)%set_rmat(go, .false.)
+                    call img(3)%set_rmat(he, .false.)
+                    call img(4)%set_rmat(ho, .false.)
+                    call pair_maps(img, mskdiam, dum, p)
+                    r = p / max(nnode, 1.e-30)
+                    write(logfhandle,'(A)') 'effect floor: groups '//int2str(g)//' / '//int2str(h)//' difference power over the '//&
+                        &'node''s half-map noise power P / N '//fmtr(real(r,dp),3)
+                    if( r < rmin )then
+                        rmin = r
+                        gm   = g
+                        hm   = h
+                    endif
+                end do
+            end do
+            if( rmin >= EFF_MIN ) exit
+            write(logfhandle,'(A)') 'effect floor: groups '//int2str(gm)//' / '//int2str(hm)//' differ by too little (P / N '//&
+                &fmtr(real(rmin,dp),3)//' < '//fmtr(real(EFF_MIN,dp),2)//') -> merged'
+            where( child == hm ) child = gm
+            cnt(:,gm) = cnt(:,gm) + cnt(:,hm)
+            cnt(:,hm) = 0
+        end do
+        sz = [(count(child == g), g=1,ng)]
+        allocate(rk(0:ng), source=0)
+        do g = 1, ng
+            if( sz(g) > 0 ) rk(g) = count(sz > sz(g)) + count(sz(1:g-1) == sz(g)) + 1
+        end do
+        child = rk(child)
+        kstar = count(sz > 0)
+        write(logfhandle,'(A)') 'effect floor: K* '//int2str(kold)//' -> '//int2str(kstar)
+        do i = 1, 4
+            call img(i)%kill
+        end do
+
+    contains
+
+        subroutine group_maps( g, e, o )
+            integer,           intent(in)  :: g
+            real, allocatable, intent(out) :: e(:,:,:), o(:,:,:)
+            integer :: s
+            allocate(e(ldim(1),ldim(2),ldim(3)), o(ldim(1),ldim(2),ldim(3)), source=0.)
+            do s = 1, nst
+                if( cnt(s,g) == 0 ) cycle
+                e = e + real(cnt(s,g)) * em(:,:,:,s)
+                o = o + real(cnt(s,g)) * om(:,:,:,s)
+            end do
+            e = e / real(max(sum(cnt(:,g)), 1))
+            o = o / real(max(sum(cnt(:,g)), 1))
+        end subroutine group_maps
+
+    end subroutine effect_floor
+
+    ! the guard's pair statistic on four half maps (s: img 1, 2; t: img 3, 4): L / L_ref, the difference power P, s's noise power
+    subroutine pair_maps( img, mskdiam, ratio, p, pnoise )
+        use simple_srch_sort_loc, only: hpsort
+        type(image),    intent(inout) :: img(4)
+        real,           intent(in)    :: mskdiam
+        real,           intent(out)   :: ratio, p
+        real, optional, intent(out)   :: pnoise
+        real, parameter :: SIG = 3., TOPQ = 0.05, EDGE = 6.
+        type(image)       :: w
+        real, allocatable :: pw(:,:), fb(:), c14(:), c23(:), g(:), gk(:), bf(:), m(:,:,:), sp(:)
+        real, allocatable :: r1(:,:,:), r2(:,:,:), r3(:,:,:), r4(:,:,:), res(:,:,:), nse(:,:,:), con(:,:,:), ex(:,:,:)
+        real    :: smpd, rad, d, den, lsh, lref
+        integer :: ldim(3), i, j, k, n, sh
+        ldim = img(1)%get_ldim()
+        smpd = img(1)%get_smpd()
+        rad  = 0.5 * mskdiam / smpd
         allocate(m(ldim(1),ldim(2),ldim(3)))
         do k = 1, ldim(3)
             do j = 1, ldim(2)
@@ -5158,6 +5295,6 @@ contains
             top_share = sum(vs(size(vs)-nt+1:)) / sum(vs)
         end function top_share
 
-    end function pair_locality
+    end subroutine pair_maps
 
 end module simple_state_mergeup
