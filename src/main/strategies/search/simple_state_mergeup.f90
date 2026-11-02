@@ -2080,10 +2080,12 @@ contains
         complex, allocatable :: mp(:,:,:,:,:), rf(:,:,:,:,:), tm(:,:,:,:), da(:,:,:), db(:,:,:)
         real,    allocatable :: sm(:,:,:), wa(:,:), wb(:,:), rot(:,:,:,:), fw2(:), key(:), cn(:)
         real(dp),allocatable :: epsb(:), epsf(:)
+        complex(dp), allocatable :: nma(:,:,:), nmb(:,:,:), nm2(:,:,:), nmp(:,:,:)
+        real(dp),    allocatable :: dna(:,:,:), dnb(:,:,:), dn2(:,:,:), dnp(:,:,:)
         integer, allocatable :: ia(:), ib(:), oa(:), ob(:), fhk(:,:)
         real(dp) :: bta(self%nshem), btb(self%nshem), s2a(self%nshem), s2b(self%nshem), pra(2), prb(2)
         real    :: f(0:self%nyq), cbest, chga, chgb
-        integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2, nsym
+        integer :: it, g, ig, nh2, i, ngrid, nfull, h, k, r2, nsym, npa, npb
         call vol%read_and_crop(mfile, self%p%smpd, self%box, self%p%smpd_crop)
         sm = min(max(vol%get_rmat(), 0.), 1.) * self%msk3
         call vol%kill
@@ -2133,13 +2135,18 @@ contains
                 &'inside the site mask ('//fmtr(100._dp*real(count(sm > 0.5),dp)/real(max(1,count(self%msk3 > 0.5)),dp),1)//&
                 &' % of the sphere)'
         endif
+        ! the all-particle sums are fixed and the maps linear in the weights: class 1 = all - class 2
+        call nn_acc(ia, [(1., i=1,size(ia))], self%emhk, self%emw, nma, dna)
+        call nn_acc(ib, [(1., i=1,size(ib))], self%emhk, self%emw, nmb, dnb)
+        call nn_norm(nma, dna, epsb, real(size(ia),dp), mp(:,:,:,3,1))
+        call nn_norm(nmb, dnb, epsb, real(size(ib),dp), mp(:,:,:,3,2))
         do it = 1, merge(0, SITE_ITS, size(score) > 0)
-            call nn_map(ia, wa(:,1), self%emhk, self%emw, epsb, mp(:,:,:,1,1))
-            call nn_map(ia, wa(:,2), self%emhk, self%emw, epsb, mp(:,:,:,2,1))
-            call nn_map(ia, [(1., i=1,size(ia))], self%emhk, self%emw, epsb, mp(:,:,:,3,1))
-            call nn_map(ib, wb(:,1), self%emhk, self%emw, epsb, mp(:,:,:,1,2))
-            call nn_map(ib, wb(:,2), self%emhk, self%emw, epsb, mp(:,:,:,2,2))
-            call nn_map(ib, [(1., i=1,size(ib))], self%emhk, self%emw, epsb, mp(:,:,:,3,2))
+            call nn_acc(ia, wa(:,2), self%emhk, self%emw, nm2, dn2)
+            call nn_norm(nma - nm2, dna - dn2, epsb, sum(real(wa(:,1),dp)), mp(:,:,:,1,1))
+            call nn_norm(nm2, dn2, epsb, sum(real(wa(:,2),dp)), mp(:,:,:,2,1))
+            call nn_acc(ib, wb(:,2), self%emhk, self%emw, nm2, dn2)
+            call nn_norm(nmb - nm2, dnb - dn2, epsb, sum(real(wb(:,1),dp)), mp(:,:,:,1,2))
+            call nn_norm(nm2, dn2, epsb, sum(real(wb(:,2),dp)), mp(:,:,:,2,2))
             do g = 1, 2
                 call self%shell_fsc(mp(:,:,:,g,1) - mp(:,:,:,3,1), mp(:,:,:,g,2) - mp(:,:,:,3,2), f)
                 f = min(max(f, 0.), 1.)
@@ -2177,10 +2184,15 @@ contains
         allocate(curve(4,ngrid), source=0.)
         cbest = -huge(cbest)
         nstar = SITE_GRID(1)
+        npa   = 0
+        npb   = 0
         do ig = 1, ngrid
             nh2 = SITE_GRID(ig) / 2
-            call nn_map(ia(oa(1:min(nh2,size(ia)))), [(1., i=1,min(nh2,size(ia)))], fhk, fw2, epsf, tm(:,:,:,3))
-            call nn_map(ib(ob(1:min(nh2,size(ib)))), [(1., i=1,min(nh2,size(ib)))], fhk, fw2, epsf, tm(:,:,:,4))
+            ! the grid's top-N sets are nested: each one adds its new members to the previous sums
+            call nn_grow(ia, oa, min(nh2,size(ia)), npa, nma, dna)
+            call nn_norm(nma, dna, epsf, real(npa,dp), tm(:,:,:,3))
+            call nn_grow(ib, ob, min(nh2,size(ib)), npb, nmb, dnb)
+            call nn_norm(nmb, dnb, epsf, real(npb,dp), tm(:,:,:,4))
             da = masked(tm(:,:,:,3) - tm(:,:,:,1))
             db = masked(tm(:,:,:,4) - tm(:,:,:,2))
             curve(1,ig) = real(SITE_GRID(ig))
@@ -2251,13 +2263,56 @@ contains
             complex,  intent(out) :: out(:,:,:)
             complex(dp), allocatable :: num(:,:,:)
             real(dp),    allocatable :: den(:,:,:)
+            call nn_acc(pidx, pw, hk, sw, num, den)
+            call nn_norm(num, den, epsv, sum(real(pw,dp)), out)
+        end subroutine nn_map
+
+        subroutine nn_grow( pidx, ord, k, np, num, den )
+            integer,                  intent(in)    :: pidx(:), ord(:), k
+            integer,                  intent(inout) :: np
+            complex(dp), allocatable, intent(inout) :: num(:,:,:)
+            real(dp),    allocatable, intent(inout) :: den(:,:,:)
+            integer :: jj
+            if( np == 0 )then
+                call nn_acc(pidx(ord(1:k)), [(1., jj=1,k)], fhk, fw2, num, den)
+            else if( k > np )then
+                call nn_acc(pidx(ord(np+1:k)), [(1., jj=np+1,k)], fhk, fw2, nm2, dn2)
+                num = num + nm2
+                den = den + dn2
+            endif
+            np = max(np, k)
+        end subroutine nn_grow
+
+        subroutine nn_norm( num, den, epsv, wpw, out )
+            complex(dp), intent(in)  :: num(:,:,:)
+            real(dp),    intent(in)  :: den(:,:,:), epsv(0:), wpw
+            complex,     intent(out) :: out(:,:,:)
+            real(dp) :: wsum
+            integer  :: hh, kk, ll
+            wsum = max(wpw, 1._dp)
+            do ll = 1, self%box
+                do kk = 1, self%box
+                    do hh = 1, self%nh
+                        out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * wsum), kind=kind(out))
+                    end do
+                end do
+            end do
+        end subroutine nn_norm
+
+        subroutine nn_acc( pidx, pw, hk, sw, num, den )
+            integer,                  intent(in)  :: pidx(:), hk(:,:)
+            real,                     intent(in)  :: pw(:), sw(:)
+            complex(dp), allocatable, intent(out) :: num(:,:,:)
+            real(dp),    allocatable, intent(out) :: den(:,:,:)
             complex(dp) :: v, vj
-            real(dp)    :: c2v, wsum
-            integer     :: ii, j, is, c1(3), c2(3), hh, kk, ll
+            real(dp)    :: c2v
+            integer     :: ii, j, is, c1(3), c2(3)
             logical     :: cnj
-            allocate(num(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
-            allocate(den(self%nh,self%box,self%box), source=0._dp)
-            !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,v,vj,c2v) schedule(static) reduction(+:num,den) &
+            complex(dp), allocatable :: numl(:,:,:)
+            real(dp),    allocatable :: denl(:,:,:)
+            allocate(numl(self%nh,self%box,self%box), source=cmplx(0._dp,0._dp,dp))
+            allocate(denl(self%nh,self%box,self%box), source=0._dp)
+            !$omp parallel do default(shared) private(ii,j,is,c1,c2,cnj,v,vj,c2v) schedule(static) reduction(+:numl,denl) &
             !$omp& proc_bind(close)
             do ii = 1, size(pidx)
                 if( pw(ii) <= 0. ) cycle
@@ -2270,27 +2325,21 @@ contains
                         v = vj
                         if( cnj ) v = conjg(v)
                         if( c2(1) > 0 )then
-                            num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + 0.5_dp * v
-                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
-                            num(c2(1),c2(2),c2(3)) = num(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
-                            den(c2(1),c2(2),c2(3)) = den(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
+                            numl(c1(1),c1(2),c1(3)) = numl(c1(1),c1(2),c1(3)) + 0.5_dp * v
+                            denl(c1(1),c1(2),c1(3)) = denl(c1(1),c1(2),c1(3)) + 0.5_dp * c2v
+                            numl(c2(1),c2(2),c2(3)) = numl(c2(1),c2(2),c2(3)) + 0.5_dp * conjg(v)
+                            denl(c2(1),c2(2),c2(3)) = denl(c2(1),c2(2),c2(3)) + 0.5_dp * c2v
                         else
-                            num(c1(1),c1(2),c1(3)) = num(c1(1),c1(2),c1(3)) + v
-                            den(c1(1),c1(2),c1(3)) = den(c1(1),c1(2),c1(3)) + c2v
+                            numl(c1(1),c1(2),c1(3)) = numl(c1(1),c1(2),c1(3)) + v
+                            denl(c1(1),c1(2),c1(3)) = denl(c1(1),c1(2),c1(3)) + c2v
                         endif
                     end do
                 end do
             end do
             !$omp end parallel do
-            wsum = max(sum(real(pw,dp)), 1._dp)
-            do ll = 1, self%box
-                do kk = 1, self%box
-                    do hh = 1, self%nh
-                        out(hh,kk,ll) = cmplx(num(hh,kk,ll) / (den(hh,kk,ll) + epsv(self%fsh(hh,kk,ll)) * wsum), kind=kind(out))
-                    end do
-                end do
-            end do
-        end subroutine nn_map
+            call move_alloc(numl, num)
+            call move_alloc(denl, den)
+        end subroutine nn_acc
 
         subroutine nn_estep( pidx, w, refs, iter, chg, beta, sig2, pr )
             integer,  intent(in)    :: pidx(:), iter
