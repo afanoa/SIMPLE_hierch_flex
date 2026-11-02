@@ -609,7 +609,24 @@ The detection limit is therefore unchanged by this round: the site layer at 6.5 
 
 ### 9.3 Gate replay of the committed (B) form
 
-(filled below from the `head` and `bc` arms)
+Arms `head` (c7ac3b0bd, `build_head`) and `bc` ((B) + the floor of section 10, `build_bc`; the floor's actions are
+listed in 10.3 and are the only other difference), same seeds and keys; the replays of the 14 saved sites on `build_bc`
+(`lever/sites/bc_*`) say where (B) acts:
+
+| fixture | head | bc | (B)'s action |
+|---|---|---|---|
+| qtoynull / olenull / micnull md0 | 1 leaf each | 1 leaf each | the took-off endpoints (shares 0.91-0.97) are rejected up front instead of by share; the remaining poles (8-15 seeds) rejected as before |
+| qtoy2 md1, seed 1 | 10 leaves, 5-way root 22,118 / 11,473 / 10,516 / 9,272 / 6,621 | 5-way root 21,937 / 11,472 / 10,523 / 9,461 / 6,607 (the leaf count is the floor's, 10.3) | root sites 1-2 identical (17,987 / 9,707 seeds); at sites 3-5 the took-off endpoints no longer back the second poles, so site 3 keeps one pole (8,856 equivalent pure members, not 15,096 + 8,856) and site 4's pole seeds the fifth state instead; the partition moves by <= 200 particles per group |
+| r131 md1, seed 2 | 4 leaves, root 25,397 / 18,937, corner at r1 (SEPARATES) | the same tree to the particle; corner at r1 | root site 1 identical (2,981 seeds {z1lo, z3hi}, z1hi / z3lo at 0.75 / 0.74 rejected up front); site 3 loses its 9,076-seed pole (it existed through the took-off z1hi at 0.51) but never seeded a state |
+| r131 md1, seed 1 | 4 leaves, root 23,449 / 20,885, corner at r2 (SEPARATES) | the same tree to the particle; corner at r2 | root site 1 identical (16,470 + 6,166 seeds) |
+| detlim2 roots 6.5 % (seeds 1, 2) | lost: one leaf (new arm) | lost: one leaf (guard merges at L / L_ref 0.33 / 0.42) | nothing took off at the arm site; the 8 % pole {z1lo, z3hi} now has 1,863 / 1,780 seeds at rare purity ~0.75 (was 717 / 545) and is rejected by its own seed test at z 2.23 / 2.31 |
+| detlim2 roots 8 % (seeds 1, 2) | found through the fallback, F1 0.457 | found through the fallback, F1 0.457 / 0.459 (guard 0.75, floor P / N 9.8 / 9.9) | as above: no kept pole, the same fallback |
+| OLE md1 | 8 leaves, 4-way root 22,700 / 20,864 / 19,639 / 17,396 | the same root and the same leaves at r1, r2, r4 to the particle; r3 moves by 95 particles (10,456 / 9,183 -> 10,551 / 9,088) | the root sites' took-off endpoints (olenull-like quality axis) are rejected up front; the span is the baseline's |
+
+Verdict for (B): the cause is fixed where it was found (the took-off class no longer takes the seeds of the real pole), the
+hard gates and the nulls are unchanged to the particle, and the detection limit does not move (16-17, 1.9-2.1 % at 692k):
+at 8 % the real pole's own seed deviation is 2.2-2.3 SE, under the pole rule's 3, so the state is still delivered by the
+fallback rather than seeded by the site. Cost: head arm 115 core-h, bc arm 112, four roots 32, site replays about 3.
 
 ## 10. The effect floor after the locality guard (the rare-state note's P / N)
 
@@ -650,7 +667,19 @@ the saved df trees is the within-conformer split the draw-free test added at qto
 
 ### 10.3 Gate replay
 
-(filled below from the `head` and `bc` arms)
+| fixture | floor's action in the bc arm | nodes saved | states lost |
+|---|---|---|---|
+| qtoynull / olenull / micnull md0 | none (the guard merges the root pair first, L / L_ref 0.21-0.24) | 0 | none |
+| qtoy2 md1, seed 1 | merges r3 (10,523 particles, both children 0.90 pure in combo 28; P / N 0.218) and r5 (6,607, both in combo 101; P / N 0.220): 10 leaves -> 8, NMI 0.773 -> 0.812, best-leaf F1 of combo 28 0.64 -> 0.94 and of combo 101 0.71 -> 0.95, every other combo within 0.01 | 2 | none (both merged pairs lie inside one conformer) |
+| r131 md1, seed 2 | none: root 7.8, r1 (the closed corner) 2.6-2.7, r2 (the 0.93 closed-arm substate) 2.08 against the floor of 2 | 0 | none; the corner keeps a 1.3x margin, the r2 substate 1.04x |
+| r131 md1, seed 1 | none: corner at r2 2.7 | 0 | none |
+| detlim2 roots 8 % (seeds 1, 2) | none: P / N 9.8 / 9.9 (the 6.5 % roots never reach the floor, the guard merges them) | 0 | none |
+| OLE md1 | none: root pairs 31-50, depth-1 splits 5.3-7.9 (K* 4 -> 4 at the root, 2 -> 2 at r1-r4) | 0 | none; the 8 leaves are the head arm's |
+
+The kept pair nearest the floor in the whole arm is r131 seed 2's r2 at 2.08, the extra 0.93-closed-arm split the draw-free
+test added in section 8.4; the closed corners sit at 2.6-2.7. The floor's two actions are the two within-conformer splits
+of qtoy2 that the draw-free test added over variant D, so with the floor the draw-free default no longer costs NMI (0.812
+against variant D's 0.764 / 0.796 under the SVD discovery) while keeping its gain at the corner.
 
 ## 11. The merge-up on the numeric node record (D): what is done and what is left
 
@@ -673,3 +702,34 @@ components `nmed` / `nmax` / `nnull`, `shuffle_null%jsc` / `l_df` / `nul`, the c
 and the `.not. l_df` branch of `null_resolve`. The statistic the merge-up tests with then becomes the draw-free one at the
 common n, and `mdelta` (from `split_effect` of the same statistic) is matched to it. Gate: OLE's merge-up must keep the small
 OLE states and the closed pair apart (memory `equivalence-mergeup-verdict-2026-10-27`). About 1,100 lines leave.
+
+## 12. Pose-change statistics in the node record (E, report only)
+
+From the coordinator's pose-artefact study (`tree_pose_artefact_test_2026_11.md`, `scripts/hetero_tree_pose_study/pose_split.py`).
+`state_split` now reads the node's input poses (`../n.simple`, the poses the particles arrived with) beside the stage-B poses it
+refines from, and for every particle takes the rotation between the two minimised over the point group (`euler2m`, the
+geodesic angle of R_in^T R_B S_k, `sym%apply` on the right). It appends to `split_stats.txt`, gating nothing:
+
+- `# pose node flip30 f nact n nsym N mean_angle a`: the share of the node's particles that turned more than 30 degrees;
+- `# pose split pair g|h n na nb flips fa fb dflip d z z null mu sd flag yes|no` for every pair of delivered children (after
+  the guard and the floor; pairs with a child under 50 particles are skipped), `# pose states pair ...` over the stage-B
+  states where no split is delivered: dflip = |fa - fb|, its z against 200 shuffles of the pair's labels inside the split
+  test's own strata (`strata`: 40 view bins x defocus tertiles of the stage-B project), the flag at dflip >= 0.04 and z >= 5.
+
+The port differs from the Python in one convention it states: the strata are the split test's (stage-B view bins, defocus
+tertiles per call), not bins of the input poses; the angle, the threshold, the shuffle count and the flag rule are the same.
+
+Replayed on the saved df gate nodes (`lever/splits_de/`, `build_de`) against the study's numbers:
+
+| node | flip30 (study) | pairs: dflip, z (study) | flag |
+|---|---|---|---|
+| qtoy2 root (5 children) | 0.0009 (0.0009-0.0020 for qtoy2 / r131 / nulls) | 0.0001-0.0014, z -0.9 to 5.0 (<= 0.0011, z <= 4.8 for needed splits) | no |
+| qtoy2 r1, r4 | 0.00005, 0.0002 | 0.0001 / -1.1, 0.0005 / 1.2 | no |
+| r131 seed 2 root, r1; seed 1 r2 | 0.0017, 0.0011, 0.0019 | 0.0014 / 4.1, 0.0004 / 0.0, 0.0008 / 0.5 | no |
+| OLE root (4 children), r1, r2 (c2) | 0.021 (0.021), 0.0011, 0.0035 | root 0.008-0.021, z 0.9-14.7 (<= 0.022, up to 14.5); r1 0.0003 / 0.0; r2 0.0026 / 3.5 | no |
+| qtoynull, olenull roots (guard-merged; the stage-B pair) | 0.0020, 0.00006 | 0.0005 / 0.6, 0.0000 / -0.8 (<= 0.0025, z <= 3) | no |
+| micnull root (guard-merged; the stage-B pair) | 0.273 (0.27-0.37) | 0.0706 / 20.6 (0.071 / 22) | **yes** |
+
+The port reproduces the study on every node it was read against; on the standard gates the flag fires only on the micelle
+null's refused root pair (the pose artefact the study was built on), and the needed splits with truth stay at dflip
+<= 0.0014. The user decides whether the flag becomes a gate; nothing here acts on it.
