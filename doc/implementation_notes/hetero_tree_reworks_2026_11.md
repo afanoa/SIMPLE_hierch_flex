@@ -497,3 +497,40 @@ full-N maps and only the analytic noise term is at the common n, so the statisti
 in the null as in the real pairs. Every marginal pair the old test passed or failed by the draw is therefore clearly
 significant under the draw-free test, including the one-conformer null's root split, which both tests pass and the
 locality guard merges. The gate trees in 8.4 show what the extra power does to the leaves.
+
+### 8.4 Gate trees on the draw-free single pass (`build_df`, same seeds and keys as variant D, which is its upstream)
+
+| fixture | variant D (production test) | draw-free single pass | gate |
+|---|---|---|---|
+| qtoynull md0 | 1 leaf | 1 leaf: root T 0.054, z 7.8 PASS, guard merges (L / L_ref diffuse) | pass |
+| olenull md0 | 1 leaf | 1 leaf | pass |
+| micnull md0 | 1 leaf | 1 leaf: root T 0.80, z 82 PASS, guard merges (L / L_ref 0.24) | pass |
+| qtoy2 md1, seed 1 | 8 leaves, 5-way root, NMI 0.764 | 9 leaves, the same root and r1 / r2 / r4 splits, plus r3 (combo 28, 4792 / 5730); NMI 0.742 | baseline 0.712; below D |
+| r131 md1, seed 2 | 3 leaves; corner at r1 (0.99 / 0.51) | 4 leaves; corner at r1 (0.99 / 0.51, z 10.9) plus r2 (9818 / 9115; maps 0.77 / 0.64 and 0.93 / 0.58) | corner retained |
+| r131 md1, seed 1 | 3 leaves; corner at r2 (0.97 / 0.51) | 4 leaves; corner at r2 (0.97 / 0.51, z 7.1) plus r1 (12289 / 11030; maps 0.93 / 0.63 and 0.79 / 0.60) | corner retained |
+| OLE md1, seed 1 | 8 leaves, 4-way root, within the baseline's null | variant D's tree to the particle: 8 leaves, 4-way root, W1 0.000 against D (every split at z 8.5-28); against the baseline W1 0.003, extrema 0.002, the baseline's own null 0.002 | pass |
+
+Cost: 114 core-h for the arm against 110 for the baseline arm, with the instrumented build running both tests at
+every node, so neither the core-hours nor the wall times (r131 59 against 71 min, qtoy2 49 against 44) measure the
+single pass alone.
+
+The draw-free trees agree with variant D's at every node the production test passed and add exactly one split per
+tree, each at a node the production test rejected by its draw: qtoy2 r3 (old T 0.165 at z 3.25 against z_crit 3.38;
+draw-free 0.182 at z 5.6 against a threshold of 0.126), r131 r2 at seed 2 (old 0.125 at z 3.43 against 3.71; draw-free
+0.056 at z 4.6) and r131 r1 at seed 1 (old 0.116 at z 1.93; draw-free 0.119 at z 5.6). None of the three is marginal
+under the new test, whose null is a third as wide. What they split differs. On qtoy2 the extra split lies inside one
+structure combo (28, both leaves 0.87-0.92 pure), is localized (L / L_ref 1.15) and is not a quality split by the flag
+(|d| <= 0.1 on contrast, noise variance and stage-B correlation): a reproducible difference the truth table does not
+name, and the reason the NMI falls from 0.764 to 0.742, still above the baseline's 0.712. On r131 both extra splits
+produce a state at 0.93 closed-arm correlation, 0.02 under the closed-corner threshold, beside the retained corner at
+0.97-0.99; the fixture cannot say whether that is a second closed-like substate or an alignment family.
+
+Verdict. The statistic does what it was built for: the verdict no longer depends on a subsample draw (8.3 shows the
+production test's retention of the r131 corner at seed 2 to be one draw in four), the nulls stay one leaf, the closed
+corner is retained at both seeds with z 7-11, and the OLE tree is variant D's to the particle (no node there is marginal under either test). Its one cost is power: with a null a
+third as wide it accepts one more marginal split per tree, and on qtoy2 that split is within a conformer. The gates
+therefore support the statistic but do not clearly support it as the default on the NMI alone, so the default stays on
+the production test (commit 680bda2d5 puts `exec_state_split` back on `split%test`; `test_once` with the draw-free
+statistic stays in `simple_state_mergeup`, one call away) and the switch is the user's decision. If it is taken, the
+equivalence merge-up is where the within-conformer split would have to be caught: at full N the two combo-28 leaves
+differ reproducibly, so a merge-up that fuses equivalent maps leaves them apart (the df tree's merge-up kept 9 units).
