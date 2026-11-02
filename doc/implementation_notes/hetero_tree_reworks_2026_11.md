@@ -443,7 +443,7 @@ at maxdepth 4 is where span differences would show.
 
 ## 8. The draw-free pair statistic (overnight item, 2026-11-02)
 
-### 8.1 Definition (commit a91e5e6a9, `pair_stat_df`, `noise_power`, `null_upto_df`)
+### 8.1 Definition (commit 9ee5d5c72, `pair_stat_df`, `noise_power`, `null_upto_df`)
 
 Every group's maps are built from all its particles in each half (merged groups are the particle-weighted means of
 their members, no redraw). Per shell k, the between-group signal is the cross-half product of the full-N difference maps,
