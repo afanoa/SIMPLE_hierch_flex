@@ -62,13 +62,7 @@ type :: state_mergeup
     integer, allocatable :: fsh(:,:,:)
     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
     logical :: l_exists = .false.
-    real, allocatable :: qv(:)
-    logical :: l_qstrata = .false.
-    integer :: nemnull = 0, emseed = 0, khp = 0
-    logical :: l_ortho = .false.
-    integer :: ktgap = RB_MARGIN_FOCUS
-    real    :: rhomin = 0.
-    ! merge-up rule (default; SIMPLE_MERGE_RULE=off restores the old one): a pair merges only when shown equivalent at margin
+    ! merge-up rule: a pair merges only when shown equivalent at margin
     ! mdelta, never across cnl
     logical, allocatable :: cnl(:,:)
     logical :: l_equiv = .false.
@@ -84,7 +78,7 @@ type :: state_mergeup
     integer, allocatable :: fbhk(:,:), fbsh(:)
     real,    allocatable :: fbw(:), f2b(:,:), cwb(:)
     integer :: nfb = 0, nshfb = 0
-    logical :: l_route = .false., l_rband = .false., l_rdir = .false., l_rcho = .false., l_con = .false., l_amp = .false.
+    logical :: l_con = .false., l_amp = .false.
   contains
     procedure :: new
     procedure :: focus
@@ -146,9 +140,7 @@ contains
         type(ptcl_read_session) :: reads
         type(image) :: mskimg
         real    :: dirs(3,NVIEW), v(3), t, z, rz, g, e1, e2
-        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie, ist, iqs
-        character(len=32) :: route
-        character(len=16) :: qs
+        integer :: i, j, ip, h, k, l, r2, sh, b1, b2, nrows, it, ie
         call self%kill
         self%p => params
         self%b => build
@@ -171,39 +163,7 @@ contains
         self%klo = max(nint(real(self%box) * params%smpd_crop / params%hp), 3)
         self%khi = self%nyq - 1
         self%kb  = min(self%nyq - 1, nint(real(self%box) * params%smpd_crop / em_lim))
-        allocate(self%eo(self%n), self%vbin(self%n), self%eul(3,self%n), self%dfm(self%n), self%qv(self%n))
-        ! test switch SIMPLE_SPLIT_QSTRATA=yes: the shuffle null is also stratified by per-particle corr tertiles
-        call get_environment_variable('SIMPLE_SPLIT_QSTRATA', qs, status=iqs)
-        self%l_qstrata = iqs == 0 .and. trim(qs) == 'yes'
-        ! test switch SIMPLE_SPLIT_EMNULL=R (SIMPLE_SPLIT_EMNULL_SEED=s): R shuffled EM starts through cross_em + re-test, log only
-        self%nemnull = 0
-        self%emseed  = 0
-        call get_environment_variable('SIMPLE_SPLIT_EMNULL', qs, status=iqs)
-        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%nemnull
-        call get_environment_variable('SIMPLE_SPLIT_EMNULL_SEED', qs, status=iqs)
-        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%emseed
-        ! test switch SIMPLE_SPLIT_KTGAP=g: with a focus mask the re-test band starts g shells above the EM band (default 4)
-        self%ktgap = RB_MARGIN_FOCUS
-        call get_environment_variable('SIMPLE_SPLIT_KTGAP', qs, status=iqs)
-        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%ktgap
-        ! test switch SIMPLE_SPLIT_RHOMIN=x: a split whose relative effect (rel_effect in test) is below x is refused
-        self%rhomin = 0.
-        call get_environment_variable('SIMPLE_SPLIT_RHOMIN', qs, status=iqs)
-        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%rhomin
-        ! test switch SIMPLE_SPLIT_ORTHO=yes: pair statistics on group differences orthogonal, per shell, to the group mean
-        call get_environment_variable('SIMPLE_SPLIT_ORTHO', qs, status=iqs)
-        self%l_ortho = iqs == 0 .and. trim(qs) == 'yes'
-        if( self%l_ortho ) write(logfhandle,'(A)') '>>> STATE_MERGEUP test switch: pair statistics on group differences '//&
-            &'orthogonal, per shell, to the group mean'
-        ! test switch SIMPLE_SPLIT_HPMASK=m: masked maps above shell kb+m come from the map high-passed above kb+m before the mask
-        self%khp = 0
-        call get_environment_variable('SIMPLE_SPLIT_HPMASK', qs, status=iqs)
-        if( iqs == 0 .and. len_trim(qs) > 0 )then
-            read(qs,*) self%khp
-            self%khp = self%kb + self%khp
-            write(logfhandle,'(A)') '>>> STATE_MERGEUP test switch: masked maps above shell '//int2str(self%khp)//&
-                &' from the map high-passed before the mask'
-        endif
+        allocate(self%eo(self%n), self%vbin(self%n), self%eul(3,self%n), self%dfm(self%n))
         do i = 1, NVIEW
             t  = real(i-1) + 0.5
             z  = 1. - 2. * t / real(NVIEW)
@@ -216,7 +176,6 @@ contains
             self%eo(i)    = build%spproj_field%get_eo(ip)
             self%eul(:,i) = build%spproj_field%get_euler(ip)
             self%dfm(i)   = 0.5 * (build%spproj_field%get_dfx(ip) + build%spproj_field%get_dfy(ip))
-            self%qv(i)    = build%spproj_field%get(ip, 'corr')
             e1 = self%eul(1,i) * PI / 180.
             e2 = self%eul(2,i) * PI / 180.
             v  = [sin(e2)*cos(e1), sin(e2)*sin(e1), cos(e2)]
@@ -283,37 +242,27 @@ contains
             if( ie == 1 ) allocate(self%jhk(2,self%nj), self%jsh(self%nj), self%jw(self%nj))
         end do
         allocate(self%f2j(self%kj,self%n), source=0.)
-        call get_environment_variable('SIMPLE_SPLIT_ROUTE', route, status=ist)
-        ! membership by the choose rule unless SIMPLE_SPLIT_ROUTE names another mode ('em' = the cross-half EM's groups)
-        if( ist /= 0 .or. len_trim(route) == 0 ) route = 'choose'
-        ist = 0
-        self%l_route = ist == 0 .and. (trim(route) == 'best' .or. trim(route) == 'band' .or. trim(route) == 'band_direct' .or. &
-            &trim(route) == 'choose')
-        self%l_rband = ist == 0 .and. (trim(route) == 'band' .or. trim(route) == 'band_direct')
-        self%l_rdir  = ist == 0 .and. trim(route) == 'band_direct'
-        self%l_rcho  = ist == 0 .and. trim(route) == 'choose'
-        if( self%l_route )then
-            do ie = 1, 2
-                self%nfb = 0
-                do k = lbound(self%fpls(1)%cmplx_plane,2), 0
-                    do h = lbound(self%fpls(1)%cmplx_plane,1), ubound(self%fpls(1)%cmplx_plane,1)
-                        r2 = h*h + k*k
-                        if( r2 < 3 .or. r2 > self%khi*(self%khi+1) ) cycle
-                        self%nfb = self%nfb + 1
-                        if( ie == 1 ) cycle
-                        self%fbhk(:,self%nfb) = [h, k]
-                        self%fbsh(self%nfb)   = nint(sqrt(real(r2))) - 1
-                        self%fbw(self%nfb)    = merge(1., 2., k == 0)
-                    end do
+        ! the full-band sample table of the choose rule's membership pass
+        do ie = 1, 2
+            self%nfb = 0
+            do k = lbound(self%fpls(1)%cmplx_plane,2), 0
+                do h = lbound(self%fpls(1)%cmplx_plane,1), ubound(self%fpls(1)%cmplx_plane,1)
+                    r2 = h*h + k*k
+                    if( r2 < 3 .or. r2 > self%khi*(self%khi+1) ) cycle
+                    self%nfb = self%nfb + 1
+                    if( ie == 1 ) cycle
+                    self%fbhk(:,self%nfb) = [h, k]
+                    self%fbsh(self%nfb)   = nint(sqrt(real(r2))) - 1
+                    self%fbw(self%nfb)    = merge(1., 2., k == 0)
                 end do
-                if( ie == 1 ) allocate(self%fbhk(2,self%nfb), self%fbsh(self%nfb), self%fbw(self%nfb))
             end do
-            self%nshfb = maxval(self%fbsh)
-            allocate(self%f2b(self%nshfb,self%n), self%cwb(self%nshfb), source=0.)
-            do j = 1, self%nfb
-                self%cwb(self%fbsh(j)) = self%cwb(self%fbsh(j)) + self%fbw(j)
-            end do
-        endif
+            if( ie == 1 ) allocate(self%fbhk(2,self%nfb), self%fbsh(self%nfb), self%fbw(self%nfb))
+        end do
+        self%nshfb = maxval(self%fbsh)
+        allocate(self%f2b(self%nshfb,self%n), self%cwb(self%nshfb), source=0.)
+        do j = 1, self%nfb
+            self%cwb(self%fbsh(j)) = self%cwb(self%fbsh(j)) + self%fbw(j)
+        end do
         !$omp parallel do default(shared) private(i,j,h,k,sh) schedule(static) proc_bind(close)
         do i = 1, self%n
             if( sdn(i) > 0. ) self%fpls(i)%cmplx_plane = sdn(i) * self%fpls(i)%cmplx_plane
@@ -387,7 +336,7 @@ contains
         fm = min(max(vol%get_rmat(), 0.), 1.)
         if( any(shape(fm) /= shape(self%msk3)) ) THROW_HARD('focus mask box does not match the particles; focus')
         self%msk3 = self%msk3 * fm
-        self%kt   = min(self%kb + self%ktgap, self%khi - 2)
+        self%kt   = min(self%kb + RB_MARGIN_FOCUS, self%khi - 2)
         write(logfhandle,'(A)') '>>> STATE_MERGEUP focus mask '//fname%to_char()//': '//&
             &fmtr(100._dp*real(count(fm > 0.5),dp)/real(size(fm),dp),1)//' % of the crop grid above 0.5'
         call vol%kill
@@ -437,7 +386,7 @@ contains
             call vol%kill
         end do
         self%msk0 = self%msk3
-        self%kt   = min(self%kb + self%ktgap, self%khi - 2)
+        self%kt   = min(self%kb + RB_MARGIN_FOCUS, self%khi - 2)
         write(logfhandle,'(A)') '>>> STATE_MERGEUP per-state focus masks '//fname%to_char()//': '//int2str(nl)//&
             &' states, '//int2str(ns)//' masks; each group is tested inside the union of its states'' masks'
     end subroutine leaf_focus
@@ -646,10 +595,8 @@ contains
             character(len=:), allocatable :: tdir
             integer, allocatable :: npairs(:,:)
             real    :: ndelta
-            integer :: ios, funit, a, b, nrs
-            call get_environment_variable('SIMPLE_MERGE_RULE', ev, status=ios)
-            self%l_equiv = .not. (ios == 0 .and. trim(ev) == 'off')
-            if( .not. self%l_equiv ) return
+            integer :: ios, nrs
+            self%l_equiv = .true.
             call get_environment_variable('SIMPLE_MERGE_TREEDIR', ev, status=ios)
             if( ios == 0 .and. len_trim(ev) > 0 )then
                 tdir = trim(ev)
@@ -662,22 +609,6 @@ contains
                 &' sibling leaf pairs shown distinct:'//pair_list(npairs)
             self%mdelta = ndelta
             call move_alloc(npairs, dpairs)
-            ! SIMPLE_MERGE_DELTA / SIMPLE_MERGE_DISTINCT (a file of leaf-index pairs) override the tree's own inputs
-            call get_environment_variable('SIMPLE_MERGE_DELTA', ev, status=ios)
-            if( ios == 0 .and. len_trim(ev) > 0 ) read(ev,*) self%mdelta
-            call get_environment_variable('SIMPLE_MERGE_DISTINCT', ev, status=ios)
-            if( ios == 0 .and. len_trim(ev) > 0 )then
-                deallocate(dpairs)
-                allocate(dpairs(2,0))
-                call fopen(funit, string(trim(ev)), status='old', action='read', iostat=ios)
-                call fileiochk('state_mergeup: cannot read '//trim(ev), ios)
-                do
-                    read(funit,*,iostat=ios) a, b
-                    if( ios /= 0 ) exit
-                    dpairs = reshape([dpairs, a, b], [2, size(dpairs,2) + 1])
-                end do
-                call fclose(funit)
-            endif
             write(logfhandle,'(A)') '>>> STATE_MERGEUP merge rule: a pair merges only when shown equivalent at margin '//&
                 &fmtr(real(self%mdelta,dp),6)//'; '//int2str(size(dpairs,2))//' leaf pairs shown distinct are never merged'
         end subroutine merge_rule_setup
@@ -874,15 +805,6 @@ contains
                 call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
                     &exa, exb, kstar, rst)
             endif
-            if( self%nemnull > 0 ) call em_null(kem, rst)
-            ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
-            if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
-                if( rel_effect(rst) < self%rhomin )then
-                    write(logfhandle,'(A)') 'relative effect below SIMPLE_SPLIT_RHOMIN '//fmtr(real(self%rhomin,dp),4)//' -> K* 1'
-                    gof   = 1
-                    kstar = 1
-                endif
-            endif
         endif
         npair = size(plist)
         allocate(sizes(kstar), order(kstar), rank(kstar), source=0)
@@ -926,7 +848,7 @@ contains
                 end do
             endif
         endif
-        if( self%l_route .and. kstar >= 2 ) call route_members
+        if( kstar >= 2 ) call route_members
         call junk_report(ia, 1, 'A')
         call junk_report(ib, 2, 'B')
         write(logfhandle,'(A)') 'K* = '//int2str(kstar)//'; sizes '//joined([(count(child == ii), ii=1,kstar)])//&
@@ -960,7 +882,7 @@ contains
         subroutine route_members
             integer, allocatable :: ja(:), jb(:), a1(:), b1(:), a2(:), b2(:), smap(:), cnt(:,:), sz(:), rk(:)
             real(dp), allocatable :: pa1(:), pb1(:), pa2(:), pb2(:), dl(:)
-            real(dp) :: ll1, ll2, lb1(2), lb2(2), dmg, dse
+            real(dp) :: lb1(2), lb2(2), dmg, dse
             integer  :: ss, gg, mm, nchg, k1
             logical  :: l_two, l_win2
             k1 = kstar
@@ -979,66 +901,34 @@ contains
             end do
             l_two = all([(any(smap == gg), gg=1,k1)])
             ! as many groups as stage-B states: the states themselves are the K* groups
-            if( self%l_rcho .and. k0 == k1 .and. .not. l_two )then
+            if( k0 == k1 .and. .not. l_two )then
                 smap  = [(ss, ss=1,k0)]
                 l_two = .true.
             endif
-            if( self%l_rcho )then
-                ! choose: the re-test band decides between the raw label sets, stage-B only when its margin exceeds 3 SE
-                nchg   = 0
-                l_win2 = .false.
-                dmg    = 0._dp
-                dse    = 0._dp
-                if( l_two )then
-                    a1 = child(ja)
-                    b1 = child(jb)
-                    a2 = smap(cand(ja))
-                    b2 = smap(cand(jb))
-                    call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., kcut=self%kt, &
-                        &llband=lb1, niter=1, lpa=pa1, lpb=pb1)
-                    call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., &
-                        &kcut=self%kt, llband=lb2, niter=1, lpa=pa2, lpb=pb2)
-                    a2  = smap(cand(ja))
-                    b2  = smap(cand(jb))
-                    dl  = [pa2 - pa1, pb2 - pb1]
-                    dmg = sum(dl)
-                    dse = sqrt(real(size(dl),dp)) * sqrt(sum((dl - dmg / real(size(dl),dp))**2) / real(max(size(dl) - 1, 1),dp))
-                    l_win2 = dmg > 3._dp * dse
-                    if( l_win2 )then
-                        nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
-                        child(ja) = a2
-                        child(jb) = b2
-                    endif
-                endif
-            else
+            ! choose: the re-test band decides between the raw label sets, stage-B only when its margin exceeds 3 SE
+            nchg   = 0
+            l_win2 = .false.
+            dmg    = 0._dp
+            dse    = 0._dp
+            if( l_two )then
                 a1 = child(ja)
                 b1 = child(jb)
-                call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., ll=ll1, kcut=self%kt, &
-                    &llband=lb1)
-                ll2    = -huge(ll2)
-                lb2    = -huge(ll2)
-                l_win2 = .false.
-                if( l_two )then
-                    a2 = smap(cand(ja))
-                    b2 = smap(cand(jb))
-                    call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., ll=ll2, &
-                        &kcut=self%kt, llband=lb2)
-                    ! band routing: the start that wins in the re-test band, where the split was validated
-                    l_win2 = merge(lb2(2) > lb1(2), ll2 > ll1, self%l_rband)
-                endif
+                a2 = smap(cand(ja))
+                b2 = smap(cand(jb))
+                call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., kcut=self%kt, &
+                    &llband=lb1, niter=1, lpa=pa1, lpb=pb1)
+                call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., &
+                    &kcut=self%kt, llband=lb2, niter=1, lpa=pa2, lpb=pb2)
+                a2  = smap(cand(ja))
+                b2  = smap(cand(jb))
+                dl  = [pa2 - pa1, pb2 - pb1]
+                dmg = sum(dl)
+                dse = sqrt(real(size(dl),dp)) * sqrt(sum((dl - dmg / real(size(dl),dp))**2) / real(max(size(dl) - 1, 1),dp))
+                l_win2 = dmg > 3._dp * dse
                 if( l_win2 )then
-                    ! band_direct: the winning stage-B states route their particles whole, without the pass
-                    if( self%l_rdir )then
-                        a2 = smap(cand(ja))
-                        b2 = smap(cand(jb))
-                    endif
                     nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
                     child(ja) = a2
                     child(jb) = b2
-                else
-                    nchg = count(child(ja) /= a1) + count(child(jb) /= b1)
-                    child(ja) = a1
-                    child(jb) = b1
                 endif
             endif
             sz = [(count(child == gg), gg=1,k1)]
@@ -1048,95 +938,17 @@ contains
             end do
             child = rk(child)
             kstar = count(sz > 0)
-            if( self%l_rcho )then
-                if( l_two )then
-                    write(logfhandle,'(A)') 'membership by the choose rule, re-test band '//int2str(self%kt)//'..'//&
-                        &int2str(self%khi)//': cross-half log-likelihood of the raw stage-B states minus the raw EM groups '//&
-                        &fmtr(dmg,1)//', SE '//fmtr(dse,1)//' (sqrt(N) x the sd of '//int2str(size(dl))//&
-                        &' per-particle deltas), 3 SE '//fmtr(3._dp*dse,1)//' -> '//&
-                        &trim(merge('stage-B states', 'EM groups     ', l_win2))//' (raw); '//int2str(nchg)//' particles change group'
-                else
-                    write(logfhandle,'(A)') 'membership by the choose rule: the stage-B states do not cover the '//int2str(k1)//&
-                        &' groups; the EM groups (raw) stand'
-                endif
-            else if( l_two )then
-                write(logfhandle,'(A)') 'membership over shells 2..'//int2str(self%khi)//': cross-half log-likelihood from the EM '//&
-                    &'groups '//fmtr(ll1,1)//', from the stage-B states '//fmtr(ll2,1)//' (margin '//fmtr(ll2-ll1,1)//'; shells 2..'//&
-                    &int2str(self%kt-1)//' margin '//fmtr(lb2(1)-lb1(1),1)//', re-test band '//int2str(self%kt)//'..'//&
-                    &int2str(self%khi)//' margin '//fmtr(lb2(2)-lb1(2),1)//'; '//trim(merge('band', 'full', self%l_rband))//&
-                    &trim(merge('-direct', '       ', self%l_rdir))//' rule) -> '//&
-                    &trim(merge('stage-B states', 'EM groups     ', l_win2))//'; '//int2str(nchg)//&
-                    &' particles change group'
+            if( l_two )then
+                write(logfhandle,'(A)') 'membership by the choose rule, re-test band '//int2str(self%kt)//'..'//&
+                    &int2str(self%khi)//': cross-half log-likelihood of the raw stage-B states minus the raw EM groups '//&
+                    &fmtr(dmg,1)//', SE '//fmtr(dse,1)//' (sqrt(N) x the sd of '//int2str(size(dl))//&
+                    &' per-particle deltas), 3 SE '//fmtr(3._dp*dse,1)//' -> '//&
+                    &trim(merge('stage-B states', 'EM groups     ', l_win2))//' (raw); '//int2str(nchg)//' particles change group'
             else
-                write(logfhandle,'(A)') 'membership over shells 2..'//int2str(self%khi)//': the stage-B states do not cover the '//&
-                    &int2str(k1)//' groups; from the EM groups, log-likelihood '//fmtr(ll1,1)//'; '//int2str(nchg)//&
-                    &' particles change group'
+                write(logfhandle,'(A)') 'membership by the choose rule: the stage-B states do not cover the '//int2str(k1)//&
+                    &' groups; the EM groups (raw) stand'
             endif
         end subroutine route_members
-
-        ! test switch: the real EM start labels shuffled within the nuisance strata, each through the same cross_em fit and
-        ! re-test; also the start labels re-tested without the EM. Log only: the decision above is unchanged
-        subroutine em_null( k0em, treal )
-            use simple_rnd, only: seed_rnd_fixed
-            integer, intent(in) :: k0em
-            real,    intent(in) :: treal
-            integer, allocatable :: sa(:), sb(:), lar(:), lbr(:), pl(:), gf(:), ea(:), eb(:)
-            real,    allocatable :: tn(:)
-            real    :: tr, tpre, mul, sdl, mue, sde
-            integer :: r, kk
-            call self%decide(ia, ib, starta, startb, k0em, eps, neq, cons, self%kt, -huge(tr), 'start labels, no EM', &
-                &pl, gf, ea, eb, kk, tpre)
-            if( self%emseed /= 0 ) call seed_rnd_fixed(self%emseed)
-            allocate(tn(0), lar(size(ia)), lbr(size(ib)))
-            do r = 1, self%nemnull
-                sa = sshuf(starta, sta)
-                sb = sshuf(startb, stb)
-                call self%cross_em(ia, ib, sa, sb, k0em, eps, neq, lar, lbr)
-                if( nuniq(lar) < 2 .or. nuniq(lbr) < 2 )then
-                    write(logfhandle,'(A)') 'EM null shuffle '//int2str(r)//': the EM drained to one group'
-                    cycle
-                endif
-                call self%decide(ia, ib, lar, lbr, k0em, eps, neq, cons, self%kt, -huge(tr), 'EM null', pl, gf, ea, eb, kk, tr)
-                write(logfhandle,'(A)') 'EM null shuffle '//int2str(r)//': re-test '//fmtr(real(tr,dp),4)//&
-                    &'; MAP changed vs start '//fmtr(real(count(lar /= sa) + count(lbr /= sb),dp)/&
-                    &real(size(lar) + size(lbr),dp),3)
-                tn = [tn, tr]
-            end do
-            mul = sum(nl%nul2) / real(max(size(nl%nul2), 1))
-            sdl = sqrt(sum((nl%nul2 - mul)**2) / real(max(size(nl%nul2) - 1, 1)))
-            mue = sum(tn) / real(max(size(tn), 1))
-            sde = sqrt(sum((tn - mue)**2) / real(max(size(tn) - 1, 1)))
-            write(logfhandle,'(A)') 'EM-INCLUSIVE NULL: real re-test '//fmtr(real(treal,dp),4)//'; start labels without the EM '//&
-                &fmtr(real(tpre,dp),4)//' | label null ('//int2str(size(nl%nul2))//', no EM) mean / sd / max '//&
-                &fmtr(real(mul,dp),4)//' / '//fmtr(real(sdl,dp),4)//' / '//fmtr(real(maxval(nl%nul2),dp),4)//', z '//&
-                &fmtr(real((treal - mul) / max(sdl, 1.e-12),dp),2)//' | EM null ('//int2str(size(tn))//') mean / sd / max '//&
-                &fmtr(real(mue,dp),4)//' / '//fmtr(real(sde,dp),4)//' / '//fmtr(real(maxval([tn, -huge(tr)]),dp),4)//&
-                &', z '//fmtr(real((treal - mue) / max(sde, 1.e-12),dp),2)//' | EM null values '//joinedr(tn)
-            mue = rel_effect(treal)
-        end subroutine em_null
-
-        ! test switch: the re-test pair's per-particle difference SNR over the consensus's per-particle SNR in the re-test band
-        real function rel_effect( treal )
-            real, intent(in) :: treal
-            real    :: m2, y, rd, fc, sc
-            integer :: nn, gg
-            rel_effect = huge(rel_effect)
-            if( size(nl%nul2) == 0 ) return
-            m2 = medianr(nl%nul2)
-            y  = max((treal - m2) / max(1. - m2, 1.e-6), 0.)
-            nn = huge(nn)
-            do gg = 1, kem
-                if( count(la == gg) > 0 .and. count(lb == gg) > 0 ) nn = min(nn, count(la == gg), count(lb == gg))
-            end do
-            rd = 2. * y / (max(1. - y, 1.e-6) * real(nn))
-            fc = min(max(self%shell_corr(cons(:,:,:,1), cons(:,:,:,2), self%kt, self%khi), 1.e-6), 0.999999)
-            sc = fc / ((1. - fc) * 0.5 * real(size(ia) + size(ib)))
-            rel_effect = rd / sc
-            write(logfhandle,'(A)') 'RELATIVE EFFECT: re-test '//fmtr(real(treal,dp),4)//', null median '//fmtr(real(m2,dp),4)//&
-                &', n '//int2str(nn)//' -> difference SNR / particle '//fmtr(real(rd,dp)*1.d6,3)//'e-6; consensus band FSC '//&
-                &fmtr(real(fc,dp),4)//' over '//int2str((size(ia) + size(ib)) / 2)//' per half -> SNR / particle '//&
-                &fmtr(real(sc,dp)*1.d6,3)//'e-6; rho '//fmtr(real(rel_effect,dp),5)
-        end function rel_effect
 
         subroutine add_subset_jobs( idx, lab )
             integer, intent(in) :: idx(:), lab(:)
@@ -3526,24 +3338,6 @@ contains
         call self%recs(it)%ifft
         call self%recs(it)%deapodize
         call self%wimgs(it)%copy_fast(self%recs(it))
-        if( l_mask .and. self%khp > 0 )then
-            ! no content at or below khp (the EM band) reaches the shells above it through the mask
-            call self%wimgs(it)%fft
-            cu = self%wimgs(it)%get_cmat()
-            call self%wimgs(it)%set_cmat(merge(cu, (0.,0.), self%fsh > self%khp))
-            call self%wimgs(it)%ifft
-            call self%wimgs(it)%get_rmat_ptr(rmat)
-            rmat = rmat * self%msk3
-            call self%wimgs(it)%fft
-            ch = self%wimgs(it)%get_cmat()
-            call self%wimgs(it)%set_cmat(cu)
-            call self%wimgs(it)%ifft
-            call self%wimgs(it)%get_rmat_ptr(rmat)
-            rmat = rmat * self%msk3
-            call self%wimgs(it)%fft
-            cm = merge(ch, self%wimgs(it)%get_cmat(), self%fsh > self%khp)
-            return
-        endif
         if( l_mask )then
             call self%wimgs(it)%get_rmat_ptr(rmat)
             rmat = rmat * self%msk3
@@ -3694,17 +3488,6 @@ contains
         do i = 1, n
             st(i) = (self%vbin(idx(i)) - 1) * 3 + count(q < self%dfm(idx(i)))
         end do
-        if( .not. self%l_qstrata ) return
-        dfs = self%qv(idx)
-        call hpsort(dfs)
-        do i = 1, 2
-            pos  = real(n-1) * real(i) / 3.
-            lo   = int(pos)
-            q(i) = dfs(lo+1) + (pos - real(lo)) * (dfs(min(lo+2,n)) - dfs(lo+1))
-        end do
-        do i = 1, n
-            st(i) = st(i) * 3 + count(q < self%qv(idx(i)))
-        end do
     end function strata
 
     real function pair_stat( self, a1, a2, b1, b2, kl )
@@ -3713,47 +3496,11 @@ contains
         integer,              intent(in) :: kl
         real    :: f(0:self%nyq)
         integer :: k
-        if( self%l_ortho )then
-            call self%shell_fsc(odiff(a1, a2), odiff(b1, b2), f)
-        else
-            call self%shell_fsc(a1 - a2, b1 - b2, f)
-        endif
+        call self%shell_fsc(a1 - a2, b1 - b2, f)
         pair_stat = -huge(1.)
         do k = kl, max(self%khi - 2, kl)
             pair_stat = max(pair_stat, sum(f(k:k+2)) / 3.)
         end do
-
-    contains
-
-        ! test switch: the group difference without its per-shell component along the group mean (an envelope / quality change)
-        function odiff( x1, x2 ) result( d )
-            complex, intent(in)  :: x1(:,:,:), x2(:,:,:)
-            complex, allocatable :: d(:,:,:)
-            real(dp) :: sdc(0:self%nyq), scc(0:self%nyq)
-            real     :: g(0:self%nyq)
-            integer  :: h, kk, l, sh
-            d   = x1 - x2
-            sdc = 0._dp
-            scc = 0._dp
-            do l = 1, self%box
-                do kk = 1, self%box
-                    do h = 1, self%nh
-                        sh = self%fsh(h,kk,l)
-                        sdc(sh) = sdc(sh) + self%fw(h,kk,l) * real(real(d(h,kk,l) * conjg(x1(h,kk,l) + x2(h,kk,l))),dp)
-                        scc(sh) = scc(sh) + self%fw(h,kk,l) * real(abs(x1(h,kk,l) + x2(h,kk,l)),dp)**2
-                    end do
-                end do
-            end do
-            g = real(sdc / max(scc, 1.e-30_dp))
-            do l = 1, self%box
-                do kk = 1, self%box
-                    do h = 1, self%nh
-                        d(h,kk,l) = d(h,kk,l) - g(self%fsh(h,kk,l)) * (x1(h,kk,l) + x2(h,kk,l))
-                    end do
-                end do
-            end do
-        end function odiff
-
     end function pair_stat
 
     subroutine dock( self, cm, cref, b1, b2 )
@@ -3927,16 +3674,11 @@ contains
             deallocate(self%recs, self%os, self%syms, self%smps, self%pouts, self%wimgs, self%bpls)
         endif
         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
-        if( allocated(self%qv)   ) deallocate(self%qv)
         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
         if( allocated(self%fbhk) ) deallocate(self%fbhk, self%fbsh, self%fbw, self%f2b, self%cwb)
         self%nfb     = 0
         self%nshfb   = 0
-        self%l_route = .false.
-        self%l_rband = .false.
-        self%l_rdir  = .false.
-        self%l_rcho  = .false.
         if( allocated(self%nv)  ) deallocate(self%nv)
         if( allocated(self%con) ) deallocate(self%con, self%cam, self%cse, self%cpj)
         if( allocated(self%cb)  ) deallocate(self%cb, self%cs)
@@ -4390,19 +4132,15 @@ contains
         class(state_mergeup), optional, intent(inout) :: mu
         real, parameter :: LOC_MIN = 0.5
         character(len=*), parameter :: CHD = 'locality_children'
-        character(len=4096)           :: ev
         character(len=:), allocatable :: stb
         real,    allocatable :: rat(:,:)
         integer, allocatable :: smap(:), cnt(:), sz(:), rk(:)
         logical, allocatable :: have(:)
         real    :: r, rmin
-        integer :: ios, nst, ng, s, t, g, h, gm, hm, kold
+        integer :: nst, ng, s, t, g, h, gm, hm, kold
         logical :: l_ex, l_kids
         if( kstar < 2 ) return
-        call get_environment_variable('SIMPLE_SPLIT_LOCALITY', ev, status=ios)
-        if( ios == 0 .and. trim(ev) == 'off' ) return
         stb = '../stageB'
-        if( ios == 0 .and. len_trim(ev) > 0 ) stb = trim(ev)
         nst = maxval(lab)
         ng  = maxval(child)
         allocate(have(nst), source=.false.)

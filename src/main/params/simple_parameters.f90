@@ -62,12 +62,8 @@ type :: parameters
     character(len=3)          :: node_subset_io='no' !< write compact tree projects directly from selected rows(yes|no){no}
     character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}
     character(len=3)          :: node_proj='no'
-    character(len=3)          :: node_motion='no'
     character(len=3)          :: strongest_pole='yes'
     character(len=3)          :: two_poles='no'
-    character(len=3)          :: motion_gate='no'
-    character(len=3)          :: motion_inherit='no'
-    character(len=3)          :: motion_multi='yes'
     character(len=3)          :: pooled_poles='no'
     character(len=3)          :: node_seed='no'
     character(len=3)          :: site_size='no'
@@ -638,7 +634,6 @@ type :: parameters
     real    :: phshift_min=0.      !< minimum fitted phase shift(in degrees){0}
     real    :: phshift_step=10.    !< phase-shift grid step(in degrees){10}
     real    :: pole_merge=0.
-    real    :: motion_floor=0.
     real    :: prob_athres=10.     !< angle threshold for prob distribution samplings
     real    :: rec_athres=10.      !< angle threshold for reconstruction
     real    :: regpass_fsc=0.143   !< refine3D_auto: FSC value of the startup pair defining the registration-pass band{0.143}

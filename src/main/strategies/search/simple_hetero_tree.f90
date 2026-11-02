@@ -41,12 +41,8 @@ real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, 
 real,     parameter :: ATHR = 0.01, LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
-integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_MOTION = 15, S_MBATCH = 16, S_GATEW = 17, S_SBATCH = 18, S_OFFP = 19
+integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_SBATCH = 18
 integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000
-integer,  parameter :: NMBIN = 5, NVSHUF = 20, GATE_BOX = 100, GATE_MINGRP = 50, INH0 = 100, NULL_PERM = 4
-real,     parameter :: MRES = 15., NB_SW = 0.030, ZRES_SW = 5., ZLOC_MIN = 5., GRADED = 0.40, VIEW_EXC = 0.40, DFX_EXC = 0.20
-real,     parameter :: GATE_LP = 15., GATE_EDGE = 6., GATE_NSD = 3.
-character(len=*), parameter :: FLOOR_FILE = 'motion_floor.txt'
 real(dp), parameter :: SLOW_FACT = 3._dp, SLOW_FIRST = 14400._dp
 character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stA0', &
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
@@ -92,8 +88,7 @@ type :: hetero_tree
     integer :: box = 0, nrows = 0, npcur = 0, ntests = 1
     integer :: ncbusy = 0
     logical :: l_subtree = .false., l_lsdone = .false., l_mudone = .false., l_fsread = .false., l_oneflex = .false.
-    logical :: l_nodeproj = .false., l_nodeseed = .false., l_motion = .false., l_strong = .false., l_twopole = .false.
-    logical :: l_gate = .false., l_inherit = .false., l_multi = .true.
+    logical :: l_nodeproj = .false., l_nodeseed = .false., l_strong = .false., l_twopole = .false.
     character(len=:), allocatable :: subroot, ntab, ltab
     type(qsys_env) :: qsub
     type(cmdline), allocatable :: cl0
@@ -157,12 +152,7 @@ type :: hetero_tree
     procedure, private :: fs_read_table
     procedure, private :: fs_write_table
     procedure, private :: step_dir
-    procedure, private :: root_axes
     procedure, private :: batch_status
-    procedure, private :: off_work
-    procedure, private :: anc_wait
-    procedure, private :: floor_ready
-    procedure, private :: floor_value
 end type hetero_tree
 
 contains
@@ -198,12 +188,8 @@ contains
         endif
         if( params%site_states .eq. 'yes' .and. params%site_layer .ne. 'yes' ) THROW_HARD('site_states=yes needs site_layer=yes')
         self%l_oneflex = params%oneflex .eq. 'yes'
-        self%l_motion  = params%node_motion .eq. 'yes'
-        self%l_strong  = params%strongest_pole .eq. 'yes' .and. .not. self%l_motion
-        self%l_twopole = params%two_poles .eq. 'yes' .and. .not. self%l_motion
-        self%l_gate    = self%l_motion .and. params%motion_gate .eq. 'yes'
-        self%l_inherit = self%l_motion .and. params%motion_inherit .eq. 'yes'
-        self%l_multi   = params%motion_multi .ne. 'no'
+        self%l_strong  = params%strongest_pole .eq. 'yes'
+        self%l_twopole = params%two_poles .eq. 'yes'
         self%l_nodeproj = params%node_proj .eq. 'yes'
         call simple_getcwd(cwd)
         self%root     = cwd%to_char()
@@ -302,7 +288,7 @@ contains
     subroutine run( self )
         class(hetero_tree), intent(inout) :: self
         integer(kind=8) :: t0, t1, rate
-        integer :: i, nact, code, nsub, noff, nfill
+        integer :: i, nact, code, nsub, nfill
         character(len=:), allocatable :: sdone
         logical :: l_fin, l_pl
         call seed_rnd_fixed(RND_SEED)
@@ -322,8 +308,7 @@ contains
                 code = self%step_status(i, self%nodes(i)%step)
                 call self%watch(i, code)
                 if( code == -1 )then
-                    ! a node waiting for the gate floor holds no slot: the floor may wait on a node not yet started
-                    if( self%nodes(i)%step /= S_GATEW ) nact = nact + 1
+                    nact = nact + 1
                     cycle
                 endif
                 if( code == -2 )then
@@ -387,10 +372,9 @@ contains
             else if( len(self%subroot) == 0 )then
                 l_pl = self%plain()
             endif
-            call self%off_work(noff)
-            if( nact == 0 .and. nsub == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED .or. self%nodes(:)%step == S_GATEW) )then
+            if( nact == 0 .and. nsub == 0 .and. .not. any(self%nodes(:)%step == S_QUEUED) )then
                 l_fin = self%final()
-                if( l_fin .and. noff == 0 ) exit
+                if( l_fin ) exit
             endif
             call sleep(POLL_SECS)
         end do
@@ -605,11 +589,8 @@ contains
         integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:), jk(:)
         real(dp),     allocatable :: w(:)
         character(len=:), allocatable :: d, mask, sitemask, sd, tmsg
-        type(string), allocatable :: bdirs(:)
-        integer,      allocatable :: hrow(:)
-        real    :: fl
         integer :: s, k, j, ks
-        logical :: l_tp, l_fl, l_wait
+        logical :: l_tp
         s = self%nodes(i)%step
         if( present(done_step) ) s = done_step
         d        = self%ndir(i)
@@ -745,7 +726,7 @@ contains
                     call log_site(sd, '')
                 endif
                 j = str2int(trim(adjustl(first_line(d//'/sites/seed_site.txt', '1'))))
-                if( s == S_SBATCH .and. .not. (self%l_motion .or. self%l_strong) )then
+                if( s == S_SBATCH .and. .not. self%l_strong )then
                     ! the remaining sites were ranked at once: the first that gives a split is the one the chain stops at
                     j = str2int(trim(adjustl(first_line(d//'/sites/rest_first.txt', '2'))))
                     do while( j < nsites(d) )
@@ -759,20 +740,12 @@ contains
                     write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(j)//' of the batch '//&
                         &merge('gives the split   ', 'is the last site  ', ks >= 2)
                 endif
-                if( (self%l_motion .or. self%l_strong) .and. j < nsites(d) )then
+                if( self%l_strong .and. j < nsites(d) )then
                     if( ks >= 2 )then
                         call next_site(j, 'keeps a pole; every site is ranked')
                     else
                         call next_site(j, 'gives no split')
                     endif
-                    return
-                endif
-                if( self%l_motion )then
-                    jk = kept_sites(d)
-                    do j = 1, size(jk)
-                        call add_cand(d, jk(j))
-                    end do
-                    call motion_next
                     return
                 endif
                 if( self%l_strong )then
@@ -817,10 +790,6 @@ contains
                 if( self%nodes(i)%depth > self%p%kway_maxdepth .and. ks > 2 ) call binary_seeds
                 call seed_node(seeds, ks, sd//'/site_contrast.txt')
                 if( l_tp ) call write_ints(d//'/seeds/start.txt', jk)
-            case(S_MOTION, S_MBATCH, S_GATEW)
-                call motion_next
-            case(S_OFFP)
-                call off_next
             case(S_SEEDS)
                 seeds = read_ints(d//'/seeds/seeds.txt')
                 ks    = maxval(seeds)
@@ -901,7 +870,7 @@ contains
     contains
 
         subroutine sites_found
-            if( ks > 1 .and. (self%l_motion .or. self%l_strong) )then
+            if( ks > 1 .and. self%l_strong )then
                 ! with every particle fitted the per-site layer's ranking of a site is this batch's (the seed site's junk moves no pole)
                 if( self%l_strong .and. self%p%site_layer .eq. 'yes' .and. size(rows) <= SITE_NFIT ) &
                     &call write_ints(d//'/sites/'//SITE_REUSE, [1])
@@ -1036,7 +1005,7 @@ contains
                 endif
                 kss = 1
             endif
-            if( self%p%site_states .eq. 'yes' .and. .not. self%l_motion .and. self%nodes(i)%depth <= self%p%kway_maxdepth ) &
+            if( self%p%site_states .eq. 'yes' .and. self%nodes(i)%depth <= self%p%kway_maxdepth ) &
                 &call self%state_seeds(i, sd, sds, kss)
             if( any([(count(sds == m) == 0, m=1,kss)]) )then
                 write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': ERROR, seed states 1..'//int2str(kss)//&
@@ -1057,619 +1026,6 @@ contains
             call crop_keys(self, cl, BOXA)
             call self%submit(i, S_SEEDS, cl)
         end subroutine seed_node
-
-        ! node_motion: every candidate gets its 5-bin reconstruction and call (the fflex fallback only when no site is a switch or
-        ! swing); a switch is two seeded poles, a swing its poles and middle, and their product cells seed the split
-        subroutine motion_next
-            integer, allocatable :: cands(:), fac(:), sv(:,:), cv(:,:), g(:), jj(:), sds(:), start(:), lv(:), cv1(:), ord(:), off(:)
-            character(len=:), allocatable :: how, w, one
-            integer :: ic, kss, m, nr, nb
-            logical :: l_anc
-            allocate(bdirs(0), off(0))
-            l_wait = .false.
-            l_fl   = self%floor_ready()
-            fl     = -huge(fl)
-            if( l_fl .and. self%l_gate .and. self%nodes(i)%depth > 0 ) fl = self%floor_value()
-            if( self%l_gate )then
-                if( .not. file_exists(string(d//'/motion/gate_halves.txt')) ) call gate_halves
-                hrow = read_ints(d//'/motion/gate_halves.txt')
-                if( self%p%motion_floor <= 0. .and. floor_node(self%nodes(i)%id) ) call null_work
-            endif
-            l_anc = self%anc_wait(i)
-            if( self%l_inherit .and. .not. l_anc .and. .not. file_exists(string(d//'/motion/inherited.txt')) ) call inherit_cands
-            cands = read_cands(d)
-            if( self%l_multi .or. size(cands) < 2 )then
-                do ic = 1, size(cands)
-                    call cand_work(cands(ic))
-                end do
-            else
-                ! one factor is the strongest passing candidate: the strongest goes first, and when it passes the rest run off the path
-                ord = strength_order(cands)
-                nb  = size(bdirs)
-                call cand_work(ord(1))
-                if( size(bdirs) == nb .and. .not. l_wait )then
-                    if( size(passing(ord(1:1))) == 1 )then
-                        off = ord(2:)
-                    else
-                        do ic = 2, size(ord)
-                            call cand_work(ord(ic))
-                        end do
-                    endif
-                endif
-            endif
-            if( size(bdirs) == 0 .and. .not. l_wait .and. .not. l_anc .and. .not. any(cands == 0) .and. &
-                &size(passing(cands)) == 0 )then
-                g  = two_groups(d)
-                jj = junk_rows(d)
-                if( size(jj) > 0 .and. size(g) > 0 ) g(jj) = 0
-                if( count(g == 1) > PROB_MULTISTATE_MIN_POP .and. count(g == 2) > PROB_MULTISTATE_MIN_POP )then
-                    call add_cand(d, 0)
-                    cands = read_cands(d)
-                    call cand_work(0)
-                endif
-            endif
-            if( size(bdirs) > 0 )then
-                call write_lines(d//'/motion/batch.txt', bdirs)
-                self%nodes(i)%step = S_MBATCH
-                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: '//int2str(size(bdirs))//&
-                    &' jobs submitted or running'
-                return
-            endif
-            if( l_wait )then
-                if( self%nodes(i)%step /= S_GATEW ) write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//&
-                    &': gate scores done, waiting for the tree''s floor (the permutation splits of r, r1 and r2)'
-                self%nodes(i)%step = S_GATEW
-                return
-            endif
-            if( l_anc )then
-                if( self%nodes(i)%step /= S_GATEW ) write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//&
-                    &': waiting for its ancestors'' off-path candidates, whose axes it inherits'
-                self%nodes(i)%step = S_GATEW
-                return
-            endif
-            if( size(off) > 0 ) cands = ord(1:1)
-            do ic = 1, size(cands)
-                call write_line(motion_dir(d, cands(ic))//'/verdict.txt', verdict(cands(ic)))
-            end do
-            fac = passing(cands)
-            kss = 0
-            how = 'no candidate calls switch or swing'
-            one = ''
-            if( .not. self%l_multi .and. size(fac) > 1 )then
-                m   = strongest_of(fac)
-                one = 'one factor (motion_multi=no), the strongest by pole-rule margin of '//int2str(size(fac))//' passing: '
-                fac = [fac(m)]
-            endif
-            if( size(off) > 0 )then
-                one = 'one factor (motion_multi=no), the strongest by pole-rule margin passes ('//int2str(size(off))//&
-                    &' others run off the path): '
-                call write_ints(d//'/motion/offpath.txt', off)
-            endif
-            if( size(fac) > 0 )then
-                nr = size(project_states(d//'/'//NODE_PROJ))
-                allocate(sv(nr,size(fac)), cv(nr,size(fac)), source=0)
-                how = one
-                do m = 1, size(fac)
-                    call motion_factor(d, fac(m), motion_word(d, fac(m)) == 'swing', self%p%minpop, lv, cv1, w)
-                    if( size(lv) == nr ) sv(:,m) = lv
-                    if( size(cv1) == nr ) cv(:,m) = cv1
-                    how = how//merge('; ', '  ', m > 1)//cand_label(d, fac(m))//' '//w
-                end do
-                start = product_cells(sv, 0)
-                how   = trim(adjustl(how))//' -> product cells before folding (levels per motion: rows)'
-                do m = 1, maxval([0, start])
-                    jj  = sv(findloc(start, m, dim=1),:)
-                    how = how//' ('//joined(jj, ',')//'): '//int2str(count(start == m))
-                end do
-                start = product_cells(sv, self%p%minpop)
-                kss   = maxval([0, start])
-                allocate(sds(nr), source=0)
-                where( all(cv > 0, dim=2) ) sds = start
-                do m = 1, kss
-                    if( count(sds == m) < self%p%minpop ) where( start == m ) sds = m
-                end do
-                how = how//' -> K '//int2str(kss)//' after folding cells under minpop into their nearest: '//&
-                    &joined([(count(start == m), m=1,kss)])//' rows, seeded from '//joined([(count(sds == m), m=1,kss)])//&
-                    &' (its core when that holds minpop, else the whole cell)'
-                do m = 1, size(fac)
-                    if( fac(m) > 0 .and. fac(m) <= INH0 )then
-                        call write_ints(d//'/sites/chosen_site.txt', [fac(m)])
-                        exit
-                    endif
-                end do
-            else
-                allocate(sds(0))
-            endif
-            call node_motion_summary(d, read_cands(d), how)
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion hand-back: '//how
-            call seed_node(sds, kss, d//'/motion/site_contrast.txt')
-            if( kss >= 2 ) call write_ints(d//'/seeds/start.txt', start)
-            if( size(off) > 0 ) write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: '//&
-                &int2str(size(off))//' candidates run off the path: '//off_labels(off, .false.)
-        end subroutine motion_next
-
-        subroutine off_next
-            integer, allocatable :: oc(:)
-            integer :: ic, fu, io
-            allocate(bdirs(0))
-            l_wait = .false.
-            l_fl   = self%floor_ready()
-            fl     = -huge(fl)
-            if( l_fl .and. self%l_gate .and. self%nodes(i)%depth > 0 ) fl = self%floor_value()
-            if( self%l_gate ) hrow = read_ints(d//'/motion/gate_halves.txt')
-            oc = read_ints(d//'/motion/offpath.txt')
-            do ic = 1, size(oc)
-                call cand_work(oc(ic))
-            end do
-            call write_lines(d//'/motion/offbatch.txt', bdirs)
-            if( size(bdirs) > 0 .or. l_wait ) return
-            call fopen(fu, string(d//'/motion_call.txt'), status='unknown', position='append', action='write', iostat=io)
-            do ic = 1, size(oc)
-                call write_line(motion_dir(d, oc(ic))//'/verdict.txt', verdict(oc(ic)))
-                if( io == 0 ) write(fu,'(A)') 'off the path, '//cand_label(d, oc(ic))//': '//&
-                    &first_line(motion_dir(d, oc(ic))//'/motion_call.txt', '-')//' | gate '//&
-                    &first_line(motion_dir(d, oc(ic))//'/verdict.txt', '-')
-            end do
-            if( io == 0 ) call fclose(fu)
-            call write_ints(d//'/motion/offpath_done.txt', oc)
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: the '//int2str(size(oc))//&
-                &' off-path candidates are called: '//off_labels(oc, .true.)
-        end subroutine off_next
-
-        function off_labels( oc, lw ) result( str )
-            integer, intent(in) :: oc(:)
-            logical, intent(in) :: lw
-            character(len=:), allocatable :: str
-            integer :: ic
-            str = ''
-            do ic = 1, size(oc)
-                str = str//merge(', ', '  ', ic > 1)//cand_label(d, oc(ic))
-                if( lw ) str = str//' '//trim(motion_word(d, oc(ic)))//' ('//first_line(motion_dir(d, oc(ic))//'/verdict.txt', '-')//')'
-            end do
-            str = trim(adjustl(str))
-        end function off_labels
-
-        logical function gated( c )
-            integer, intent(in) :: c
-            gated = self%l_gate .and. self%nodes(i)%depth > 0 .and. c <= INH0
-        end function gated
-
-        real function cand_strength( c )
-            integer, intent(in) :: c
-            character(len=4096) :: ln
-            integer :: fu, io
-            cand_strength = -3.e6
-            if( c > 0 .and. c <= INH0 )then
-                cand_strength = kept_margin(site_dir_of(d, c))
-            else if( c > INH0 )then
-                cand_strength = -2.e6
-                call fopen(fu, string(d//'/motion/inherited.txt'), status='old', action='read', iostat=io)
-                if( io == 0 )then
-                    do
-                        read(fu,'(A)',iostat=io) ln
-                        if( io /= 0 ) exit
-                        if( word(ln, 1) /= int2str(c) .or. nwords(ln) < 3 ) cycle
-                        if( str2int(word(ln, 3)) > 0 ) cand_strength = kept_margin(site_dir_of(self%root//'/node_'//&
-                            &word(ln, 2), str2int(word(ln, 3)))) - 1.e6
-                    end do
-                    call fclose(fu)
-                endif
-            endif
-        end function cand_strength
-
-        integer function strongest_of( fac )
-            integer, intent(in) :: fac(:)
-            real    :: s, best
-            integer :: m
-            strongest_of = 1
-            best = -huge(best)
-            do m = 1, size(fac)
-                s = cand_strength(fac(m))
-                if( s > best )then
-                    best = s
-                    strongest_of = m
-                endif
-            end do
-        end function strongest_of
-
-        function strength_order( cs ) result( ord )
-            integer, intent(in)  :: cs(:)
-            integer, allocatable :: ord(:)
-            real,    allocatable :: sv(:)
-            real    :: x
-            integer :: a, b, t
-            ord = cs
-            allocate(sv(size(cs)))
-            do a = 1, size(cs)
-                sv(a) = cand_strength(cs(a))
-            end do
-            do a = 2, size(ord)
-                b = a
-                do while( b > 1 )
-                    if( sv(b) <= sv(b - 1) ) exit
-                    t = ord(b)
-                    ord(b) = ord(b - 1)
-                    ord(b - 1) = t
-                    x = sv(b)
-                    sv(b) = sv(b - 1)
-                    sv(b - 1) = x
-                    b = b - 1
-                end do
-            end do
-        end function strength_order
-
-        function passing( cands ) result( fac )
-            integer, intent(in)  :: cands(:)
-            integer, allocatable :: fac(:)
-            integer :: ic
-            allocate(fac(0))
-            do ic = 1, size(cands)
-                if( .not. any(motion_word(d, cands(ic)) == [character(len=12) :: 'switch', 'insufficient', 'swing']) ) cycle
-                if( index(verdict(cands(ic)), 'fail') == 1 ) cycle
-                fac = [fac, cands(ic)]
-            end do
-        end function passing
-
-        function verdict( c ) result( v )
-            integer, intent(in) :: c
-            character(len=:), allocatable :: v, gs
-            real :: r
-            integer :: ios
-            if( .not. gated(c) )then
-                v = 'ungated'
-                return
-            endif
-            gs = first_line(motion_dir(d, c)//'/gate/gate.txt', 'fail: no gate score')
-            read(gs,*,iostat=ios) r
-            if( ios /= 0 )then
-                v = gs
-                if( index(v, 'fail') /= 1 ) v = 'fail: '//v
-            else if( .not. l_fl )then
-                v = 'pending: split-half corr '//gs//', the floor is not known yet'
-            else if( r >= fl )then
-                v = 'pass: split-half corr '//gs//' >= floor '//rstr(fl)
-            else
-                v = 'fail: split-half corr '//gs//' < floor '//rstr(fl)
-            endif
-        end function verdict
-
-        subroutine cand_work( c )
-            integer, intent(in) :: c
-            character(len=1), parameter :: HN(2) = ['A', 'B']
-            type(string), allocatable :: ends(:)
-            integer,      allocatable :: ga(:), gb(:), grp(:)
-            character(len=:), allocatable :: md, gd, ln
-            real    :: r
-            integer :: h
-            logical :: ldone
-            md = motion_dir(d, c)
-            call simple_mkdir(string(md))
-            if( .not. file_exists(string(md//'/motion_call.txt')) )then
-                select case(self%dir_status(md))
-                    case(-2)
-                        call motion_submit(c)
-                    case(-1)
-                        bdirs = [bdirs, string(md)]
-                    case default
-                        call motion_stats(md, mask, nsym_of(trim(self%p%pgrp)), cand_label(d, c), root_axes(self, i, c), &
-                            &cand_origin(d, c), ln)
-                        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: '//ln
-                end select
-            endif
-            if( .not. gated(c) ) return
-            gd = md//'/gate'
-            if( file_exists(string(gd//'/gate.txt')) )then
-                if( .not. l_fl ) l_wait = .true.
-                return
-            endif
-            call simple_mkdir(string(gd))
-            ldone = .true.
-            do h = 1, 2
-                select case(self%dir_status(gd//'/'//HN(h)))
-                    case(-2)
-                        if( c == 0 )then
-                            call gate_flex(gd//'/'//HN(h), h)
-                        else
-                            call gate_refit(gd//'/'//HN(h), c, h, d//'/motion/coords_'//HN(h)//'.txt')
-                        endif
-                        ldone = .false.
-                    case(-1)
-                        bdirs = [bdirs, string(gd//'/'//HN(h))]
-                        ldone = .false.
-                end select
-            end do
-            if( .not. ldone ) return
-            select case(self%dir_status(gd//'/rec'))
-                case(-2)
-                    if( c == 0 )then
-                        ga = two_groups_in(gd//'/A')
-                        gb = two_groups_in(gd//'/B')
-                    else
-                        ends = kept_ends(site_dir_of(d, c))
-                        ga   = post_groups(mean_post(gd//'/A', ends))
-                        gb   = post_groups(mean_post(gd//'/B', ends))
-                    endif
-                    grp = groups4(ga, gb)
-                    if( size(grp) > 0 )then
-                        call gate_rec(gd//'/rec', grp)
-                    else
-                        call write_line(gd//'/gate.txt', 'fail: a half group holds under '//int2str(GATE_MINGRP)//' particles')
-                        if( .not. l_fl ) l_wait = .true.
-                    endif
-                case(-1)
-                    bdirs = [bdirs, string(gd//'/rec')]
-                case default
-                    r = gate_corr(gd//'/rec', self%p%mskdiam)
-                    if( r < -1.5 )then
-                        call write_line(gd//'/gate.txt', 'fail: the half reconstructions are missing')
-                    else
-                        if( c == 0 ) r = abs(r)
-                        call write_line(gd//'/gate.txt', rstr(r))
-                    endif
-                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' gate: '//cand_label(d, c)//&
-                        &', split-half corr(D_A, D_B) at 15 A: '//first_line(gd//'/gate.txt', '-')
-                    if( .not. l_fl ) l_wait = .true.
-            end select
-        end subroutine cand_work
-
-        ! the gate's noise: random fifths of each particle half (permutation splits), reconstructed and scored as an axis
-        subroutine null_work
-            integer, allocatable :: grp(:)
-            character(len=:), allocatable :: nd0, rd
-            real    :: r
-            integer :: j, fu, io, nperm
-            logical :: ldone
-            nd0 = d//'/motion/null'
-            if( file_exists(string(nd0//'/gate.txt')) ) return
-            call simple_mkdir(string(nd0))
-            ldone = .true.
-            do j = 1, NULL_PERM
-                rd = nd0//'/perm/rec_p'//int2str(j)
-                if( file_exists(string(rd//'/score.txt')) ) cycle
-                select case(self%dir_status(rd))
-                    case(-2)
-                        call simple_mkdir(string(nd0//'/perm'))
-                        grp = perm_groups(hrow, gate_seed(self%nodes(i)%id) + 9000_8 + int(j, 8))
-                        if( size(grp) > 0 )then
-                            call gate_rec(rd, grp)
-                            ldone = .false.
-                        else
-                            call simple_mkdir(string(rd))
-                            call write_line(rd//'/score.txt', 'fail')
-                        endif
-                    case(-1)
-                        bdirs = [bdirs, string(rd)]
-                        ldone = .false.
-                    case default
-                        r = gate_corr(rd, self%p%mskdiam)
-                        if( r < -1.5 )then
-                            call write_line(rd//'/score.txt', 'fail')
-                        else
-                            call write_line(rd//'/score.txt', rstr(r))
-                        endif
-                end select
-            end do
-            if( .not. ldone ) return
-            call fopen(fu, string(nd0//'/gate.tmp'), status='replace', action='write', iostat=io)
-            call fileiochk('hetero_tree: cannot write '//nd0//'/gate.tmp', io)
-            nperm = 0
-            do j = 1, NULL_PERM
-                rd = first_line(nd0//'/perm/rec_p'//int2str(j)//'/score.txt', 'fail')
-                if( rd == 'fail' ) cycle
-                write(fu,'(A)') 'perm:p'//int2str(j)//' '//rd//' - 1'
-                nperm = nperm + 1
-            end do
-            call fclose(fu)
-            call simple_rename(string(nd0//'/gate.tmp'), string(nd0//'/gate.txt'))
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' gate null: '//int2str(nperm)//' of '//&
-                &int2str(NULL_PERM)//' permutation splits scored'
-        end subroutine null_work
-
-        ! one random 50/50 split of the node's flex rows for every gate test of the node
-        subroutine gate_halves
-            type(string), allocatable :: hdr(:), body(:)
-            integer,      allocatable :: perm(:), hl(:), hr(:)
-            character(len=8192) :: ln
-            character(len=:), allocatable :: cf
-            integer(kind=8) :: seed
-            integer :: fu, io, n, nh, j, p, nrp
-            cf = d//'/fflex/flex_pca_coordinates.txt'
-            call fopen(fu, string(cf), status='old', action='read', iostat=io)
-            call fileiochk('hetero_tree: cannot read '//cf, io)
-            n  = 0
-            nh = 0
-            do
-                read(fu,'(A)',iostat=io) ln
-                if( io /= 0 ) exit
-                if( len_trim(ln) == 0 ) cycle
-                if( ln(1:1) == '#' )then
-                    nh = nh + 1
-                else
-                    n = n + 1
-                endif
-            end do
-            allocate(hdr(nh), body(n))
-            rewind(fu)
-            n  = 0
-            nh = 0
-            do
-                read(fu,'(A)',iostat=io) ln
-                if( io /= 0 ) exit
-                if( len_trim(ln) == 0 ) cycle
-                if( ln(1:1) == '#' )then
-                    nh      = nh + 1
-                    hdr(nh) = string(trim(ln))
-                else
-                    n       = n + 1
-                    body(n) = string(trim(ln))
-                endif
-            end do
-            call fclose(fu)
-            seed = gate_seed(self%nodes(i)%id)
-            perm = lcg_perm(n, seed)
-            allocate(hl(n), source=2)
-            hl(perm(1:n/2)) = 1
-            nrp = size(project_states(d//'/'//NODE_PROJ))
-            allocate(hr(nrp), source=0)
-            do j = 1, n
-                p = str2int(word(body(j)%to_char(), 1))
-                if( p >= 1 .and. p <= nrp ) hr(p) = hl(j)
-            end do
-            call simple_mkdir(string(d//'/motion'))
-            call write_coords(d//'/motion/coords_A.txt', hdr, pack(body, hl == 1))
-            call write_coords(d//'/motion/coords_B.txt', hdr, pack(body, hl == 2))
-            call write_ints(d//'/motion/gate_halves.txt', hr)
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' gate: random halves of its '//int2str(n)//&
-                &' flex rows, '//int2str(count(hl == 1))//' / '//int2str(count(hl == 2))
-        end subroutine gate_halves
-
-        subroutine inherit_cands
-            integer, allocatable :: ac(:), mx(:), ab(:), s0(:), abn(:), s0n(:)
-            real,    allocatable :: sc(:), scn(:)
-            character(len=:), allocatable :: id, ad, md, wd
-            integer :: lp, ia, c, j, fu, io, ninh
-            id   = self%nodes(i)%id
-            c    = INH0
-            ninh = 0
-            call simple_mkdir(string(d//'/motion'))
-            call fopen(fu, string(d//'/motion/inherited.tmp'), status='replace', action='write', iostat=io)
-            call fileiochk('hetero_tree: cannot write '//d//'/motion/inherited.tmp', io)
-            do lp = 1, len(id) - 1
-                ad = self%root//'/node_'//id(1:lp)
-                ac = read_cands(ad)
-                if( size(ac) == 0 ) cycle
-                mx = anc_index(ad, d)
-                do ia = 1, size(ac)
-                    if( ac(ia) > INH0 ) cycle
-                    wd = trim(motion_word(ad, ac(ia)))
-                    if( wd /= 'switch' .and. wd /= 'swing' ) cycle
-                    if( index(first_line(motion_dir(ad, ac(ia))//'/verdict.txt', 'ungated'), 'fail') == 1 ) cycle
-                    sc = read_reals(motion_dir(ad, ac(ia))//'/score.txt')
-                    ab = read_ints(motion_dir(ad, ac(ia))//'/ab.txt')
-                    s0 = read_ints(motion_dir(ad, ac(ia))//'/st0.txt')
-                    if( size(mx) == 0 .or. size(sc) == 0 .or. size(ab) /= size(sc) .or. size(s0) /= size(sc) ) cycle
-                    if( maxval(mx) > size(sc) ) cycle
-                    allocate(scn(size(mx)), source=-1.)
-                    allocate(abn(size(mx)), s0n(size(mx)), source=0)
-                    do j = 1, size(mx)
-                        if( mx(j) < 1 ) cycle
-                        scn(j) = sc(mx(j))
-                        abn(j) = ab(mx(j))
-                        s0n(j) = s0(mx(j))
-                    end do
-                    if( count(scn >= 0.) >= NMBIN * GATE_MINGRP )then
-                        c  = c + 1
-                        md = motion_dir(d, c)
-                        call simple_mkdir(string(md))
-                        call write_reals(md//'/inherit_score.txt', scn)
-                        call write_ints(md//'/inherit_ab.txt', abn)
-                        call write_ints(md//'/inherit_st0.txt', s0n)
-                        call write_line(md//'/inherit.txt', id(1:lp)//' '//cand_name(ac(ia))//' ('//wd//' there)')
-                        call add_cand(d, c)
-                        write(fu,'(A)') int2str(c)//' '//id(1:lp)//' '//int2str(ac(ia))//' '//wd//' '//int2str(count(scn >= 0.))
-                        ninh = ninh + 1
-                    endif
-                    deallocate(scn, abn, s0n)
-                end do
-            end do
-            call fclose(fu)
-            call simple_rename(string(d//'/motion/inherited.tmp'), string(d//'/motion/inherited.txt'))
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: '//int2str(ninh)//' ancestor axes '//&
-                &'(switch or swing there) join the candidates'
-        end subroutine inherit_cands
-
-        subroutine motion_submit( c )
-            integer, intent(in) :: c
-            type(cmdline) :: cj
-            real,    allocatable :: sc(:)
-            integer, allocatable :: bins(:)
-            character(len=:), allocatable :: md
-            integer :: m
-            md = motion_dir(d, c)
-            call simple_mkdir(string(md))
-            sc   = cand_score(d, c)
-            bins = quint_bins(sc)
-            call write_reals(md//'/score.txt', sc)
-            call write_ints(md//'/bins.txt', bins)
-            call write_states(d//'/recB0/b.simple', md//'/m.simple', bins)
-            call cj%set('prg',         'reconstruct3D')
-            call cj%set('projfile',    'm.simple')
-            call cj%set('nstates',     NMBIN)
-            call cj%set('postprocess', 'no')
-            call common_keys(self, cj)
-            call self%submit_in(md, cj, count(bins > 0))
-            bdirs = [bdirs, string(md)]
-            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//' motion: '//cand_label(d, c)//', '//&
-                &int2str(count(bins > 0))//' rows in '//int2str(NMBIN)//' score bins of '//&
-                &joined([(count(bins == m), m=1,NMBIN)])//', their reconstruction submitted'
-        end subroutine motion_submit
-
-        subroutine gate_refit( sdir, kk, h, cfile )
-            character(len=*), intent(in) :: sdir, cfile
-            integer,          intent(in) :: kk, h
-            type(cmdline) :: cj
-            call simple_mkdir(string(sdir))
-            call write_states(d//'/'//NODE_PROJ, sdir//'/s.simple', merge(1, 0, hrow == h))
-            call cj%set('prg',         'site_rank')
-            call cj%set('projfile',    's.simple')
-            call cj%set('infile',      cfile)
-            call cj%set('site_dirs',   trim(self%p%site_dirs))
-            call cj%set('pole_merge',  self%p%pole_merge)
-            if( self%p%pooled_poles .eq. 'yes' ) call cj%set('pooled_poles', 'yes')
-            call cj%set('junk_screen', trim(self%p%junk_screen))
-            call cj%set('pcg_mskfile', cand_mask(d, kk))
-            call cj%set('pgrp',        trim(self%p%pgrp))
-            call cj%set('mskdiam',     self%p%mskdiam)
-            call cj%set('nthr',        max(self%p%nthr, SITE_NTHR))
-            if( local_rows(d) ) call cj%set('rowmap', d//'/rows.txt')
-            call self%submit_in(sdir, cj, count(hrow == h))
-            bdirs = [bdirs, string(sdir)]
-        end subroutine gate_refit
-
-        subroutine gate_flex( sdir, h )
-            character(len=*), intent(in) :: sdir
-            integer,          intent(in) :: h
-            type(cmdline) :: cj
-            character(len=:), allocatable :: vm
-            integer :: nh
-            call simple_mkdir(string(sdir))
-            nh = count(hrow == h)
-            call write_states(d//'/'//NODE_PROJ, sdir//'/f.simple', merge(1, 0, hrow == h))
-            if( self%l_oneflex .and. self%nodes(i)%depth > 0 )then
-                vm = d//'/pmean.mrc'
-            else
-                vm = d//'/mean/recvol_state01.mrc'
-            endif
-            call self%set_parts(nh)
-            call flex_keys(self, cj, vm, min(KMAX, max(2, nh / max(1, self%p%kfloor))))
-            call cj%set('pcg_mskfile', d//'/mask.mrc')
-            if( self%p%flex_min_neff > 0 ) call cj%set('min_neff', self%p%flex_min_neff)
-            if( local_rows(d) ) call cj%set('rowmap', d//'/rows.txt')
-            call self%submit_in(sdir, cj)
-            call self%set_parts(size(rows))
-            bdirs = [bdirs, string(sdir)]
-        end subroutine gate_flex
-
-        subroutine gate_rec( sdir, grp )
-            character(len=*), intent(in) :: sdir
-            integer,          intent(in) :: grp(:)
-            type(cmdline) :: cj
-            call simple_mkdir(string(sdir))
-            call write_states(d//'/'//NODE_PROJ, sdir//'/r.simple', grp)
-            call cj%set('prg',         'reconstruct3D')
-            call cj%set('projfile',    'r.simple')
-            call cj%set('nstates',     4)
-            call cj%set('pgrp',        trim(self%p%pgrp))
-            call cj%set('mskdiam',     self%p%mskdiam)
-            call cj%set('postprocess', 'no')
-            call cj%set('nthr',        max(self%p%nthr, SITE_NTHR))
-            if( self%box > GATE_BOX )then
-                call cj%set('box_crop',  GATE_BOX)
-                call cj%set('smpd_crop', real(self%box) * self%smpd / real(GATE_BOX))
-            endif
-            call self%submit_in(sdir, cj, count(grp > 0))
-            bdirs = [bdirs, string(sdir)]
-        end subroutine gate_rec
 
         subroutine log_lines( fname, what )
             character(len=*), intent(in) :: fname, what
@@ -1710,10 +1066,8 @@ contains
             case(S_SDISC)
                 prev_step = S_RECB0
             case(S_SBATCH)
-                prev_step = merge(S_SDISC, S_SITE, self%l_motion .or. self%l_strong .or. &
+                prev_step = merge(S_SDISC, S_SITE, self%l_strong .or. &
                     &first_line(self%ndir(i)//'/sites/rest_first.txt', '2') == '1')
-            case(S_MOTION, S_MBATCH, S_GATEW)
-                prev_step = S_SITE
         end select
     end function prev_step
 
@@ -3036,134 +2390,6 @@ contains
         if( lfail ) batch_status = cf
     end function batch_status
 
-    subroutine off_work( self, noff )
-        class(hetero_tree), intent(inout) :: self
-        integer,            intent(out)   :: noff
-        integer :: i
-        noff = 0
-        if( self%l_multi .or. .not. self%l_motion ) return
-        do i = 1, size(self%nodes)
-            if( self%nodes(i)%step == S_SUBTREE ) cycle
-            if( .not. off_open(self%ndir(i)) ) cycle
-            noff = noff + 1
-            if( self%batch_status(self%ndir(i)//'/motion/offbatch.txt') == -1 ) cycle
-            call self%advance(i, S_OFFP)
-        end do
-    end subroutine off_work
-
-    logical function anc_wait( self, i )
-        class(hetero_tree), intent(in) :: self
-        integer,            intent(in) :: i
-        integer :: lp
-        anc_wait = .false.
-        if( .not. self%l_inherit ) return
-        if( file_exists(string(self%ndir(i)//'/motion/inherited.txt')) ) return
-        do lp = 1, len(self%nodes(i)%id) - 1
-            if( off_open(self%root//'/node_'//self%nodes(i)%id(1:lp)) ) anc_wait = .true.
-        end do
-    end function anc_wait
-
-    logical function floor_ready( self )
-        class(hetero_tree), intent(in) :: self
-        character(len=2), parameter :: FN(3) = ['r ', 'r1', 'r2']
-        integer :: f, j, jj
-        floor_ready = .true.
-        if( .not. self%l_gate .or. self%p%motion_floor > 0. ) return
-        if( file_exists(string(self%root//'/'//FLOOR_FILE)) ) return
-        do f = 1, 3
-            j = 0
-            do jj = 1, size(self%nodes)
-                if( self%nodes(jj)%id == trim(FN(f)) ) j = jj
-            end do
-            if( j == 0 ) cycle
-            if( file_exists(string(self%root//'/node_'//trim(FN(f))//'/motion/null/gate.txt')) ) cycle
-            if( self%nodes(j)%step == S_DONE .or. self%nodes(j)%step == S_FAILED ) cycle
-            if( self%nodes(j)%step >= S_SEEDS .and. self%nodes(j)%step <= S_SPLIT ) cycle
-            floor_ready = .false.
-            return
-        end do
-    end function floor_ready
-
-    real function floor_value( self )
-        class(hetero_tree), intent(in) :: self
-        character(len=2), parameter :: FN(3) = ['r ', 'r1', 'r2']
-        real, allocatable :: v(:)
-        character(len=4096) :: ln
-        character(len=256)  :: buf
-        character(len=:), allocatable :: ff, gf, nodes, vals
-        real    :: x, med, mads
-        integer :: f, fu, io, nkept, ndrop, nempty, nperm
-        floor_value = self%p%motion_floor
-        if( floor_value > 0. ) return
-        ff = self%root//'/'//FLOOR_FILE
-        if( file_exists(string(ff)) )then
-            buf = first_line(ff, '-1.0e30')
-            read(buf,*,iostat=io) floor_value
-            if( io /= 0 ) floor_value = -huge(1.)
-            if( floor_value < -1.e29 ) floor_value = -huge(1.)
-            return
-        endif
-        allocate(v(0))
-        nodes = ''
-        vals  = ''
-        do f = 1, 3
-            gf = self%root//'/node_'//trim(FN(f))//'/motion/null/gate.txt'
-            if( .not. file_exists(string(gf)) ) cycle
-            nkept  = 0
-            ndrop  = 0
-            nempty = 0
-            nperm  = 0
-            call fopen(fu, string(gf), status='old', action='read', iostat=io)
-            if( io /= 0 ) cycle
-            do
-                read(fu,'(A)',iostat=io) ln
-                if( io /= 0 ) exit
-                if( nwords(ln) < 4 ) cycle
-                if( word(ln, 4) == '0' )then
-                    ndrop = ndrop + 1
-                    cycle
-                endif
-                if( word(ln, 4) /= '1' .and. word(ln, 4) /= 'e' ) cycle
-                buf = word(ln, 2)
-                read(buf,*,iostat=io) x
-                if( io /= 0 ) cycle
-                v     = [v, abs(x)]
-                vals  = vals//' '//word(ln, 2)
-                if( word(ln, 4) == 'e' )then
-                    nempty = nempty + 1
-                else
-                    nkept = nkept + 1
-                endif
-                if( index(ln, 'perm:') == 1 ) nperm = nperm + 1
-            end do
-            call fclose(fu)
-            if( nperm == nkept + nempty )then
-                nodes = nodes//' '//trim(FN(f))//' ('//int2str(nperm)//' permutation splits)'
-            else
-                nodes = nodes//' '//trim(FN(f))//' ('//int2str(nkept - nperm)//' fake-direction refits kept, '//int2str(ndrop)//&
-                    &' dropped, '//int2str(nempty)//' empty, '//int2str(nperm)//' permutation splits)'
-            endif
-        end do
-        call fopen(fu, string(ff), status='replace', action='write', iostat=io)
-        call fileiochk('hetero_tree: cannot write '//ff, io)
-        if( size(v) == 0 )then
-            floor_value = -huge(1.)
-            write(fu,'(A)') '-1.0e30'
-            write(fu,'(A)') 'no null split scored: every gated axis passes'
-            write(logfhandle,'(A)') '>>> HETERO_TREE WARNING gate floor: no null split scored, every gated axis passes'
-        else
-            med  = quant_of(v, 0.5)
-            mads = 1.4826 * quant_of(abs(v - med), 0.5)
-            floor_value = med + GATE_NSD * mads
-            write(fu,'(A)') rstr(floor_value)
-            write(fu,'(A)') 'median |corr| '//rstr(med)//' + '//rstr(GATE_NSD)//' MAD-sd '//rstr(mads)//' of '//&
-                &int2str(size(v))//' null splits on'//nodes//':'//vals
-            write(logfhandle,'(A)') '>>> HETERO_TREE gate floor '//rstr(floor_value)//': median |corr| '//rstr(med)//' + '//&
-                &rstr(GATE_NSD)//' MAD-sd '//rstr(mads)//' of '//int2str(size(v))//' null splits on'//nodes
-        endif
-        call fclose(fu)
-    end function floor_value
-
     integer function fs_nrun( self )
         class(hetero_tree), intent(in) :: self
         integer :: j
@@ -3531,14 +2757,8 @@ contains
         character(len=:), allocatable :: f, sdir
         logical :: err
         integer :: ios
-        if( istep == S_MBATCH )then
-            step_status = self%batch_status(self%ndir(i)//'/motion/batch.txt')
-            return
-        else if( istep == S_SBATCH )then
+        if( istep == S_SBATCH )then
             step_status = self%batch_status(self%ndir(i)//'/sites/batch.txt', .true.)
-            return
-        else if( istep == S_GATEW )then
-            step_status = merge(0, -1, self%floor_ready() .and. .not. self%anc_wait(i))
             return
         endif
         sdir = self%step_dir(i, istep)
@@ -3563,11 +2783,8 @@ contains
         integer, allocatable :: rows(:), lab(:), ch(:), junk(:), states(:), to(:), pop(:), mem(:)
         type(tnode), allocatable :: tmp(:)
         character(len=:), allocatable :: d, name, comp
-        character(len=8) :: ev
-        logical :: l_split, l_re
-        integer :: s, g, ng, n, fg, big, j, ios
-        call get_environment_variable('SIMPLE_TREE_REENTER', ev, status=ios)
-        l_re   = ios == 0 .and. ev == 'yes'
+        logical :: l_split
+        integer :: s, g, ng, n, fg, big, j
         d      = self%ndir(i)
         rows   = read_ints(d//'/rows.txt')
         lab    = project_states(d//'/stageB/b.simple')
@@ -3614,13 +2831,6 @@ contains
                 if( l_split .and. n >= self%p%minpop .and. self%nodes(i)%depth < self%p%maxdepth )then
                     call add_child([(any(mem == lab(j)), j=1,size(lab))], 'states '//joined(mem)//' ('//int2str(n)//&
                         &' particles)')
-                else if( l_re .and. ng == 1 .and. any([(count(lab == junk(j)) > 0, j=1,size(junk))]) .and. &
-                    &n >= self%p%minpop .and. self%nodes(i)%depth < self%p%maxdepth .and. &
-                    &.not. reentered_line(self%root, self%nodes(i)%id) )then
-                    ! one group beside the junk set aside re-enters with the rest leaf's rows, once per lineage (test switch)
-                    call add_child(rest_sel(), 'states '//joined(mem)//' ('//int2str(n)//' particles), the one group '//&
-                        &'beside the junk set aside, re-enters')
-                    call write_ints(self%ndir(size(self%nodes))//'/reentered.txt', [1])
                 else
                     call add_leaf(self, i, mem, .false., ng == 1)
                 endif
@@ -3653,17 +2863,6 @@ contains
             call write_ints(self%ndir(size(self%nodes))//'/rows.txt', cr)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//what//' -> node '//name
         end subroutine add_child
-
-        function rest_sel() result( sel )
-            logical, allocatable :: sel(:)
-            integer, allocatable :: jk(:)
-            integer :: jj
-            allocate(sel(size(lab)), source=local_rows(d))
-            if( .not. local_rows(d) ) sel(rows) = .true.
-            jk = junk_rows(d)
-            if( size(jk) > 0 ) sel(jk) = .false.
-            sel = [(any(mem == lab(jj)) .or. (lab(jj) == 0 .and. sel(jj)), jj=1,size(lab))]
-        end function rest_sel
 
     end subroutine decide
 
@@ -3932,7 +3131,6 @@ contains
         character(len=:), allocatable :: sd, nm
         integer :: j, k
         logical :: l_kids
-        if( self%l_motion ) return
         l_kids = any([(self%nodes(j)%pproj == self%ndir(i)//'/stageB/b.simple', j=1,size(self%nodes))])
         call del_file(string(self%ndir(i)//'/pmean.mrc'))
         if( self%p%site_layer .eq. 'yes' )then
@@ -6037,15 +5235,6 @@ contains
         if( is_anc ) is_anc = u(1:len(a)) == a
     end function is_anc
 
-    logical function reentered_line( root, id )
-        character(len=*), intent(in) :: root, id
-        integer :: l
-        reentered_line = .false.
-        do l = len(id), 1, -1
-            if( file_exists(string(root//'/node_'//id(1:l)//'/reentered.txt')) ) reentered_line = .true.
-        end do
-    end function reentered_line
-
     function parent_of( id ) result( p )
         character(len=*), intent(in) :: id
         character(len=:), allocatable :: p
@@ -6144,8 +5333,7 @@ contains
 
     logical function live_step( s )
         integer, intent(in) :: s
-        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_MOTION .or. s == S_MBATCH .or. s == S_GATEW .or. s == S_SBATCH .or. &
-            &s == S_SDISC
+        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_SBATCH .or. s == S_SDISC
     end function live_step
 
     function step_label( s ) result( lb )
@@ -6154,12 +5342,6 @@ contains
         select case(s)
             case(S_MEAN:S_SPLIT)
                 lb = trim(STEP_DIRS(s))
-            case(S_MOTION)
-                lb = 'motion'
-            case(S_MBATCH)
-                lb = 'motion batch'
-            case(S_GATEW)
-                lb = 'gate floor wait'
             case(S_SBATCH)
                 lb = 'site batch'
             case(S_SDISC)
@@ -6176,10 +5358,6 @@ contains
         select case(s)
             case(S_SITE)
                 sd = seed_dir(self%ndir(i))
-            case(S_MOTION)
-                sd = motion_dir(self%ndir(i), motion_cur(self%ndir(i)))
-            case(S_MBATCH, S_GATEW)
-                sd = self%ndir(i)//'/motion'
             case(S_SBATCH, S_SDISC)
                 sd = self%ndir(i)//'/sites'
             case(S_MEAN:S_RECB0, S_SEEDS:S_SPLIT)
@@ -6188,82 +5366,6 @@ contains
                 sd = self%ndir(i)
         end select
     end function step_dir
-
-    function motion_dir( nd, c ) result( md )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        character(len=:), allocatable :: md
-        md = nd//'/motion/c'//int2str(c)
-    end function motion_dir
-
-    function read_cands( nd ) result( cands )
-        character(len=*), intent(in) :: nd
-        integer, allocatable :: cands(:)
-        allocate(cands(0))
-        if( file_exists(string(nd//'/motion/cands.txt')) ) cands = read_ints(nd//'/motion/cands.txt')
-    end function read_cands
-
-    subroutine add_cand( nd, c )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        integer, allocatable :: cands(:)
-        cands = read_cands(nd)
-        if( any(cands == c) ) return
-        call simple_mkdir(string(nd//'/motion'))
-        call write_ints(nd//'/motion/cands.txt', [cands, c])
-    end subroutine add_cand
-
-    function motion_word( nd, c ) result( w )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        character(len=12) :: w
-        w = word(first_line(motion_dir(nd, c)//'/motion_call.txt', '-'), 1)
-    end function motion_word
-
-    integer function motion_cur( nd )
-        character(len=*), intent(in) :: nd
-        integer, allocatable :: cands(:)
-        integer :: ic
-        motion_cur = -1
-        cands = read_cands(nd)
-        do ic = 1, size(cands)
-            if( file_exists(string(motion_dir(nd, cands(ic))//'/motion_call.txt')) ) cycle
-            motion_cur = cands(ic)
-            return
-        end do
-    end function motion_cur
-
-    function cand_name( c ) result( nm )
-        integer, intent(in) :: c
-        character(len=:), allocatable :: nm
-        if( c > 0 )then
-            nm = 'site '//int2str(c)
-        else
-            nm = 'the fflex fallback'
-        endif
-    end function cand_name
-
-    function cand_label( nd, c ) result( nm )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        character(len=:), allocatable :: nm
-        if( c > INH0 )then
-            nm = 'inherited '//first_line(motion_dir(nd, c)//'/inherit.txt', '?')
-        else
-            nm = cand_name(c)
-        endif
-    end function cand_label
-
-    function cand_origin( nd, c ) result( org )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        character(len=:), allocatable :: org
-        if( c > INH0 )then
-            org = 'inherited from '//first_line(motion_dir(nd, c)//'/inherit.txt', '?')
-        else
-            org = 'novel'
-        endif
-    end function cand_origin
 
     function group_rotations( pgrp ) result( rots )
         character(len=*), optional, intent(in) :: pgrp
@@ -6342,66 +5444,6 @@ contains
         end do
     end function mate_dice
 
-    logical function off_open( nd )
-        character(len=*), intent(in) :: nd
-        off_open = file_exists(string(nd//'/motion/offpath.txt')) .and. .not. file_exists(string(nd//'/motion/offpath_done.txt'))
-    end function off_open
-
-    logical function floor_node( id )
-        character(len=*), intent(in) :: id
-        floor_node = id == 'r' .or. id == 'r1' .or. id == 'r2'
-    end function floor_node
-
-    integer(kind=8) function gate_seed( id )
-        character(len=*), intent(in) :: id
-        character(len=16) :: ev
-        integer :: ios, es
-        es = 0
-        call get_environment_variable('SIMPLE_SEED', ev, status=ios)
-        if( ios == 0 ) read(ev,*,iostat=ios) es
-        if( ios /= 0 ) es = 0
-        gate_seed = mod(1_8 + int(id_seed(id), 8) + 7919_8 * int(abs(es), 8), 2147483646_8) + 1_8
-    end function gate_seed
-
-    function lcg_perm( n, seed ) result( perm )
-        integer,         intent(in)    :: n
-        integer(kind=8), intent(inout) :: seed
-        integer, allocatable :: perm(:)
-        integer :: a, b, t
-        perm = [(a, a=1,n)]
-        do a = n, 2, -1
-            seed    = mod(seed * 48271_8, 2147483647_8)
-            b       = 1 + int(mod(seed, int(a, 8)))
-            t       = perm(a)
-            perm(a) = perm(b)
-            perm(b) = t
-        end do
-    end function lcg_perm
-
-    subroutine write_line( fname, text )
-        character(len=*), intent(in) :: fname, text
-        integer :: fu, io
-        call fopen(fu, string(fname), status='replace', action='write', iostat=io)
-        call fileiochk('hetero_tree: cannot write '//fname, io)
-        write(fu,'(A)') text
-        call fclose(fu)
-    end subroutine write_line
-
-    subroutine write_coords( fname, hdr, lines )
-        character(len=*), intent(in) :: fname
-        type(string),     intent(in) :: hdr(:), lines(:)
-        integer :: fu, io, j
-        call fopen(fu, string(fname), status='replace', action='write', iostat=io)
-        call fileiochk('hetero_tree: cannot write '//fname, io)
-        do j = 1, size(hdr)
-            write(fu,'(A)') hdr(j)%to_char()
-        end do
-        do j = 1, size(lines)
-            write(fu,'(A)') lines(j)%to_char()
-        end do
-        call fclose(fu)
-    end subroutine write_coords
-
     subroutine write_lines( fname, lines )
         character(len=*), intent(in) :: fname
         type(string),     intent(in) :: lines(:)
@@ -6429,197 +5471,6 @@ contains
         end do
         call fclose(fu)
     end function read_lines
-
-    function cand_mask( nd, kk ) result( mf )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: kk
-        character(len=:), allocatable :: mf, sh
-        character(len=8192) :: ln
-        integer :: fu, io, j0, j1
-        mf = nd//'/sites/site_'//pad2(kk)//'.mrc'
-        if( file_exists(string(mf)) ) return
-        mf = nd//'/mask.mrc'
-        sh = site_dir_of(nd, kk)//'/hetero_step.sh'
-        if( .not. file_exists(string(sh)) ) return
-        call fopen(fu, string(sh), status='old', action='read', iostat=io)
-        if( io /= 0 ) return
-        do
-            read(fu,'(A)',iostat=io) ln
-            if( io /= 0 ) exit
-            j0 = index(ln, 'pcg_mskfile=')
-            if( j0 == 0 ) cycle
-            j0 = j0 + len('pcg_mskfile=')
-            j1 = index(ln(j0:), ' ')
-            if( j1 == 0 ) j1 = len_trim(ln(j0:)) + 1
-            mf = ln(j0:j0+j1-2)
-            exit
-        end do
-        call fclose(fu)
-    end function cand_mask
-
-    function post_groups( p ) result( g )
-        real, intent(in) :: p(:)
-        integer, allocatable :: g(:)
-        logical, allocatable :: ok(:)
-        real    :: q1, q4
-        integer :: nv
-        allocate(g(size(p)), source=0)
-        ok = p >= 0.
-        nv = count(ok)
-        if( nv < 2 * GATE_MINGRP ) return
-        if( 2 * count(ok .and. abs(p - 0.5) > 0.45) > nv )then
-            where( ok .and. p <  0.5 ) g = 1
-            where( ok .and. p >= 0.5 ) g = 2
-        else
-            q1 = quant_of(pack(p, ok), 0.2)
-            q4 = quant_of(pack(p, ok), 0.8)
-            where( ok .and. p <= q1 ) g = 1
-            where( ok .and. p >= q4 ) g = 2
-        endif
-    end function post_groups
-
-    function groups4( ga, gb ) result( grp )
-        integer, intent(in)  :: ga(:), gb(:)
-        integer, allocatable :: grp(:)
-        integer :: m
-        allocate(grp(0))
-        if( size(ga) == 0 .or. size(ga) /= size(gb) ) return
-        grp = ga
-        where( gb == 1 ) grp = 3
-        where( gb == 2 ) grp = 4
-        if( any([(count(grp == m) < GATE_MINGRP, m=1,4)]) )then
-            deallocate(grp)
-            allocate(grp(0))
-        endif
-    end function groups4
-
-    function perm_groups( hr, seed0 ) result( grp )
-        integer,         intent(in) :: hr(:)
-        integer(kind=8), intent(in) :: seed0
-        integer, allocatable :: grp(:), idx(:), perm(:)
-        integer(kind=8) :: seed
-        integer :: h, n5, m
-        allocate(grp(size(hr)), source=0)
-        seed = mod(seed0, 2147483646_8) + 1_8
-        do h = 1, 2
-            idx = pack([(m, m=1,size(hr))], hr == h)
-            n5  = size(idx) / 5
-            if( n5 < GATE_MINGRP )then
-                deallocate(grp)
-                allocate(grp(0))
-                return
-            endif
-            perm = lcg_perm(size(idx), seed)
-            grp(idx(perm(1:n5)))      = 2 * h - 1
-            grp(idx(perm(n5+1:2*n5))) = 2 * h
-        end do
-    end function perm_groups
-
-    function anc_index( ad, nd ) result( mx )
-        character(len=*), intent(in) :: ad, nd
-        integer, allocatable :: mx(:), st(:), rn(:), ra(:), pos(:)
-        integer :: j
-        allocate(mx(0))
-        st = project_states(nd//'/'//NODE_PROJ)
-        if( local_rows(nd) )then
-            rn = read_ints(nd//'/rows.txt')
-        else
-            rn = [(j, j=1,size(st))]
-        endif
-        if( size(rn) /= size(st) .or. size(rn) == 0 ) return
-        if( local_rows(ad) )then
-            ra = read_ints(ad//'/rows.txt')
-            allocate(pos(max(maxval([0, ra]), maxval(rn))), source=0)
-            do j = 1, size(ra)
-                pos(ra(j)) = j
-            end do
-            mx = [(pos(rn(j)), j=1,size(rn))]
-        else
-            mx = rn
-        endif
-        where( st <= 0 ) mx = 0
-    end function anc_index
-
-    real function gate_corr( rd, mskdiam )
-        character(len=*), intent(in) :: rd
-        real,             intent(in) :: mskdiam
-        type(image) :: img
-        real,    allocatable :: a(:,:,:), b(:,:,:), msk(:,:,:)
-        logical, allocatable :: sel(:,:,:)
-        integer :: ldim(3), ifoo, n, nh, h, k, l, j
-        real    :: smpd, r, rr
-        gate_corr = -2.
-        do j = 1, 4
-            if( .not. file_exists(string(rd//'/recvol_state'//pad2(j)//'.mrc')) ) return
-        end do
-        call find_ldim_nptcls(string(rd//'/recvol_state01.mrc'), ldim, ifoo)
-        n    = ldim(1)
-        nh   = n / 2
-        smpd = find_img_smpd(string(rd//'/recvol_state01.mrc'))
-        call img%new([n,n,n], smpd)
-        rr = mskdiam / 2. / smpd
-        allocate(msk(n,n,n), source=0.)
-        do l = 1, n
-            do k = 1, n
-                do h = 1, n
-                    r = sqrt(real((h-1-nh)**2 + (k-1-nh)**2 + (l-1-nh)**2))
-                    if( r <= rr )then
-                        msk(h,k,l) = 1.
-                    else if( r <= rr + GATE_EDGE )then
-                        msk(h,k,l) = 0.5 * (1. + cos(PI * (r - rr) / GATE_EDGE))
-                    endif
-                end do
-            end do
-        end do
-        a = (vol(2) - vol(1)) * msk
-        b = (vol(4) - vol(3)) * msk
-        call lowpass(a)
-        call lowpass(b)
-        sel = msk > 0.5
-        gate_corr = pearson(pack(a, sel), pack(b, sel))
-        call img%kill
-
-    contains
-
-        function vol( jj ) result( v )
-            integer, intent(in) :: jj
-            real, allocatable :: v(:,:,:)
-            call img%zero_and_unflag_ft
-            call img%read(string(rd//'/recvol_state'//pad2(jj)//'.mrc'))
-            v = img%get_rmat()
-        end function vol
-
-        subroutine lowpass( x )
-            real, allocatable, intent(inout) :: x(:,:,:)
-            complex, allocatable :: cm(:,:,:)
-            real    :: f, f0, w
-            integer :: h_, k_, l_, ky, lz
-            f0 = smpd / GATE_LP
-            w  = 0.1 * f0
-            call img%zero_and_unflag_ft
-            call img%set_rmat(x, .false.)
-            call img%fft
-            cm = img%get_cmat()
-            do l_ = 1, size(cm,3)
-                lz = l_ - 1 - merge(n, 0, l_ > nh)
-                do k_ = 1, size(cm,2)
-                    ky = k_ - 1 - merge(n, 0, k_ > nh)
-                    do h_ = 1, size(cm,1)
-                        f = sqrt(real((h_-1)**2 + ky*ky + lz*lz)) / real(n)
-                        if( f > f0 + w )then
-                            cm(h_,k_,l_) = cmplx(0., 0.)
-                        else if( f > f0 )then
-                            cm(h_,k_,l_) = cm(h_,k_,l_) * (0.5 * (1. + cos(PI * (f - f0) / w)))
-                        endif
-                    end do
-                end do
-            end do
-            call img%set_cmat(cm)
-            call img%ifft
-            x = img%get_rmat()
-        end subroutine lowpass
-
-    end function gate_corr
 
     real function kept_margin( sd )
         character(len=*), intent(in) :: sd
@@ -6677,13 +5528,6 @@ contains
             if( maxval([0, read_ints(site_dir_of(nd, k)//'/site_seeds.txt')]) >= 2 ) ks = [ks, k]
         end do
     end function kept_sites
-
-    function kept_ends( sd ) result( ends )
-        character(len=*), intent(in) :: sd
-        type(string), allocatable :: ends(:)
-        integer :: q
-        call kept_pole(sd, q, ends)
-    end function kept_ends
 
     subroutine kept_pole( sd, q, ends )
         character(len=*),          intent(in)  :: sd
@@ -6868,257 +5712,6 @@ contains
         two_pole_seeds = .true.
     end function two_pole_seeds
 
-    subroutine motion_factor( nd, c, l_sw, minpop, lv, cv, w )
-        character(len=*),              intent(in)  :: nd
-        integer,                       intent(in)  :: c, minpop
-        logical,                       intent(in)  :: l_sw
-        integer,          allocatable, intent(out) :: lv(:), cv(:)
-        character(len=:), allocatable, intent(out) :: w
-        integer, allocatable :: ab(:), st0(:), jk(:)
-        character(len=:), allocatable :: msg, tag, brule
-        integer :: k
-        tag   = ''
-        brule = 'as inherited'
-        if( c > INH0 )then
-            ab  = read_ints(motion_dir(nd, c)//'/inherit_ab.txt')
-            st0 = read_ints(motion_dir(nd, c)//'/inherit_st0.txt')
-            tag = 'inherited '
-        else if( c == 0 )then
-            lv = two_groups(nd)
-            jk = junk_rows(nd)
-            if( size(jk) > 0 .and. size(lv) > 0 ) lv(jk) = 0
-            cv = lv
-            w  = 'two fflex groups '//joined([count(lv == 1), count(lv == 2)], ' / ')
-            call save_levels(lv, lv)
-            return
-        else if( .not. two_pole_seeds(nd, c, minpop, ab, st0, msg, brule) )then
-            lv = cand_seeds(nd, c)
-            cv = lv
-            w  = 'no opposite end and no room to mirror A, its site seeds '//joined([(count(lv == k), k=1,maxval([0, lv]))], ' / ')
-            call save_levels(lv, lv)
-            return
-        endif
-        if( l_sw )then
-            lv = st0
-            where( ab == 1 ) lv = 1
-            where( ab == 0 .and. st0 > 0 ) lv = 2
-            where( ab == 2 ) lv = 3
-            cv = lv
-            w  = tag//'swing A / middle / B '//joined([count(lv == 1), count(lv == 2), count(lv == 3)], ' / ')//'; B: '//brule
-        else
-            lv = st0
-            cv = ab
-            w  = tag//'switch A / B seeds '//joined([count(ab == 1), count(ab == 2)], ' / ')//', start '//&
-                &joined([count(st0 == 1), count(st0 == 2)], ' / ')//'; B: '//brule
-        endif
-        if( c <= INH0 ) call save_levels(ab, st0)
-
-    contains
-
-        subroutine save_levels( a, b )
-            integer, intent(in) :: a(:), b(:)
-            call write_ints(motion_dir(nd, c)//'/ab.txt', a)
-            call write_ints(motion_dir(nd, c)//'/st0.txt', b)
-        end subroutine save_levels
-
-    end subroutine motion_factor
-
-    function cand_score( nd, c ) result( sc )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        real,         allocatable :: sc(:), v(:)
-        integer,      allocatable :: st(:), lab(:), jk(:)
-        type(string), allocatable :: ends(:)
-        character(len=:), allocatable :: sd
-        integer :: e
-        st = project_states(nd//'/'//NODE_PROJ)
-        if( c > INH0 )then
-            sc = read_reals(motion_dir(nd, c)//'/inherit_score.txt')
-            if( size(sc) /= size(st) ) THROW_HARD('inherited score does not match the node project: '//nd)
-            jk = junk_rows(nd)
-        else if( c > 0 )then
-            sd   = site_dir_of(nd, c)
-            ends = kept_ends(sd)
-            allocate(sc(size(st)), source=-1.)
-            if( size(ends) > 0 ) sc = 0.
-            do e = 1, size(ends)
-                v = read_reals(sd//'/site_post_'//ends(e)%to_char()//'.txt')
-                if( size(v) /= size(st) ) THROW_HARD('site posteriors do not match the node project: '//sd)
-                sc = sc + v / real(size(ends))
-            end do
-            jk = junk_of(sd)
-        else
-            lab = two_groups(nd)
-            jk  = junk_rows(nd)
-            if( size(jk) > 0 .and. size(lab) > 0 ) lab(jk) = 0
-            sc  = fisher_score(nd//'/fflex/flex_pca_coordinates.txt', lab, size(st))
-        endif
-        if( size(jk) > 0 ) sc(jk) = -1.
-        where( st <= 0 ) sc = -1.
-    end function cand_score
-
-    function cand_seeds( nd, c ) result( sds )
-        character(len=*), intent(in) :: nd
-        integer,          intent(in) :: c
-        integer, allocatable :: sds(:), jk(:)
-        if( c > 0 )then
-            sds = read_ints(site_dir_of(nd, c)//'/site_seeds.txt')
-        else
-            sds = two_groups(nd)
-            jk  = junk_rows(nd)
-            if( size(jk) > 0 .and. size(sds) > 0 ) sds(jk) = 0
-        endif
-    end function cand_seeds
-
-    function fisher_score( fname, lab, nrows ) result( sc )
-        character(len=*), intent(in) :: fname
-        integer,          intent(in) :: lab(:), nrows
-        real,     allocatable :: sc(:), key(:)
-        real(dp), allocatable :: z(:,:), mu(:,:), sw(:,:), w(:)
-        integer,  allocatable :: pinds(:), g(:), ord(:)
-        integer :: n, q, a, k, r
-        allocate(sc(nrows), source=-1.)
-        call flex_coords(fname, pinds, z)
-        n = size(pinds)
-        q = size(z, 2)
-        if( n < 2 .or. q < 1 ) return
-        g = lab(pinds)
-        if( count(g == 1) < 2 .or. count(g == 2) < 2 ) return
-        allocate(mu(q,2), sw(q,q), source=0._dp)
-        do a = 1, 2
-            mu(:,a) = [(sum(z(:,k), mask=g == a) / real(count(g == a), dp), k=1,q)]
-            do k = 1, q
-                do r = 1, q
-                    sw(k,r) = sw(k,r) + sum((z(:,k) - mu(k,a)) * (z(:,r) - mu(r,a)), mask=g == a) * &
-                        &real(count(g == a), dp) / real(count(g == a) - 1, dp)
-                end do
-            end do
-        end do
-        sw = sw / real(count(g == 1) + count(g == 2), dp)
-        do k = 1, q
-            sw(k,k) = sw(k,k) + 1.e-9_dp
-        end do
-        w   = lin_solve(sw, mu(:,1) - mu(:,2))
-        key = real(matmul(z, w))
-        ord = [(r, r=1,n)]
-        call hpsort(key, ord)
-        do r = 1, n
-            sc(pinds(ord(r))) = (real(r) - 0.5) / real(n)
-        end do
-    end function fisher_score
-
-    function lin_solve( a, b ) result( x )
-        real(dp), intent(in) :: a(:,:), b(:)
-        real(dp), allocatable :: x(:), m(:,:), rowt(:)
-        real(dp) :: f, xt
-        integer  :: n, k, r, p
-        n = size(b)
-        m = a
-        x = b
-        do k = 1, n
-            p = k - 1 + maxloc(abs(m(k:n,k)), dim=1)
-            if( p /= k )then
-                rowt   = m(k,:)
-                m(k,:) = m(p,:)
-                m(p,:) = rowt
-                xt     = x(k)
-                x(k)   = x(p)
-                x(p)   = xt
-            endif
-            if( abs(m(k,k)) < 1.e-300_dp ) cycle
-            do r = k + 1, n
-                f        = m(r,k) / m(k,k)
-                m(r,k:n) = m(r,k:n) - f * m(k,k:n)
-                x(r)     = x(r) - f * x(k)
-            end do
-        end do
-        do k = n, 1, -1
-            if( abs(m(k,k)) < 1.e-300_dp )then
-                x(k) = 0._dp
-            else
-                x(k) = (x(k) - sum(m(k,k+1:n) * x(k+1:n))) / m(k,k)
-            endif
-        end do
-    end function lin_solve
-
-    function quint_bins( sc ) result( bins )
-        real, intent(in) :: sc(:)
-        integer, allocatable :: bins(:), idx(:), ord(:)
-        real,    allocatable :: key(:)
-        integer :: n, r, q
-        allocate(bins(size(sc)), source=0)
-        idx = pack([(r, r=1,size(sc))], sc >= 0.)
-        n   = size(idx)
-        if( n < NMBIN ) return
-        key = sc(idx)
-        ord = [(r, r=1,n)]
-        call hpsort(key, ord)
-        do r = 1, n
-            bins(idx(ord(r))) = 1 + count([(r > (n * q) / NMBIN, q=1,NMBIN-1)])
-        end do
-    end function quint_bins
-
-    function product_cells( sv, minpop ) result( cell )
-        integer, intent(in)  :: sv(:,:), minpop
-        integer, allocatable :: cell(:), keys(:,:), cnt(:), rk(:)
-        integer :: n, m, nk, r, k, j, small, best, dist, bd
-        n  = size(sv,1)
-        m  = size(sv,2)
-        allocate(cell(n), source=0)
-        allocate(keys(m,0))
-        nk = 0
-        do r = 1, n
-            if( any(sv(r,:) <= 0) ) cycle
-            k = 0
-            do j = 1, nk
-                if( all(keys(:,j) == sv(r,:)) )then
-                    k = j
-                    exit
-                endif
-            end do
-            if( k == 0 )then
-                nk   = nk + 1
-                keys = reshape([keys, sv(r,:)], [m, nk])
-                k    = nk
-            endif
-            cell(r) = k
-        end do
-        cnt = [(count(cell == k), k=1,nk)]
-        do
-            small = 0
-            do k = 1, nk
-                if( cnt(k) == 0 .or. cnt(k) >= minpop ) cycle
-                if( small == 0 )then
-                    small = k
-                else if( cnt(k) < cnt(small) )then
-                    small = k
-                endif
-            end do
-            if( small == 0 .or. count(cnt > 0) < 2 ) exit
-            best = 0
-            bd   = huge(bd)
-            do k = 1, nk
-                if( k == small .or. cnt(k) == 0 ) cycle
-                dist = count(keys(:,k) /= keys(:,small))
-                if( best == 0 )then
-                    best = k
-                    bd   = dist
-                else if( dist < bd .or. (dist == bd .and. cnt(k) > cnt(best)) )then
-                    best = k
-                    bd   = dist
-                endif
-            end do
-            where( cell == small ) cell = best
-            cnt(best)  = cnt(best) + cnt(small)
-            cnt(small) = 0
-        end do
-        allocate(rk(0:nk), source=0)
-        do k = 1, nk
-            if( cnt(k) > 0 ) rk(k) = 1 + count(cnt > cnt(k)) + count(cnt(1:k-1) == cnt(k))
-        end do
-        cell = rk(cell)
-    end function product_cells
-
     integer function nsym_of( pgrp )
         character(len=*), intent(in) :: pgrp
         integer :: ios
@@ -7128,483 +5721,5 @@ contains
         read(pgrp(2:), *, iostat=ios) nsym_of
         if( ios /= 0 .or. nsym_of < 1 ) nsym_of = 1
     end function nsym_of
-
-    subroutine node_motion_summary( nd, cands, how )
-        character(len=*), intent(in) :: nd, how
-        integer,          intent(in) :: cands(:)
-        integer :: fu, io, ic
-        call fopen(fu, string(nd//'/motion_call.txt'), status='replace', action='write', iostat=io)
-        if( io /= 0 ) return
-        do ic = 1, size(cands)
-            write(fu,'(A)') cand_label(nd, cands(ic))//': '//first_line(motion_dir(nd, cands(ic))//'/motion_call.txt', '-')//&
-                &' | gate '//first_line(motion_dir(nd, cands(ic))//'/verdict.txt', '-')
-        end do
-        write(fu,'(A)') 'hand-back: '//how
-        call fclose(fu)
-    end subroutine node_motion_summary
-
-    real function pearson( a, b )
-        real, intent(in) :: a(:), b(:)
-        real(dp) :: ma, mb, sab, saa, sbb
-        pearson = 0.
-        if( size(a) < 2 ) return
-        ma  = sum(real(a,dp)) / real(size(a),dp)
-        mb  = sum(real(b,dp)) / real(size(b),dp)
-        sab = sum((real(a,dp) - ma) * (real(b,dp) - mb))
-        saa = sum((real(a,dp) - ma)**2)
-        sbb = sum((real(b,dp) - mb)**2)
-        if( saa > 0._dp .and. sbb > 0._dp ) pearson = real(sab / sqrt(saa * sbb))
-    end function pearson
-
-    real function quant_of( v, q )
-        real, intent(in) :: v(:), q
-        real,    allocatable :: w(:)
-        integer, allocatable :: ord(:)
-        real    :: pos
-        integer :: lo, r
-        quant_of = 0.
-        if( size(v) == 0 ) return
-        w   = v
-        ord = [(r, r=1,size(w))]
-        call hpsort(w, ord)
-        pos = real(size(w) - 1) * q
-        lo  = int(pos)
-        quant_of = w(lo+1) + (pos - real(lo)) * (w(min(lo+2, size(w))) - w(lo+1))
-    end function quant_of
-
-    function root_axes( self, i, c ) result( str )
-        class(hetero_tree), intent(in) :: self
-        integer,            intent(in) :: i, c
-        character(len=:), allocatable :: str, rd, d
-        real,    allocatable :: s0(:), s1(:)
-        integer, allocatable :: rc(:), mrow(:)
-        logical, allocatable :: ok(:)
-        integer :: ic, l
-        str = ''
-        if( self%nodes(i)%depth == 0 ) return
-        rd = self%root//'/node_r'
-        rc = read_cands(rd)
-        if( size(rc) == 0 ) return
-        d  = self%ndir(i)
-        s1 = read_reals(motion_dir(d, c)//'/score.txt')
-        if( local_rows(d) )then
-            mrow = read_ints(d//'/rows.txt')
-        else
-            mrow = [(l, l=1,size(s1))]
-        endif
-        if( size(mrow) /= size(s1) ) return
-        str = 'r with the root axes:'
-        do ic = 1, size(rc)
-            if( .not. file_exists(string(motion_dir(rd, rc(ic))//'/score.txt')) ) cycle
-            s0 = read_reals(motion_dir(rd, rc(ic))//'/score.txt')
-            if( maxval(mrow) > size(s0) ) cycle
-            ok = s1 >= 0. .and. s0(mrow) >= 0.
-            if( count(ok) < 3 ) cycle
-            str = str//' '//cand_name(rc(ic))//' '//rstr(pearson(pack(s1, ok), pack(s0(mrow), ok)))
-        end do
-    end function root_axes
-
-    subroutine motion_stats( md, maskf, nsym, cname, rootax, origin, line )
-        character(len=*),              intent(in)  :: md, maskf, cname, rootax, origin
-        integer,                       intent(in)  :: nsym
-        character(len=:), allocatable, intent(out) :: line
-        character(len=5), parameter :: HALF(0:2) = [character(len=5) :: '', '_even', '_odd']
-        type(image)      :: img
-        type(sp_project) :: sp
-        complex,  allocatable :: cm(:,:,:), ce(:,:,:), qs(:,:,:), qf(:,:,:)
-        real,     allocatable :: v(:,:,:), sm(:,:,:), smf(:,:,:), lpm(:,:,:), wlp(:,:,:), wg(:,:,:), dr(:), ndr(:), ad(:)
-        real,     allocatable :: e1(:), e2(:), dfx(:)
-        real(dp), allocatable :: fee(:,:), foo(:,:), feo(:,:), bw(:)
-        integer,  allocatable :: ish(:,:,:), bidx(:,:), bsh(:), mvox(:,:), st(:)
-        logical,  allocatable :: inm(:,:,:), foc(:), top(:)
-        real(dp) :: rss(2:4), nbs(2:4), zrs(2:4), bts(2:4), rsf(2:4), nbf(2:4), zrf(2:4), btf(2:4), esns, zens, esnf, zenf
-        real(dp) :: zloc, relloc, cosv, hmin, rel
-        real     :: smpd, worst, rk(NMBIN), eo(NMBIN), rn(4), share, pmr, focf, cen(3), vexc, dexc, sdn, fc, f, wv, thr
-        integer  :: ldim(3), mdim(3), ifoo, n, nh, nb, nmk, nfoc, smax, kk, j, h, k, l, ky, lz, m, t
-        character(len=:), allocatable :: callw, flags, fname
-        call find_ldim_nptcls(string(md//'/recvol_state01.mrc'), ldim, ifoo)
-        call find_ldim_nptcls(string(maskf), mdim, ifoo)
-        n    = ldim(1)
-        nh   = n / 2
-        smpd = find_img_smpd(string(md//'/recvol_state01.mrc'))
-        if( any(mdim /= ldim) )then
-            line = cname//': the node mask is not at the box of the bin maps, no call'
-            call write_call('insufficient', line)
-            return
-        endif
-        call img%new([n,n,n], smpd)
-        call img%read(string(maskf))
-        inm  = img%get_rmat() > 0.5
-        nmk  = count(inm)
-        allocate(mvox(3,nmk))
-        t = 0
-        do l = 1, n
-            do k = 1, n
-                do h = 1, n
-                    if( .not. inm(h,k,l) ) cycle
-                    t = t + 1
-                    mvox(:,t) = [h, k, l]
-                end do
-            end do
-        end do
-        call img%set_rmat(merge(1., 0., inm), .false.)
-        call img%fft
-        cm = img%get_cmat()
-        allocate(ish(size(cm,1),size(cm,2),size(cm,3)), wlp(size(cm,1),size(cm,2),size(cm,3)), &
-            &wg(size(cm,1),size(cm,2),size(cm,3)))
-        fc = smpd / MRES
-        do l = 1, size(cm,3)
-            lz = l - 1 - merge(n, 0, l > nh)
-            do k = 1, size(cm,2)
-                ky = k - 1 - merge(n, 0, k > nh)
-                do h = 1, size(cm,1)
-                    f  = sqrt(real((h-1)**2 + ky*ky + lz*lz))
-                    ish(h,k,l) = nint(f)
-                    f  = f / real(n)
-                    wv = min(max((1.1 * fc - f) / (0.2 * fc), 0.), 1.)
-                    wlp(h,k,l) = 0.5 - 0.5 * cos(real(PI) * wv)
-                    wg(h,k,l)  = exp(-8. * real(PI)**2 * f * f)
-                end do
-            end do
-        end do
-        call img%set_cmat(cm * wg)
-        call img%ifft
-        sm   = img%get_rmat()
-        smax = int(real(n) * smpd / MRES)
-        nb   = count(ish >= 1 .and. ish <= smax)
-        allocate(bidx(3,nb), bsh(nb), bw(nb))
-        m = 0
-        do l = 1, size(cm,3)
-            do k = 1, size(cm,2)
-                do h = 1, size(cm,1)
-                    if( ish(h,k,l) < 1 .or. ish(h,k,l) > smax ) cycle
-                    m = m + 1
-                    bidx(:,m) = [h, k, l]
-                    bsh(m)    = ish(h,k,l)
-                    bw(m)     = merge(1._dp, 2._dp, h == 1 .or. h == size(cm,1))
-                end do
-            end do
-        end do
-        allocate(lpm(nmk,0:2,NMBIN), qs(nb,0:2,NMBIN), qf(nb,0:2,NMBIN))
-        allocate(fee(nh,NMBIN), foo(nh,NMBIN), feo(nh,NMBIN), source=0._dp)
-        do kk = 1, NMBIN
-            do j = 0, 2
-                call read_map(kk, j)
-                call img%fft
-                call img%set_cmat(img%get_cmat() * wlp)
-                call img%ifft
-                lpm(:,j,kk) = gather(img%get_rmat())
-                call img%set_rmat(v * sm, .false.)
-                call img%fft
-                cm = img%get_cmat()
-                qs(:,j,kk) = [(cm(bidx(1,m),bidx(2,m),bidx(3,m)), m=1,nb)]
-                if( j == 1 ) ce = cm
-                if( j == 2 ) call fsc_sums(kk)
-            end do
-        end do
-        do kk = 1, NMBIN
-            rk(kk) = 2. * smpd
-            do k = 1, nh
-                if( feo(k,kk) / sqrt(max(fee(k,kk) * foo(k,kk), 1.e-30_dp)) < 0.143_dp )then
-                    rk(kk) = real(n) * smpd / real(k)
-                    exit
-                endif
-            end do
-        end do
-        worst = maxval(rk)
-        do kk = 1, NMBIN
-            eo(kk) = 1. - pearson(lpm(:,1,kk), lpm(:,2,kk))
-        end do
-        do kk = 1, 4
-            rn(kk) = (1. - pearson(lpm(:,0,kk), lpm(:,0,kk+1))) / max((eo(kk) + eo(kk+1)) / 4., 1.e-12)
-        end do
-        share = maxval(rn) / max(sum(rn), 1.e-30)
-        dr    = lpm(:,0,NMBIN) - lpm(:,0,1)
-        ndr   = ((lpm(:,1,NMBIN) - lpm(:,2,NMBIN)) - (lpm(:,1,1) - lpm(:,2,1))) / 2.
-        sdn   = sqrt(sum((ndr - sum(ndr) / real(nmk))**2) / real(nmk))
-        foc   = abs(dr) > 3. * sdn
-        focf  = real(count(foc)) / real(nmk)
-        if( real(count(foc)) < 0.005 * real(nmk) ) foc = abs(dr) >= quant_of(abs(dr), 0.95)
-        nfoc  = count(foc)
-        pmr   = real(sum(real(dr,dp)**2, mask=dr > 0.) / max(sum(real(dr,dp)**2, mask=dr < 0.), 1.e-30_dp))
-        ad    = abs(dr)
-        thr   = quant_of(ad, 0.99)
-        top   = ad >= thr
-        cen   = [(real(sum(real(mvox(k,:) - 1 - nh), mask=top)) / real(max(1, count(top))) * smpd, k=1,3)]
-        v = 0.
-        do t = 1, nmk
-            if( foc(t) ) v(mvox(1,t),mvox(2,t),mvox(3,t)) = 1.
-        end do
-        call img%set_rmat(v, .false.)
-        call img%fft
-        call img%set_cmat(img%get_cmat() * wg)
-        call img%ifft
-        smf = img%get_rmat()
-        do kk = 1, NMBIN
-            do j = 0, 2
-                call read_map(kk, j)
-                call img%set_rmat(v * smf, .false.)
-                call img%fft
-                cm = img%get_cmat()
-                qf(:,j,kk) = [(cm(bidx(1,m),bidx(2,m),bidx(3,m)), m=1,nb)]
-            end do
-        end do
-        call img%kill
-        call local_change
-        call blend(qs, nmk, rss, nbs, zrs, bts, esns, zens)
-        call blend(qf, nfoc, rsf, nbf, zrf, btf, esnf, zenf)
-        call sp%read_segment('ptcl3D', string(md//'/m.simple'))
-        st  = sp%os_ptcl3D%get_all_asint('state')
-        e1  = sp%os_ptcl3D%get_all('e1')
-        e2  = sp%os_ptcl3D%get_all('e2')
-        dfx = sp%os_ptcl3D%get_all('dfx')
-        call sp%kill
-        call acquisition(vexc, dexc)
-        flags = ''
-        if( worst > MRES )then
-            callw = 'insufficient'
-        else if( zloc < ZLOC_MIN )then
-            callw = 'none'
-        else if( maxval(nbf) >= NB_SW .and. maxval(zrf) >= ZRES_SW )then
-            callw = 'swing'
-        else
-            callw = 'switch'
-            if( share < GRADED ) flags = flags//' graded'
-            if( pmr > 1. / 3. .and. pmr < 3. ) flags = flags//' dipole'
-        endif
-        if( vexc >= VIEW_EXC .or. dexc >= DFX_EXC ) flags = flags//' acquisition'
-        line = cname//' -> '//callw//flags//': worst-bin FSC 0.143 '//rstr(worst)//' A, z_loc '//rstr(real(zloc))//&
-            &', nb_SF '//rstr(real(maxval(nbf)))//' at residual z '//rstr(real(maxval(zrf)))//', R_S '//&
-            &rstr(real(maxval(rss)))//', step share '//rstr(share)//', +/- '//rstr(pmr)//', view / defocus excess '//&
-            &rstr(vexc)//' / '//rstr(dexc)
-        if( len(rootax) > 0 ) line = line//'; '//rootax
-        line = line//'; '//origin
-        call write_call(callw//flags, line)
-
-    contains
-
-        subroutine read_map( kk_, j_ )
-            integer, intent(in) :: kk_, j_
-            fname = md//'/recvol_state'//pad2(kk_)//trim(HALF(j_))//'.mrc'
-            call img%zero_and_unflag_ft
-            call img%read(string(fname))
-            v = img%get_rmat()
-        end subroutine read_map
-
-        function gather( x ) result( y )
-            real, intent(in) :: x(:,:,:)
-            real, allocatable :: y(:)
-            integer :: t_
-            allocate(y(nmk))
-            do t_ = 1, nmk
-                y(t_) = x(mvox(1,t_),mvox(2,t_),mvox(3,t_))
-            end do
-        end function gather
-
-        subroutine fsc_sums( kk_ )
-            integer, intent(in) :: kk_
-            real(dp) :: w_
-            integer  :: h_, k_, l_, s_
-            do l_ = 1, size(cm,3)
-                do k_ = 1, size(cm,2)
-                    do h_ = 1, size(cm,1)
-                        s_ = ish(h_,k_,l_)
-                        if( s_ < 1 .or. s_ > nh ) cycle
-                        w_ = merge(1._dp, 2._dp, h_ == 1 .or. h_ == size(cm,1))
-                        fee(s_,kk_) = fee(s_,kk_) + w_ * real(abs(ce(h_,k_,l_))**2, dp)
-                        foo(s_,kk_) = foo(s_,kk_) + w_ * real(abs(cm(h_,k_,l_))**2, dp)
-                        feo(s_,kk_) = feo(s_,kk_) + w_ * real(real(ce(h_,k_,l_) * conjg(cm(h_,k_,l_))), dp)
-                    end do
-                end do
-            end do
-        end subroutine fsc_sums
-
-        real(dp) function cdot( x, y )
-            complex, intent(in) :: x(:), y(:)
-            cdot = sum(bw * (real(real(x),dp) * real(real(y),dp) + real(aimag(x),dp) * real(aimag(y),dp)))
-        end function cdot
-
-        subroutine local_change
-            complex,  allocatable :: pm(:,:), dd(:,:), le(:), lo(:)
-            real(dp), allocatable :: num(:), den(:), cs(:)
-            real(dp) :: sig_m, sig_e, sig_l, rl, neff, hk
-            integer  :: j_, k_, m_
-            allocate(pm(nb,0:2), dd(nb,0:2))
-            do j_ = 0, 2
-                pm(:,j_) = sum(qs(:,j_,:), dim=2) / real(NMBIN)
-                dd(:,j_) = qs(:,j_,NMBIN) - qs(:,j_,1)
-            end do
-            sig_m = cdot(pm(:,1), pm(:,2))
-            sig_e = cdot(dd(:,1), dd(:,2))
-            allocate(num(smax), den(smax), source=0._dp)
-            do m_ = 1, nb
-                num(bsh(m_)) = num(bsh(m_)) + bw(m_) * real(real(conjg(dd(m_,0)) * pm(m_,0)), dp)
-                den(bsh(m_)) = den(bsh(m_)) + bw(m_) * real(abs(pm(m_,0))**2, dp)
-            end do
-            cs    = num / max(den, 1.e-30_dp)
-            le    = dd(:,1) - real(cs(bsh)) * pm(:,1)
-            lo    = dd(:,2) - real(cs(bsh)) * pm(:,2)
-            sig_l = cdot(le, lo)
-            rl    = sig_l / sqrt(max(cdot(le, le) * cdot(lo, lo), 1.e-300_dp))
-            neff  = real(nmk,dp) * real(smpd,dp)**3 / (real(MRES,dp) / 2._dp)**3
-            zloc  = rl * sqrt(neff)
-            relloc = 0._dp
-            rel    = 0._dp
-            cosv   = 0._dp
-            if( sig_m > 0._dp )then
-                relloc = sig_l / sig_m
-                rel    = sig_e / sig_m
-            endif
-            if( sig_e > 0._dp .and. sig_m > 0._dp ) cosv = cdot(dd(:,1), pm(:,2)) / sqrt(sig_e * sig_m)
-            hmin = 1._dp
-            do k_ = 1, NMBIN
-                hk   = cdot(qs(:,1,k_), qs(:,2,k_)) / sqrt(max(cdot(qs(:,1,k_), qs(:,1,k_)) * cdot(qs(:,2,k_), qs(:,2,k_)), &
-                    &1.e-300_dp))
-                hmin = min(hmin, hk)
-            end do
-        end subroutine local_change
-
-        subroutine blend( q, nvox, rr, nbv, zr, bt, esnr, zend )
-            complex,  intent(in)  :: q(:,0:,:)
-            integer,  intent(in)  :: nvox
-            real(dp), intent(out) :: rr(2:4), nbv(2:4), zr(2:4), bt(2:4), esnr, zend
-            complex,  allocatable :: de(:), dq(:), re(:), ro(:), r(:)
-            real(dp), allocatable :: a11(:), a12(:), a22(:), y1(:), y2(:), a(:), b(:), pw(:), btv(:), nz1(:), nz5(:), nzk(:)
-            real(dp) :: rep, ex, nf, det
-            integer  :: k_, m_, s_
-            nf   = sqrt(real(max(nvox, 1),dp) * real(smpd,dp)**3 / (real(MRES,dp) / 2._dp)**3)
-            de   = q(:,1,NMBIN) - q(:,1,1)
-            dq   = q(:,2,NMBIN) - q(:,2,1)
-            rep  = cdot(de, dq)
-            zend = rep / sqrt(max(cdot(de, de) * cdot(dq, dq), 1.e-300_dp)) * nf
-            nz1  = real(abs(q(:,1,1) - q(:,2,1))**2, dp) / 4._dp
-            nz5  = real(abs(q(:,1,NMBIN) - q(:,2,NMBIN))**2, dp) / 4._dp
-            esnr = cdot(q(:,0,NMBIN) - q(:,0,1), q(:,0,NMBIN) - q(:,0,1)) / max(sum(bw * (nz1 + nz5)), 1.e-300_dp)
-            do k_ = 2, 4
-                allocate(a11(smax), a12(smax), a22(smax), y1(smax), y2(smax), pw(smax), source=0._dp)
-                do m_ = 1, nb
-                    s_      = bsh(m_)
-                    a11(s_) = a11(s_) + bw(m_) * real(abs(q(m_,0,1))**2, dp)
-                    a12(s_) = a12(s_) + bw(m_) * real(real(conjg(q(m_,0,1)) * q(m_,0,NMBIN)), dp)
-                    a22(s_) = a22(s_) + bw(m_) * real(abs(q(m_,0,NMBIN))**2, dp)
-                    y1(s_)  = y1(s_)  + bw(m_) * real(real(conjg(q(m_,0,1)) * q(m_,0,k_)), dp)
-                    y2(s_)  = y2(s_)  + bw(m_) * real(real(conjg(q(m_,0,NMBIN)) * q(m_,0,k_)), dp)
-                    pw(s_)  = pw(s_)  + bw(m_) * real(abs(q(m_,0,k_))**2, dp)
-                end do
-                allocate(a(smax), b(smax), btv(smax), source=0._dp)
-                do s_ = 1, smax
-                    det = a11(s_) * a22(s_) - a12(s_)**2
-                    if( det <= 0._dp ) cycle
-                    a(s_) = (a22(s_) * y1(s_) - a12(s_) * y2(s_)) / det
-                    b(s_) = (a11(s_) * y2(s_) - a12(s_) * y1(s_)) / det
-                end do
-                r   = q(:,0,k_) - real(a(bsh)) * q(:,0,1) - real(b(bsh)) * q(:,0,NMBIN)
-                nzk = real(abs(q(:,1,k_) - q(:,2,k_))**2, dp) / 4._dp
-                ex  = sum(bw * (nzk + a(bsh)**2 * nz1 + b(bsh)**2 * nz5))
-                rr(k_) = cdot(r, r) / max(ex, 1.e-300_dp)
-                re  = q(:,1,k_) - (real(a(bsh)) * q(:,2,1) + real(b(bsh)) * q(:,2,NMBIN))
-                ro  = q(:,2,k_) - (real(a(bsh)) * q(:,1,1) + real(b(bsh)) * q(:,1,NMBIN))
-                zr(k_)  = cdot(re, ro) / sqrt(max(cdot(re, re) * cdot(ro, ro), 1.e-300_dp)) * nf
-                nbv(k_) = 0._dp
-                if( rep > 0._dp ) nbv(k_) = cdot(re, ro) / rep
-                where( abs(a + b) > 1.e-9_dp ) btv = b / (a + b)
-                bt(k_) = 0._dp
-                if( sum(pw, mask=abs(a + b) > 1.e-9_dp) > 0._dp ) bt(k_) = sum(btv * pw, mask=abs(a + b) > 1.e-9_dp) / &
-                    &sum(pw, mask=abs(a + b) > 1.e-9_dp)
-                deallocate(a11, a12, a22, y1, y2, pw, a, b, btv)
-            end do
-        end subroutine blend
-
-        subroutine acquisition( vx, dx )
-            real, intent(out) :: vx, dx
-            integer, allocatable :: sel(:), cellv(:), celld(:), lab(:)
-            real,    allocatable :: dfs(:), qv(:)
-            integer(kind=8) :: seed
-            real    :: sec, t0(2), tsum(2)
-            integer :: r_, ns, it, a_, b_, tmp
-            vx = 0.
-            dx = 0.
-            sel = pack([(r_, r_=1,size(st))], st == 1 .or. st == NMBIN)
-            ns  = size(sel)
-            if( count(st(sel) == 1) < 2 .or. count(st(sel) == NMBIN) < 2 ) return
-            sec = 360. / real(nsym)
-            allocate(cellv(ns), celld(ns))
-            do r_ = 1, ns
-                cellv(r_) = min(int((cos(e2(sel(r_)) * real(PI) / 180.) + 1.) / 2. * 10.), 9) * 12 + &
-                    &min(int(modulo(e1(sel(r_)), sec) / sec * 12.), 11)
-            end do
-            dfs = pack(dfx, st >= 1 .and. st <= NMBIN)
-            qv  = [(quant_of(dfs, 0.1 * real(r_)), r_=1,9)]
-            do r_ = 1, ns
-                celld(r_) = count(qv < dfx(sel(r_)))
-            end do
-            lab  = st(sel)
-            t0   = [tv(cellv, lab, 120), tv(celld, lab, 10)]
-            tsum = 0.
-            seed = 12345_8
-            do it = 1, NVSHUF
-                do a_ = ns, 2, -1
-                    seed = mod(seed * 48271_8, 2147483647_8)
-                    b_   = 1 + int(mod(seed, int(a_, 8)))
-                    tmp     = lab(a_)
-                    lab(a_) = lab(b_)
-                    lab(b_) = tmp
-                end do
-                tsum = tsum + [tv(cellv, lab, 120), tv(celld, lab, 10)]
-            end do
-            vx = t0(1) - tsum(1) / real(NVSHUF)
-            dx = t0(2) - tsum(2) / real(NVSHUF)
-        end subroutine acquisition
-
-        real function tv( cell, lab, nc )
-            integer, intent(in) :: cell(:), lab(:), nc
-            real(dp) :: p(0:nc-1), q(0:nc-1)
-            integer  :: r_
-            p = 0._dp
-            q = 0._dp
-            do r_ = 1, size(cell)
-                if( lab(r_) == 1 )then
-                    p(cell(r_)) = p(cell(r_)) + 1._dp
-                else
-                    q(cell(r_)) = q(cell(r_)) + 1._dp
-                endif
-            end do
-            tv = real(0.5_dp * sum(abs(p / max(sum(p), 1._dp) - q / max(sum(q), 1._dp))))
-        end function tv
-
-        subroutine write_call( cw, ln )
-            character(len=*), intent(in) :: cw, ln
-            integer :: fu, io
-            call fopen(fu, string(md//'/motion_call.txt'), status='replace', action='write', iostat=io)
-            if( io /= 0 ) return
-            write(fu,'(A)') trim(adjustl(cw))
-            write(fu,'(A)') ln
-            write(fu,'(A)') 'origin '//origin
-            if( allocated(qs) )then
-                write(fu,'(A)') 'worst_bin_fsc0143_A '//rstr(worst)
-                write(fu,'(A)') 'z_loc '//rstr(real(zloc))//' rel_loc '//rstr(real(relloc))//' rel '//rstr(real(rel))//&
-                    &' cos '//rstr(real(cosv))//' hmin '//rstr(real(hmin))
-                write(fu,'(A)') 'nb_SF '//rstrs(real(nbf))//' residual_z_SF '//rstrs(real(zrf))//' beta_SF '//rstrs(real(btf))
-                write(fu,'(A)') 'R_S '//rstrs(real(rss))//' nb_S '//rstrs(real(nbs))//' ends_snr_SF '//rstr(real(esnf))//&
-                    &' z_ends_SF '//rstr(real(zenf))
-                write(fu,'(A)') 'steps '//rstrs(rn)//' step_share '//rstr(share)//' sign_balance '//rstr(pmr)//&
-                    &' focus_fraction '//rstr(focf)
-                write(fu,'(A)') 'location_A '//rstrs(cen)//' view_excess '//rstr(vexc)//' defocus_excess '//rstr(dexc)
-            endif
-            call fclose(fu)
-        end subroutine write_call
-
-        function rstrs( x ) result( s_ )
-            real, intent(in) :: x(:)
-            character(len=:), allocatable :: s_
-            integer :: i_
-            s_ = ''
-            do i_ = 1, size(x)
-                s_ = s_//merge('/', ' ', i_ > 1)//rstr(x(i_))
-            end do
-            s_ = trim(adjustl(s_))
-        end function rstrs
-
-    end subroutine motion_stats
 
 end module simple_hetero_tree

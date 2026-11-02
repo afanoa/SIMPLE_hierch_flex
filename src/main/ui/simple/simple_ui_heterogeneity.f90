@@ -788,40 +788,15 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &'Every node''s project and its steps'' projects hold only the node''s particles, mapped to the input project''s rows &
         &by the node''s rows.txt; the leaves map back to them. Needs site_layer=no, where it is on unless set to no(yes|no){yes}', &
         &'', .false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
-        call hetero_tree%add_input(UI_PARM, 'node_motion', 'binary', 'Switch / swing call per node', &
-        &'Every site is ranked; each kept pole (and the fflex fallback when no site is a switch or swing) gets a 5-bin &
-        &reconstruction of its score and is called switch, swing or none. A switch seeds its pole and the opposite end, a swing &
-        &its two poles and the middle as a state; their product cells, folded under minpop, seed the split(yes|no){no}', '', &
-        &.false., 'no', visibility=UI_VIS_ADVANCED, &
-        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'strongest_pole', 'binary', 'Seed from the strongest kept pole', &
         &'Every site is ranked and the site whose kept pole has the largest smaller pole-rule margin seeds the split, instead of &
-        &the first site that keeps a pole; ignored with node_motion=yes(yes|no){yes}', '', .false., 'yes', &
+        &the first site that keeps a pole(yes|no){yes}', '', .false., 'yes', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'two_poles', 'binary', 'Seed both ends of the split''s axis', &
         &'The split is seeded from the kept pole and the opposite end of its axis: the kept pole at the opposite endpoints of &
         &any site, else the rows at posterior >= 0.5 of the same site''s opposite endpoints; the other rows start at their &
-        &nearer end and stage A decides; ignored with node_motion=yes(yes|no){no}', '', .false., 'no', &
+        &nearer end and stage A decides(yes|no){no}', '', .false., 'no', &
         &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
-        call hetero_tree%add_input(UI_PARM, 'motion_gate', 'binary', 'Split-half gate on new axes', &
-        &'With node_motion=yes, below the root every new axis (a kept pole, or the fflex fallback) is refit on random particle &
-        &halves (site_rank, or flex_pca and its two groups) and kept only when the halves'' difference maps correlate at 15 A &
-        &above the tree''s floor: median + 3 MAD-sd of permutation splits (random fifths of each particle half, scored the same &
-        &way) on the root and its first two children; a node whose fallback fails becomes a leaf(yes|no){no}', '', .false., &
-        &'no', visibility=UI_VIS_ADVANCED, &
-        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
-        call hetero_tree%add_input(UI_PARM, 'motion_inherit', 'binary', 'Inherit ancestor axes', &
-        &'With node_motion=yes, every ancestor''s own switch or swing axes, restricted to the node''s particles, join its &
-        &candidates and get the switch / swing call there without a gate(yes|no){no}', '', .false., 'no', &
-        &visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
-        call hetero_tree%add_input(UI_PARM, 'motion_multi', 'binary', 'Split on every motion at once', &
-        &'With node_motion=yes, yes seeds the split from the product cells of every passing switch and swing; no splits on one, &
-        &the strongest by its pole-rule margin (a switch into at most two states, a swing into at most three), and leaves the &
-        &others to the children(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
-        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
-        call hetero_tree%add_input(UI_PARM, 'motion_floor', 'num', 'Gate floor (override)', &
-        &'The split-half correlation an axis must reach with motion_gate=yes; 0 measures it once per tree from &
-        &permutation splits{0}', 'corr{0}', .false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
         call hetero_tree%add_input(UI_PARM, 'node_seed', 'binary', 'Per-node random numbers', &
         &'The controller''s random draws (the cheap children''s direction bins) are seeded per node, so a node''s result does &
         &not depend on the order the nodes run in(yes|no){no}', '', .false., 'no', visibility=UI_VIS_ADVANCED, &
