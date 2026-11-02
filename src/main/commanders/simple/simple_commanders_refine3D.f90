@@ -2187,7 +2187,7 @@ contains
             return
         endif
         rows = split%get_rows()
-        call split%test(labels(rows), maxval(labels), child, kstar, junk, ntests=params%split_ntests)
+        call split%test_once(labels(rows), maxval(labels), child, kstar, junk, params%split_ntests, stats=st)
         ! the quality flag describes the split the test proposed, before the guard; it gates nothing
         call split%quality_flag(child, kstar, qlines, l_q)
         kpre = kstar
@@ -2201,7 +2201,6 @@ contains
         call fclose(funit)
         deallocate(out)
         call locality_guard(labels(rows), child, kstar, params%mskdiam, split)
-        st = 0.
         call write_split_stats('split_stats.txt', st, kstar, params%split_ntests, kpre)
         call split%write_weights('ptcl_weights.txt')
         call fopen(funit, string('split_stats.txt'), status='old', action='write', position='append', iostat=ios)
