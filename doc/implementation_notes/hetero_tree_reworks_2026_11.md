@@ -534,3 +534,142 @@ the production test (commit 680bda2d5 puts `exec_state_split` back on `split%tes
 statistic stays in `simple_state_mergeup`, one call away) and the switch is the user's decision. If it is taken, the
 equivalence merge-up is where the within-conformer split would have to be caught: at full N the two combo-28 leaves
 differ reproducibly, so a merge-up that fuses equivalent maps leaves them apart (the df tree's merge-up kept 9 units).
+
+## 9. The rare-state lever and the seed anomaly (2026-11-02, session tree-lever-floor, branch `claude/tree-lever-floor`)
+
+Spec: the rare-state note `tree_rare_state_limit_2026_11.md` (sections 2.3 and 5) and audit 6.5. Builds and replays under
+`math_reworks/lever/` on batch2 (`build_lever` = climb + complement variant, `build_bc` = the committed form + the effect
+floor of section 10, `build_head` = c7ac3b0bd as the baseline arm); saved-site replays in `lever/sites/`, scored against the
+fixture truth by `lever/site_score.py`.
+
+### 9.1 The seed anomaly: what happens at the 8 % root
+
+`site_starts.txt` of `detlim2/runs/new_s1/P_L08/node_r/site` (the arm site, n_eff 217): the two rare-ward endpoints have
+a small, pure class at posterior >= 0.5 (z1lo 1,668 particles at rare purity 0.78, z3hi 2,088 at 0.74; their mean posterior
+over the node, the "site class share", is 0.125 / 0.138) and N* 40,000; z3lo's EM grew its class to 0.834 of the node
+(59,756 particles at posterior >= 0.5, rare purity 0.079 = the node's) and its hold-out peak sits at N* 10,000 (the
+10,000 most typical particles, r 0.273). The subspace test accepts all three (z 4.0-4.3). `seed_poles` then gives every
+particle to the pole with the highest posterior at >= 0.5: z3lo's flat 0.9 wins against the rare pole's 0.6 almost
+everywhere, so pole 1 = {z1lo, z3hi} draws 717 seeds (the few where its mean posterior exceeds z3lo's) and pole 2 = {z3lo}
+59,145. The pole rule then rejects both (seed z 1.36; share 0.99): no pole, the fflex fallback seeds. Seed 2 is the same
+with the roles of z3hi and z1hi exchanged (545 / 59,368). The halves test on the same fits had merged z3lo and z3hi
+into one pole (mean posterior of a 0.83 class and a 0.14 class >= 0.5 for 18,600 particles) by accident of the averaging.
+
+A class that grows past half the node has not found a minority state; the pole rule says so (share < 0.5) but only after
+the class has claimed the real poles' particles. The nulls show the same endpoints as the quality axis (qtoynull z1hi /
+z3lo at shares 0.96 / 0.97, olenull z1lo / z3lo at 0.91 / 0.93, all accepted at z 10-27) and are clean today only because
+the share rule rejects them at the end.
+
+Three forms were replayed on the saved sites (`lever/sites/c0_*`: the complement; `c1-c3`: the complement plus 1-3 climb
+passes; `bc_*`: the committed form):
+
+- **the complement** (the pole of a took-off endpoint is its minority class, 1 - posterior, before the hold-out curve):
+  at 8 % z3lo's complement reproduces (r 0.42, z 6.6; rare AUC 0.57) and pole 1 grows to 1,845 seeds (seed z 2.27, still
+  rejected); at the r131 seed-2 root site the complement pole {z1hi', z3lo'} (4,566 seeds) is kept and the closed-population
+  pole {z1lo, z3hi} falls to 349 seeds and is rejected: the hard-gate site changes hands. Rejected.
+- **the committed form**: an endpoint whose class share exceeds 0.5 is no pole (`merge_poles_subspace` takes it as not
+  accepted; `exec_site_rank` logs "its site class grew past half the node"); and when the rest is rejected as a state it
+  joins its best pole only while it is a minority, a majority rest stays the complement of the poles (before, the took-off
+  pole was the rest's backstop: rejected by share at the end, its rows fell into the rest). The pole rule no longer treats a
+  rest without endpoints as a pole. Every gate site keeps its decision (the took-off endpoints were rejected by share
+  anyway); the 8 % pole becomes {z1lo, z3hi} with its own seeds.
+
+### 9.2 The climb (audit 6.5) does not lift the endpoint: no-go
+
+`site_em` was given a climb: after the EM, one hard E-step from the top-N* of the posterior (class maps from that set and
+its complement, the per-shell scale and noise refit, the prior at N* / n), then the hold-out curve again; 1-3 passes
+(`SIMPLE_SITE_CLIMB` on `build_lever`, removed). The bar at site 5 is r 0.275 (3 Fisher SE at n_eff 116.5 / 112.4).
+
+| site (truth) | endpoint | r at 0 / 1 / 2 / 3 passes (z at 0 / 1) | rare AUC at 0 / 1 | note |
+|---|---|---|---|---|
+| 6.5 % s1, site 5 | z1hi | .141 / .144 / .138 / .117 (1.5 / 1.6) | .754 / .761 | class at >= 0.5: 0 -> 21,209 particles (share .42) |
+| | z3lo | .130 / .120 / .175 / .148 (1.4 / 1.3) | .780 / .789 | |
+| 6.5 % s2, site 5 | z1lo | .158 / .206 / .193 / .152 (1.7 / 2.2) | .268 / .733 | the pass turns the anti-rare tail into the best rare endpoint, z 2.2 |
+| | z3lo | .133 / .174 / .149 / .161 (1.4 / 1.8) | .787 / .821 | class 609 at purity .81 after one pass |
+| 6.5 % s1, site 3 (nuisance) | z3lo | .697 / .502 / .459 / .428 | .48 / .52 | poles 50 / 49 seeds rejected -> one pass: a kept pole of 22,937 seeds (rare purity .069) |
+| 8 % s1, site 1 | z1lo | .285 / .212 / .210 / .273 (4.3 / 3.2) | .889 / .160 | one pass: kept pole {z1lo, z3lo} 18,990 seeds at rare purity .028 (the wrong end); 3 passes: 21,980 at .165 |
+| | z3hi | .268 / .199 / .276 / .214 (4.0 / 3.0) | .893 / .152 | |
+| 8 % s2, site 1 | z1hi | .297 / .214 / .250 / .201 (4.4 / 3.2) | .885 / .165 | kept poles of 22,173 (purity .09) / 25,564 (.14) / 23,364 (.03) at 1 / 2 / 3 passes |
+| 10 % s1, site 1 | z1hi | .284 / .236 / .222 / .221 (4.2 / 3.5) | .898 / .139 | kept pole 2,978 at purity .74 -> 28,325 at .19 / 16,345 at .30 / 2,346 at .86 + a 26,097-seed nuisance pole |
+| r131 s2 root site 1 | all four | .39-.43 -> .38-.43 | - | the closed pole {z1lo, z3hi} 2,981 -> two poles 5,667 + 19,620 |
+| qtoynull root site 1 | all four | .45-.60 -> .44-.46 | - | no pole -> a kept pole of 26,983 seeds (.45 of the null) |
+| olenull root site 1 | all four | .74-.89 -> .74-.86 | - | no pole -> a kept pole of 25,676 seeds (.32 of the null) |
+
+No pass lifts any 6.5 % endpoint to the bar (best z 2.2 against 3), while at 8-10 % the pass destroys the pure rare
+endpoints (AUC 0.89 -> 0.15: the hard set at N* 25,000-40,000 holds the rare state at purity 0.12 against the node's 0.08,
+less contrast than the EM's own class at 0.74-0.78, and the prior at N* / n = 0.4-0.67 pushes the class past half the
+node, where it reads as the complement) and hands kept poles to the null roots. The premise of 6.5 does not hold here: N*
+is where the deviation map's cross-half SNR peaks (3-10x the class), not the class size, and the EM posterior at
+AUC 0.75-0.78 is already at the per-particle limit of the site's band; rescoring against a lower-contrast reference can
+only lose ranking. **No-go**; nothing of it is committed. The lever at 6.5 % would have to raise the per-particle
+information at the site (band, mask, pose), not the number of scoring passes.
+
+The detection limit is therefore unchanged by this round: the site layer at 6.5 % is the same as before (no endpoint at
+3 SE under any form), and at 8 % the (B) pole {z1lo, z3hi} is tested on its own seeds (section 9.3).
+
+### 9.3 Gate replay of the committed (B) form
+
+(filled below from the `head` and `bc` arms)
+
+## 10. The effect floor after the locality guard (the rare-state note's P / N)
+
+### 10.1 What changed
+
+`exec_state_split` calls `effect_floor` after `locality_guard`. For every pair of delivered children it builds each child's
+half maps as the count-weighted means of its stage-B states' half maps (the particles each state put into the child), scores
+the pair exactly as the guard does (`pair_maps`, the body of `pair_locality`: soft sphere of `mskdiam`, 40-10 A band, the
+second map scaled onto the first per shell by the cross-half regression, noise-corrected squared difference smoothed 3 px)
+and takes P = the reproducible difference power inside the sphere; N = the same smoothed squared power of the node's own
+half difference (the count-weighted mean of all stage-B states, even minus odd, over two). The pair with the smallest P / N
+merges while it is under `EFF_MIN` = 2, the children are renumbered by size and K* updated; `split_stats.txt` records K*
+after the guard and the floor. Nothing else moves: the split test, the guard and its 0.5 are as they were.
+
+### 10.2 The Fortran against the Python port (`detlim2/scripts/split_effect.py`) on the same saved nodes
+
+The df gate trees' split nodes were replayed with `state_split` on `build_floor` (`lever/splits/`, the node's own command and
+stage-B maps) and scored by the port (`lever/splits_py_df.tsv`):
+
+| node (children) | P / N Fortran | P / N port | guard L / L_ref (Fortran = port) | floor |
+|---|---|---|---|---|
+| qtoy2 root, 10 pairs of 5 | 41.7-81.6 | 43.9-88.2 | 0.98-1.10 | kept |
+| qtoy2 r1 (12,700 / 9,401) | 5.23 | 4.75 | 0.98 | kept |
+| qtoy2 r3 (6,585 / 3,937; inside combo 28) | 0.19 | 0.87 | 1.15 | **merged** (both under 2; P is at the noise level there) |
+| qtoy2 r4 (4,955 / 4,334) | 4.63 | 4.71 | 1.25 | kept |
+| r131 seed 2 root (25,401 / 18,933) | 7.77 | 7.65 | 0.92 | kept |
+| r131 seed 2 r1, the closed corner (13,332 / 12,069) | 3.18 | 3.05 | 1.07 | kept, margin 1.6x |
+| r131 seed 1 r2, the closed corner (11,601 / 9,414) | 2.67 | 2.66 | 1.23 | kept, margin 1.3x |
+| r131 seed 2 r2 (9,818 / 9,115; the 0.93 closed-arm extra split) | - | 2.09 | 1.14 | at the floor (the bc arm decides) |
+| OLE r1 (12,256 / 11,248), r2 (11,643 / 8,733) | 6.86, 5.82 | 6.74, 5.79 | 1.47, 0.98 | kept |
+| qtoynull, olenull, micnull roots | guard merges first | 6.0, 9.9, 44.0 | 0.21-0.24 | - |
+
+Agreement is 1-10 % wherever P is well above the noise (the shell assignment of SIMPLE's `fsc` / `spectrum` against the
+port's `rint` radius is the residual); where P sits at the noise level (qtoy2 r3: P 3,192 against N 3,677 in the port) the
+positive part of the noise dominates and the two differ by 4x, on the same side of the floor. The floor's one action on
+the saved df trees is the within-conformer split the draw-free test added at qtoy2 r3 (both leaves 0.87-0.92 pure in combo
+28), which is the split that took the qtoy2 NMI from 0.764 to 0.742 in section 8.4.
+
+### 10.3 Gate replay
+
+(filled below from the `head` and `bc` arms)
+
+## 11. The merge-up on the numeric node record (D): what is done and what is left
+
+Done in this round: `equiv_tree_inputs` reads a node's margin from `split/split_stats.txt` only (weakest kept pair statistic,
+null mean, common n -> `split_effect`); a node without numbers or with K* < 2 contributes nothing, and the log-parsing fallback
+`node_effect` (the "[cross-half EM groups] equal N" / "beyond-EM band" / "K* =" lines of the production test's step log) is
+deleted. Every node written since c7ac3b0bd carries the numbers.
+
+Not done, scoped by reading `run` / `test` / `test_once`: the merge-up's own pair tests at every level still call the
+production `test` (`run`, the two `self%test` calls; the `.not. l_equiv` branch is dead since `merge_rule_setup` sets
+`l_equiv`). Replacing them by `test_once(cand, size(tst), child, kstar, junk, self%mtests, ugrp=ugrp)` compiles, but `ugrp`
+means different things: `test` maps a unit through the board groups and the second `decide`'s groups, so two units share a
+group only when `decide` merged them and a unit the EM drained gets 0 (the comment at the `l_equiv` branch relies on that);
+`test_once` sets `ugrp(g)` to the mode of the final `child` over the unit's particles, which is almost never 0 and can put
+two cannot-linked units in one group through the choose rule. The port is to derive `ugrp` from `decide_once`'s result (EM
+group m starts from unit `gcom(m)`; a unit gets the final index of `gof(findloc(plist, m))` when m is in `plist`, else 0,
+followed through `choose_members`' renumbering), then delete `test` (with `stash`, `group_of`, `route_members`,
+`add_subset_jobs`, `junk_report`), `decide`, `eqn_stats`, `null_upto`, `pair_stat`, `blom_emax`, `rnd_subset`, the
+components `nmed` / `nmax` / `nnull`, `shuffle_null%jsc` / `l_df` / `nul`, the constants `MINSEL_JUNK` / `JUNK_CORR`,
+and the `.not. l_df` branch of `null_resolve`. The statistic the merge-up tests with then becomes the draw-free one at the
+common n, and `mdelta` (from `split_effect` of the same statistic) is matched to it. Gate: OLE's merge-up must keep the small
+OLE states and the closed pair apart (memory `equivalence-mergeup-verdict-2026-10-27`). About 1,100 lines leave.
