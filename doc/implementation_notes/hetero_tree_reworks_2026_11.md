@@ -424,3 +424,17 @@ Not done: the p_empty weight in the node reconstructions needs the controller to
 controller is another session's tonight); the averaged pair statistic for the split test; the SVD factor masks against
 the 2-means masks; the map-angle test on a deliverable OLE tree; the deletion of the old `test` / `decide` /
 `eqn_stats` / `node_effect` path, which waits for the rebase onto the cleanup branch.
+
+### 6.4 OLE at maxdepth 1 (80,599 particles, seed 1, `landscape_score.py --leaves` on the baseline root's flex embedding)
+
+| arm | leaves | root | against the baseline: extrema max / mean, W1, hull coverage | against its own null: W1 |
+|---|---|---|---|---|
+| baseline | 10 | 5-way | - | 0.002 |
+| variant A | 8 | 4-way | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
+| variant C | 8 | 4-way (identical to A) | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
+| variant C + one-N single pass | 8 | 4-way (identical to A) | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
+
+The three rework arms give the same OLE tree to the particle, and all three differ from the baseline by no more than the
+baseline differs from its own shuffled null, so the OLE span is retained. At maxdepth 1 the leaf means barely spread
+along the leading flex axes (ends at 0.48-0.56 of the span), so this gate has little power here; a deliverable OLE tree
+at maxdepth 4 is where span differences would show. Variant D's OLE tree is appended when it finishes.
