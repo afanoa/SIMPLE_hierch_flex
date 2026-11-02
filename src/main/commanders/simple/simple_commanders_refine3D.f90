@@ -2207,9 +2207,8 @@ contains
     end subroutine exec_state_split
 
     subroutine exec_site_rank( self, cline )
-        use simple_state_mergeup,     only: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, &
-                                          &halves_accept_margin, halves_se, halves_floor, halves_cand, HALVES_KSIG, mask_neff, &
-                                          &seed_poles
+        use simple_state_mergeup,     only: state_mergeup, merge_poles, merge_poles_subspace, gram_corr, gram_resid, fisher_z, &
+                                          &ivec, HALVES_KSIG, mask_neff, seed_poles
         use simple_eo_partition,      only: ensure_field_halves
         use simple_srch_sort_loc,     only: hpsort
         use simple_string_utils,      only: list_of_ints2arr
@@ -2224,20 +2223,18 @@ contains
         type(state_mergeup)  :: site
         type(string), allocatable :: names(:)
         real,    allocatable :: z(:,:), post(:), curve(:,:), posts(:,:), key(:), sp(:,:), posth(:), curveh(:,:)
-        real,    allocatable :: craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:), cls2(:), hpk(:)
-        integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsh(:,:), nsx(:), twin(:)
-        integer, allocatable :: rk(:), mk(:)
-        integer, allocatable :: gm(:), fidx(:), ntopx(:), epmx(:)
-        logical, allocatable :: seed(:), fit(:), hsel(:,:), qsel(:,:), ok(:), starts(:,:)
-        complex, allocatable :: devs(:,:,:,:), dall(:,:,:,:,:,:), dq(:,:,:,:,:,:)
+        real,    allocatable :: cls2(:), hpk(:), zself(:), zdist(:), zred(:), rho(:,:), zres(:,:)
+        real(dp),allocatable :: gee(:,:), goo(:,:), geo(:,:)
+        integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsx(:)
+        integer, allocatable :: fidx(:), ntopx(:), epmx(:)
+        logical, allocatable :: seed(:), fit(:), starts(:,:)
+        complex, allocatable :: devs(:,:,:,:), dfull(:,:,:,:,:)
         character(len=:), allocatable :: tag, members
         character(len=2048) :: line
         real    :: smpd
-        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq, nfit, ntop, band(2)
+        integer :: box, i, j, itail, nstar, ntail, n, funit, ios, nrows, ih, idir, ie, h, ne, nstarq, nfit, ntop, band(2), minseed
         real    :: neff
         logical :: l_halves
-        logical, allocatable :: lpool(:)
-        type(string), allocatable :: plines(:)
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('lp')    ) call cline%set('lp',    10.)
         call cline%set('hp',      40.)
@@ -2297,36 +2294,20 @@ contains
             return
         endif
         ntail = min(15000, nfit / 6)
+        ! the floor refine3D itself needs, applied to every state site_rank writes (poles, the rest and the pole rule's rest bucket)
+        minseed = PROB_MULTISTATE_MIN_POP + 1
         call starts_of
         ne = size(names)
         if( ne == 0 ) THROW_HARD('site_rank: no start; give infile (with site_dirs) or infile2')
-        allocate(posts(n,ne), nsh(ne,2), nsx(ne), ntopx(ne), cls2(ne), hpk(ne), epmx(ne))
+        allocate(posts(n,ne), nsx(ne), ntopx(ne), cls2(ne), hpk(ne), epmx(ne))
         l_halves = params%pole_merge <= 0.
-        allocate(hsel(n,2), qsel(n,4))
-        rk = rows
-        if( params%rowmap%strlen() > 0 )then
-            allocate(mk(nlines(params%rowmap)))
-            call fopen(funit, params%rowmap, status='old', action='read', iostat=ios)
-            call fileiochk('site_rank: cannot read '//params%rowmap%to_char(), ios)
-            do i = 1, size(mk)
-                read(funit,*) mk(i)
-            end do
-            call fclose(funit)
-            if( size(mk) /= nrows ) THROW_HARD('rowmap= must hold one input-project row per project row; site_rank')
-            rk = mk(rows)
-        endif
-        do i = 1, n
-            hsel(i,1) = mod((rk(i) - 1) / 2, 2) == 0
-            do h = 1, 4
-                qsel(i,h) = 2 * mod((rk(i) - 1) / 2, 2) + mod((rk(i) - 1) / 4, 2) + 1 == h
-            end do
-        end do
-        hsel(:,2) = .not. hsel(:,1)
         do ie = 1, ne
             tag  = names(ie)%to_char()
             seed = starts(:,ie)
             write(logfhandle,'(A)') '>>> SITE_RANK '//tag//' start: '//int2str(count(seed))//' of '//int2str(n)//' particles'
             call site%site_em(seed, fit, params%pcg_mskfile, post, nstar, curve, devs, [real ::], nfit < n)
+            if( .not. allocated(dfull) ) allocate(dfull(size(devs,1),size(devs,2),size(devs,3),2,ne))
+            dfull(:,:,:,:,ie) = devs
             posts(:,ie) = post
             nsx(ie)     = nstar
             ntop        = nint(real(nstar) * real(n) / real(nfit))
@@ -2334,21 +2315,6 @@ contains
             cls2(ie)    = sum(post) / real(n)
             hpk(ie)     = maxval(curve(2,:))
             epmx(ie)    = nint(maxval(curve(4,:)) * real(n) / real(nfit))
-            if( l_halves )then
-                do h = 1, 2
-                    call site%site_em(seed .and. hsel(:,h), hsel(:,h) .and. fit, params%pcg_mskfile, posth, nsh(ie,h), curveh, &
-                        &devs, [real ::], .false.)
-                    if( .not. allocated(dall) ) allocate(dall(size(devs,1),size(devs,2),size(devs,3),2,ne,2))
-                    dall(:,:,:,:,ie,h) = devs
-                    write(logfhandle,'(A,I0,A,I0)') '>>> SITE_RANK '//tag//' half ', h, ' pole: N* ', nsh(ie,h)
-                end do
-                do h = 1, 4
-                    call site%site_em(seed .and. qsel(:,h), qsel(:,h) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
-                        &devs, [real ::], .false.)
-                    if( .not. allocated(dq) ) allocate(dq(size(devs,1),size(devs,2),size(devs,3),2,ne,4))
-                    dq(:,:,:,:,ie,h) = devs
-                end do
-            endif
             allocate(top(nrows), source=0)
             do ih = 0, 1
                 sel  = pack([(i, i=1,n)], eo == ih)
@@ -2375,61 +2341,32 @@ contains
             deallocate(top)
         end do
         call merge_poles(posts, merge(2., params%pole_merge, l_halves), PROB_MULTISTATE_MIN_POP + 1, sp, grp, seeds)
+        band = site%holdout_band()
+        neff = mask_neff(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop, params%msk_crop, band(1), band(2))
         if( l_halves )then
-            call halves_matrices
-            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .true., [(.false., i=1,ne)], &
-                &grp, seeds, ok, twin, gm)
-            allocate(plines(0))
-            if( params%pooled_poles .eq. 'yes' ) call pooled_rule
+            call site%dev_gram(dfull, gee, goo, geo)
+            call merge_poles_subspace(gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred)
+            call write_subspace
             if( maxval([0, seeds]) > maxval([0, grp]) ) call test_rest
-            call fopen(funit, string('site_halves.txt'), status='replace', action='write', iostat=ios)
-            call fileiochk('site_rank: cannot write site_halves.txt', ios)
-            write(funit,'(A)') '# endpoint, N* in half 1 / 2, reliability of its half-1 / half-2 version, correlation of its '//&
-                &'half-1 version with every endpoint''s half-2 version, self-match / noise ceiling, pole (0 = rejected or dropped)'
-            do i = 1, size(names)
-                write(line,'(1X,I0,1X,I0,2(1X,F6.3))') nsh(i,1), nsh(i,2), rel1(i), rel2(i)
-                members = names(i)%to_char()//trim(line)//' |'
-                do j = 1, size(names)
-                    write(line,'(1X,F6.3)') craw(i,j)
-                    members = members//trim(line)
-                end do
-                if( rel1(i) <= 0. .or. rel2(i) <= 0. )then
-                    line = '-999.000'
-                else
-                    write(line,'(F8.3)') craw(i,i) / sqrt(max(rel1(i), 1.e-3) * max(rel2(i), 1.e-3))
-                endif
-                members = members//' | '//trim(adjustl(line))//' | '//int2str(grp(i))
-                write(funit,'(A)') members
-                write(logfhandle,'(A)') '>>> SITE_RANK halves '//members
-            end do
-            call halves_margins
-            do i = 1, size(names)
-                if( twin(i) == 0 ) cycle
-                members = 'twin '//names(i)%to_char()//' '//names(twin(i))%to_char()//' '//trim(merge('accepted', 'rejected', ok(i)))
-                write(funit,'(A)') members
-                write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' joins '//names(twin(i))%to_char()//&
-                    &' (each other''s best partner in both directions): '//trim(merge('accepted', 'rejected', ok(i)))
-            end do
-            do i = 1, size(plines)
-                write(funit,'(A)') plines(i)%to_char()
-            end do
             call fclose(funit)
             if( maxval([0, grp]) > 0 ) call pole_rule
         endif
         do i = 1, size(names)
             if( grp(i) /= 0 ) cycle
             if( l_halves )then
-                if( .not. ok(i) )then
-                    write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' rejected: its half-versions '//&
-                        &'are not each other''s best matches'
+                if( zself(i) < HALVES_KSIG )then
+                    write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' rejected: its cross-half deviation '//&
+                        &'does not reproduce (z '//fstr(zself(i))//' below '//fstr(HALVES_KSIG)//')'
+                    cycle
+                else if( zred(i) < HALVES_KSIG )then
+                    write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' redundant: in the span of the other '//&
+                        &'poles (residual z '//fstr(zred(i))//')'
                     cycle
                 endif
             endif
             write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' dropped (technical): '//&
-                &'its pole drew fewer than '//int2str(PROB_MULTISTATE_MIN_POP + 1)//' seeds, the fewest refine3D refines as a state'
+                &'its pole drew fewer than '//int2str(minseed)//' seeds, the fewest refine3D refines as a state'
         end do
-        band = site%holdout_band()
-        neff = mask_neff(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop, params%msk_crop, band(1), band(2))
         call fopen(funit, string('site_neff.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('site_rank: cannot write site_neff.txt', ios)
         write(funit,'(A)') '# box_crop smpd_crop msk_crop hold-out shells, effective independent coefficients of the masked band'
@@ -2481,194 +2418,264 @@ contains
 
     contains
 
-        subroutine halves_matrices
-            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
-            integer :: a, b, k, m
-            m = size(names)
-            if( allocated(craw) ) deallocate(craw, rel1, rel2, cq, r1q, r2q)
-            allocate(craw(m,m), rel1(m), rel2(m), cq(m,m,4), r1q(m,4), r2q(m,4))
-            do a = 1, m
-                rel1(a) = site%half_rel(dall(:,:,:,:,a,1))
-                rel2(a) = site%half_rel(dall(:,:,:,:,a,2))
-                do b = 1, m
-                    craw(a,b) = site%half_corr(dall(:,:,:,:,a,1), dall(:,:,:,:,b,2))
+        ! site_halves.txt in the controller's format: endpoint rows (name, N* twice, Spearman-Brown reliability twice | its even
+        ! half's correlation with every endpoint's odd half | self z | pole), merge lines and accept lines (row = reproducibility,
+        ! column = distinctness); the endpoint Grams go to site_gram.txt
+        subroutine write_subspace
+            integer :: a, b, fu, io
+            real    :: r, rel
+            call fopen(funit, string('site_halves.txt'), status='replace', action='write', iostat=ios)
+            call fileiochk('site_rank: cannot write site_halves.txt', ios)
+            write(funit,'(A)') '# endpoint, N* (twice), Spearman-Brown reliability of its deviation (twice), correlation of its even '//&
+                &'half with every endpoint''s odd half, self z (Fisher, n_eff '//fstr(neff)//'), pole (0 = rejected or dropped)'
+            do a = 1, ne
+                r   = gram_corr(gee, goo, geo, a, a)
+                rel = 2. * r / max(1. + r, 1.e-6)
+                write(line,'(1X,I0,1X,I0,2(1X,F6.3))') nsx(a), nsx(a), rel, rel
+                members = names(a)%to_char()//trim(line)//' |'
+                do b = 1, ne
+                    write(line,'(1X,F6.3)') gram_corr(gee, goo, geo, a, b)
+                    members = members//trim(line)
                 end do
-                do k = 1, 4
-                    r1q(a,k) = site%half_rel(dq(:,:,:,:,a,QA(k)))
-                    r2q(a,k) = site%half_rel(dq(:,:,:,:,a,QB(k)))
-                    do b = 1, m
-                        cq(a,b,k) = site%half_corr(dq(:,:,:,:,a,QA(k)), dq(:,:,:,:,b,QB(k)))
-                    end do
+                write(line,'(F8.3)') min(zself(a), 999.)
+                members = members//' | '//trim(adjustl(line))//' | '//int2str(grp(a))
+                write(funit,'(A)') members
+                write(logfhandle,'(A)') '>>> SITE_RANK subspace '//members
+            end do
+            write(funit,'(A)') '# merge tests: endpoint pair, disattenuated correlation, residual z of the first after the second and '//&
+                &'of the second after the first, their max (one pole when the correlation is positive and both are below '//&
+                &int2str(nint(HALVES_KSIG))//'; groups merge closest first when every cross pair is such a pair), merged'
+            do a = 1, ne
+                do b = a + 1, ne
+                    write(line,'(4(1X,F0.3))') rho(a,b), min(zres(a,b), 999.), min(zres(b,a), 999.), min(max(zres(a,b), zres(b,a)), 999.)
+                    members = 'merge '//names(a)%to_char()//' '//names(b)%to_char()//trim(line)//' '//&
+                        &trim(merge('yes', 'no ', grp(a) > 0 .and. grp(a) == grp(b)))
+                    write(funit,'(A)') members
+                    write(logfhandle,'(A)') '>>> SITE_RANK subspace '//members
                 end do
             end do
-        end subroutine halves_matrices
-
-        ! pooled_poles: a merged group the member rule rejects is tested once more as one endpoint, on its members' averaged maps
-        subroutine pooled_rule
-            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
-            complex, allocatable :: p1(:,:,:,:), p2(:,:,:,:), pq(:,:,:,:,:)
-            logical, allocatable :: cand(:), pt(:)
-            integer, allocatable :: mem(:)
-            character(len=:), allocatable :: nm
-            real    :: s0, r1, r2, sq(4), mr, mc, qr(4), qc(4), zs, zr, zc, br, bc, bqr(4), bqc(4)
-            integer :: m, a, f, k
-            logical :: lpass
-            m = size(names)
-            allocate(lpool(m), source=.false.)
-            cand = halves_cand(craw, rel1, rel2, cq)
-            pt   = cand .and. [(names(a)%to_char() /= 'rest', a=1,m)]
-            do a = 1, m
-                if( any(gm(1:a-1) == gm(a)) ) cycle
-                mem = pack([(f, f=1,m)], gm == gm(a))
-                if( size(mem) < 2 .or. all(ok(mem)) ) cycle
-                p1 = sum(dall(:,:,:,:,mem,1), dim=5) / real(size(mem))
-                p2 = sum(dall(:,:,:,:,mem,2), dim=5) / real(size(mem))
-                pq = sum(dq(:,:,:,:,mem,:), dim=5) / real(size(mem))
-                s0 = site%half_corr(p1, p2)
-                r1 = site%half_rel(p1)
-                r2 = site%half_rel(p2)
-                do k = 1, 4
-                    sq(k) = site%half_corr(pq(:,:,:,:,QA(k)), pq(:,:,:,:,QB(k)))
-                end do
-                br  = -huge(br)
-                bc  = -huge(bc)
-                bqr = -huge(br)
-                bqc = -huge(br)
-                do f = 1, m
-                    if( .not. pt(f) .or. gm(f) == gm(a) ) cycle
-                    br = max(br, site%half_corr(p1, dall(:,:,:,:,f,2)))
-                    bc = max(bc, site%half_corr(dall(:,:,:,:,f,1), p2))
-                    do k = 1, 4
-                        bqr(k) = max(bqr(k), site%half_corr(pq(:,:,:,:,QA(k)), dq(:,:,:,:,f,QB(k))))
-                        bqc(k) = max(bqc(k), site%half_corr(dq(:,:,:,:,f,QA(k)), pq(:,:,:,:,QB(k))))
-                    end do
-                end do
-                mr = s0
-                mc = s0
-                qr = sq
-                qc = sq
-                if( br > -huge(br) )then
-                    mr = s0 - br
-                    mc = s0 - bc
-                    qr = sq - bqr
-                    qc = sq - bqc
-                endif
-                zs    = s0 / max(halves_se(sq), 1.e-6)
-                zr    = mr / max(halves_se(qr), 1.e-6)
-                zc    = mc / max(halves_se(qc), 1.e-6)
-                lpass = s0 > 0. .and. r1 > 0. .and. r2 > 0. .and. zs >= HALVES_KSIG .and. mr > 0. .and. zr >= HALVES_KSIG .and. &
-                    &mc > 0. .and. zc >= HALVES_KSIG
-                if( lpass ) lpool(mem) = .true.
-                nm = names(mem(1))%to_char()
-                do k = 2, size(mem)
-                    nm = nm//'+'//names(mem(k))%to_char()
-                end do
-                write(line,'(A,3(1X,F0.3),A,2(1X,F0.3),A,2(1X,F0.3),A)') 'pooled '//nm//' self', s0, halves_se(sq), zs, ' row', mr, &
-                    &zr, ' column', mc, zc, ' '//trim(merge('accepted', 'rejected', lpass))
-                plines = [plines, string(trim(line))]
-                write(logfhandle,'(A)') '>>> SITE_RANK halves '//trim(line)
+            write(funit,'(A)') '# accept tests: endpoint, row = its cross-half correlation, Fisher SE and z (accepted at '//&
+                &int2str(nint(HALVES_KSIG))//'); column = the smallest residual z against a positively correlated other pole '//&
+                &'(twice, SE 1; its own z when there is none), accepted (reproducible and not in the span of the other poles)'
+            do a = 1, ne
+                call accept_lines(names(a)%to_char(), gram_corr(gee, goo, geo, a, a), zself(a), zdist(a), &
+                    &zself(a) >= HALVES_KSIG .and. zred(a) >= HALVES_KSIG)
             end do
-            if( .not. any(lpool) ) return
-            call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .true., [(.false., k=1,m)], &
-                &grp, seeds, ok, twin, gm, lpool)
-        end subroutine pooled_rule
+            call fopen(fu, string('site_gram.txt'), status='replace', action='write', iostat=io)
+            call fileiochk('site_rank: cannot write site_gram.txt', io)
+            write(fu,'(A)') '# hold-out band Gram matrices of the endpoint deviation maps: n_eff, shells, names, then even.even, '//&
+                &'odd.odd, even.odd (rows x columns)'
+            write(fu,'(F12.3,2(1X,I0))') neff, band
+            members = ''
+            do a = 1, ne
+                members = members//' '//names(a)%to_char()
+            end do
+            write(fu,'(A)') trim(adjustl(members))
+            do a = 1, ne
+                write(fu,'(*(1X,ES14.6))') gee(a,:)
+            end do
+            do a = 1, ne
+                write(fu,'(*(1X,ES14.6))') goo(a,:)
+            end do
+            do a = 1, ne
+                write(fu,'(*(1X,ES14.6))') geo(a,:)
+            end do
+            call fclose(fu)
+        end subroutine write_subspace
 
-        ! the rest (particles no accepted pole claims at 0.5) is ranked by 1 - its best pole posterior and tested as one more endpoint
+        subroutine accept_lines( nm, r, z, zd, l_ok )
+            character(len=*), intent(in) :: nm
+            real,             intent(in) :: r, z, zd
+            logical,          intent(in) :: l_ok
+            write(line,'(3(1X,F0.3))') r, 1. / sqrt(max(neff - 3., 1.)), min(z, 999.)
+            write(funit,'(A)') 'accept '//nm//' row'//trim(line)//' '//trim(merge('yes', 'no ', l_ok))
+            write(logfhandle,'(A)') '>>> SITE_RANK subspace accept '//nm//' row'//trim(line)//' '//trim(merge('yes', 'no ', l_ok))
+            write(line,'(3(1X,F0.3))') min(zd, 999.), 1., min(zd, 999.)
+            write(funit,'(A)') 'accept '//nm//' column'//trim(line)//' '//trim(merge('yes', 'no ', l_ok))
+            write(logfhandle,'(A)') '>>> SITE_RANK subspace accept '//nm//' column'//trim(line)//' '//trim(merge('yes', 'no ', l_ok))
+        end subroutine accept_lines
+
+        function fstr( x ) result( s )
+            real, intent(in) :: x
+            character(len=:), allocatable :: s
+            character(len=32) :: b
+            write(b,'(F0.2)') x
+            s = trim(adjustl(b))
+        end function fstr
+
+        ! mean disattenuated correlation of map a with the maps in mem, from the Grams g2e / g2o / g2x
+        real function dis_corr( g2e, g2o, g2x, a, mem )
+            real(dp), intent(in) :: g2e(:,:), g2o(:,:), g2x(:,:)
+            integer,  intent(in) :: a, mem(:)
+            integer :: k, f
+            dis_corr = 0.
+            do k = 1, size(mem)
+                f = mem(k)
+                dis_corr = dis_corr + 0.5 * (gram_corr(g2e, g2o, g2x, a, f) + gram_corr(g2e, g2o, g2x, f, a)) / &
+                    &sqrt(max(gram_corr(g2e, g2o, g2x, a, a) * gram_corr(g2e, g2o, g2x, f, f), 1.e-12)) / real(size(mem))
+            end do
+        end function dis_corr
+
+        ! the distinctness z of map a against the direction of the maps in mem: the larger of a's residual after them and the
+        ! smallest residual of one of them after a (both must fail for a to be the same direction)
+        real function dist_z( g2e, g2o, g2x, a, mem )
+            real(dp), intent(in) :: g2e(:,:), g2o(:,:), g2x(:,:)
+            integer,  intent(in) :: a, mem(:)
+            type(ivec) :: dm(1), da(1)
+            real    :: z2
+            integer :: k
+            dm(1)%v = mem
+            da(1)%v = [a]
+            dist_z  = fisher_z(gram_resid(g2e, g2o, g2x, a, dm), neff - 1.)
+            z2      = huge(1.)
+            do k = 1, size(mem)
+                z2 = min(z2, fisher_z(gram_resid(g2e, g2o, g2x, mem(k), da), neff - 1.))
+            end do
+            dist_z = max(dist_z, z2)
+        end function dist_z
+
+        ! the rest (no accepted pole claims it at 0.5), ranked by 1 - its best pole posterior and scored once: a state when its
+        ! deviation reproduces and is distinct from every pole it correlates with positively; else every particle joins its best pole
         subroutine test_rest
             type(string), allocatable :: nm2(:)
-            complex,      allocatable :: d2(:,:,:,:,:,:), q2(:,:,:,:,:,:)
-            real,         allocatable :: gmax(:), rscore(:), p2(:,:)
-            integer,      allocatable :: s2(:,:)
-            integer :: g, m, k
-            m = size(names)
-            allocate(gmax(n), source=0.)
-            do g = 1, maxval(grp)
-                gmax = max(gmax, sum(posts(:,pack([(k, k=1,m)], grp == g)), dim=2) / real(count(grp == g)))
+            complex,      allocatable :: d2(:,:,:,:,:)
+            real(dp),     allocatable :: g2e(:,:), g2o(:,:), g2x(:,:), gp(:,:), gp2(:,:)
+            real,         allocatable :: rscore(:), p2(:,:)
+            integer,      allocatable :: plab(:), mem(:)
+            real    :: zs, zd, r
+            integer :: m, np, g, f
+            logical :: l_ok
+            m  = size(names)
+            np = maxval(grp)
+            allocate(gp(n,np), source=0._dp)
+            do f = 1, m
+                if( grp(f) > 0 ) gp(:,grp(f)) = gp(:,grp(f)) + real(posts(:,f),dp) / real(count(grp == grp(f)),dp)
             end do
-            rscore = 1. - gmax
-            allocate(d2(size(dall,1),size(dall,2),size(dall,3),2,m+1,2), q2(size(dq,1),size(dq,2),size(dq,3),2,m+1,4))
-            d2(:,:,:,:,1:m,:) = dall
-            q2(:,:,:,:,1:m,:) = dq
-            allocate(s2(m+1,2), p2(n,m+1))
-            s2(1:m,:) = nsh
-            p2(:,1:m) = posts
-            p2(:,m+1) = rscore
-            do h = 1, 2
-                call site%site_em(hsel(:,h) .and. fit, hsel(:,h) .and. fit, params%pcg_mskfile, posth, s2(m+1,h), curveh, devs, &
-                    &rscore, .false.)
-                d2(:,:,:,:,m+1,h) = devs
+            rscore = real(1._dp - maxval(gp, dim=2))
+            write(logfhandle,'(A)') '>>> SITE_RANK rest: '//int2str(count(seeds == np + 1))//' particles at best pole posterior '//&
+                &'< 0.5, ranked by 1 - that posterior and scored once'
+            call site%site_em(fit, fit, params%pcg_mskfile, posth, nstarq, curveh, devs, rscore, .false.)
+            allocate(d2(size(dfull,1),size(dfull,2),size(dfull,3),2,ne+1))
+            d2(:,:,:,:,1:ne) = dfull
+            d2(:,:,:,:,ne+1) = devs
+            call site%dev_gram(d2, g2e, g2o, g2x)
+            r  = gram_corr(g2e, g2o, g2x, ne+1, ne+1)
+            zs = fisher_z(r, neff)
+            zd = huge(1.)
+            do g = 1, np
+                mem = pack([(f, f=1,ne)], grp(1:ne) == g)
+                if( size(mem) == 0 ) cycle
+                if( dis_corr(g2e, g2o, g2x, ne+1, mem) <= 0. ) cycle
+                zd = min(zd, dist_z(g2e, g2o, g2x, ne+1, mem))
             end do
-            do k = 1, 4
-                call site%site_em(qsel(:,k) .and. fit, qsel(:,k) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, devs, &
-                    &rscore, .false.)
-                q2(:,:,:,:,m+1,k) = devs
+            if( zd == huge(1.) ) zd = zs
+            l_ok = zs >= HALVES_KSIG .and. zd >= HALVES_KSIG
+            write(line,'(1X,I0,1X,I0,2(1X,F6.3))') nstarq, nstarq, 2. * r / max(1. + r, 1.e-6), 2. * r / max(1. + r, 1.e-6)
+            members = 'rest'//trim(line)//' |'
+            do f = 1, ne
+                write(line,'(1X,F6.3)') gram_corr(g2e, g2o, g2x, ne+1, f)
+                members = members//trim(line)
             end do
+            write(line,'(F8.3)') min(zs, 999.)
+            members = members//' | '//trim(adjustl(line))//' | '//int2str(merge(np + 1, 0, l_ok))
+            write(funit,'(A)') members
+            write(logfhandle,'(A)') '>>> SITE_RANK subspace '//members
+            call accept_lines('rest', r, zs, zd, l_ok)
+            write(logfhandle,'(A)') '>>> SITE_RANK rest state (best pole posterior < 0.5): '//trim(merge('accepted as a state       ', &
+                &'rejected, to its best pole', l_ok))
             nm2 = [names, string('rest')]
             call move_alloc(nm2, names)
-            call move_alloc(d2, dall)
-            call move_alloc(q2, dq)
-            call move_alloc(s2, nsh)
+            allocate(p2(n,m+1))
+            p2(:,1:m) = posts
+            p2(:,m+1) = rscore
             call move_alloc(p2, posts)
-            call halves_matrices
-            if( allocated(lpool) )then
-                lpool = [lpool, .false.]
-                call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
-                    &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm, lpool)
+            zself = [zself, zs]
+            zdist = [zdist, zd]
+            zred  = [zred, huge(1.)]
+            if( l_ok )then
+                allocate(gp2(n,np+1))
+                gp2(:,1:np) = gp
+                gp2(:,np+1) = real(rscore,dp)
+                call seed_poles(gp2, minseed, .false., seeds, plab)
+                grp = [grp, np + 1]
             else
-                call merge_poles_halves(posts, craw, rel1, rel2, cq, r1q, r2q, PROB_MULTISTATE_MIN_POP + 1, .false., &
-                    &[(.false., k=1,m), .true.], grp, seeds, ok, twin, gm)
+                call seed_poles(gp, minseed, .false., seeds, plab)
+                grp = [grp, 0]
             endif
-            write(logfhandle,'(A)') '>>> SITE_RANK rest state (best pole posterior < 0.5): '//trim(merge('accepted as a state       ', &
-                &'rejected, to its best pole', grp(m+1) > 0))
+            do f = 1, m + 1
+                if( grp(f) > 0 ) grp(f) = plab(grp(f))
+            end do
         end subroutine test_rest
 
-        ! a pole keeps its seeds when they hold under half of the node and their own maps pass the halves accept test
+        ! a pole keeps its seeds when they hold under half of the node and their own deviation (scored by the pole's posterior on
+        ! them, no EM) reproduces and is distinct from every other pole's direction it correlates with positively; its strength
+        ! (the margin strongest_pole ranks sites by) is its weakest endpoint's hold-out reproducibility and distinctness
         subroutine pole_rule
-            complex,  allocatable :: dh(:,:,:,:,:), dhq(:,:,:,:,:)
-            real(dp), allocatable :: gp(:,:)
-            real,     allocatable :: hs(:)
-            integer,  allocatable :: plab(:), sd(:), kid(:)
-            logical,  allocatable :: keep(:), pt(:), lpole(:)
-            real,     allocatable :: shs(:), zrs(:), zcs(:)
-            integer,  allocatable :: cnt0(:), fin(:)
+            complex,  allocatable :: d2(:,:,:,:,:)
+            real(dp), allocatable :: gp(:,:), gpp(:,:), g2e(:,:), g2o(:,:), g2x(:,:)
+            real,     allocatable :: sc(:), shs(:), zrs(:), zcs(:), zse(:), zde(:)
+            integer,  allocatable :: plab(:), sd(:), kid(:), cnt0(:), fin(:), pos(:), mem(:), newidx(:)
+            logical,  allocatable :: keep(:), lpole(:)
             real    :: share, zr, zc
-            integer :: g, np, m, k, f, fu, io
+            integer :: g, h, np, m, k, f, fu, io, nmap
             np = maxval(grp)
             m  = size(names)
-            pt = halves_cand(craw, rel1, rel2, cq) .and. [(names(f)%to_char() /= 'rest', f=1,m)]
             allocate(keep(np), source=.true.)
-            allocate(shs(np), zrs(np), zcs(np), source=0.)
-            allocate(cnt0(np), fin(np), source=0)
+            allocate(shs(np), zrs(np), zcs(np), zse(np), zde(np), source=0.)
+            allocate(cnt0(np), fin(np), pos(np), source=0)
             lpole = [(.not. any([(grp(f) == g .and. names(f)%to_char() == 'rest', f=1,m)]), g=1,np)]
+            allocate(gpp(n,np), source=0._dp)
+            do f = 1, m
+                if( grp(f) > 0 ) gpp(:,grp(f)) = gpp(:,grp(f)) + real(posts(:,f),dp) / real(count(grp == grp(f)),dp)
+            end do
+            ! one scoring pass per minority pole; its map joins the endpoint maps in the Grams
+            allocate(d2(size(dfull,1),size(dfull,2),size(dfull,3),2,ne+np))
+            d2(:,:,:,:,1:ne) = dfull
+            nmap = ne
+            do g = 1, np
+                if( .not. lpole(g) ) cycle
+                if( real(count(seeds == g)) / real(n) >= 0.5 ) cycle
+                sc = real(gpp(:,g))
+                where( seeds /= g ) sc = 0.
+                write(logfhandle,'(A)') '>>> SITE_RANK pole rule: pole '//int2str(g)//' scored on its '//int2str(count(seeds == g))//&
+                    &' seeds'
+                call site%site_em(fit, fit, params%pcg_mskfile, posth, nstarq, curveh, devs, sc, .false.)
+                nmap = nmap + 1
+                d2(:,:,:,:,nmap) = devs
+                pos(g) = nmap
+            end do
+            call site%dev_gram(d2(:,:,:,:,1:nmap), g2e, g2o, g2x)
             do g = 1, np
                 if( .not. lpole(g) ) cycle
                 share = real(count(seeds == g)) / real(n)
                 zr    = -huge(zr)
                 zc    = -huge(zc)
-                if( share < 0.5 )then
-                    hs = merge(1., 0., seeds == g)
-                    do h = 1, 2
-                        call site%site_em(hsel(:,h) .and. fit, hsel(:,h) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
-                            &devs, hs, .false.)
-                        if( .not. allocated(dh) ) allocate(dh(size(devs,1),size(devs,2),size(devs,3),2,2))
-                        dh(:,:,:,:,h) = devs
+                if( pos(g) > 0 )then
+                    zr = fisher_z(gram_corr(g2e, g2o, g2x, pos(g), pos(g)), neff)
+                    zc = huge(1.)
+                    do h = 1, np
+                        if( h == g .or. .not. lpole(h) ) cycle
+                        if( pos(h) > 0 )then
+                            mem = [pos(h)]
+                        else
+                            mem = pack([(f, f=1,ne)], grp(1:ne) == h)
+                        endif
+                        if( size(mem) == 0 ) cycle
+                        if( dis_corr(g2e, g2o, g2x, pos(g), mem) <= 0. ) cycle
+                        zc = min(zc, dist_z(g2e, g2o, g2x, pos(g), mem))
                     end do
-                    do k = 1, 4
-                        call site%site_em(qsel(:,k) .and. fit, qsel(:,k) .and. fit, params%pcg_mskfile, posth, nstarq, curveh, &
-                            &devs, hs, .false.)
-                        if( .not. allocated(dhq) ) allocate(dhq(size(devs,1),size(devs,2),size(devs,3),2,4))
-                        dhq(:,:,:,:,k) = devs
-                    end do
-                    zr = seed_z(dh, dhq, g, pt, .true.)
-                    zc = seed_z(dh, dhq, g, pt, .false.)
+                    if( zc == huge(1.) ) zc = zr
                 endif
                 keep(g) = share < 0.5 .and. zr >= HALVES_KSIG .and. zc >= HALVES_KSIG
                 shs(g)  = share
-                zrs(g)  = max(zr, -999.)
-                zcs(g)  = max(zc, -999.)
+                zse(g)  = max(min(zr, 999.), -999.)
+                zde(g)  = max(min(zc, 999.), -999.)
+                zrs(g)  = min(minval(zself(1:ne), mask=grp(1:ne) == g), 999.)
+                zcs(g)  = min(minval(zdist(1:ne), mask=grp(1:ne) == g), 999.)
                 cnt0(g) = count(seeds == g)
-                write(line,'(A,I0,A,I0,A,F6.3,A,F0.3,A,F0.3,A)') '>>> SITE_RANK pole rule: pole ', g, ', ', count(seeds == g), &
-                    &' seeds (', share, ' of the node), seed maps accept z ', max(zr, -999.), ' / ', max(zc, -999.), ': '//&
+                write(line,'(A,I0,A,I0,A,F6.3,A,F0.3,A,F0.3,A,F0.3,A,F0.3,A)') '>>> SITE_RANK pole rule: pole ', g, ', ', &
+                    &count(seeds == g), ' seeds (', share, ' of the node), seed deviation z ', zse(g), ' / distinct z ', zde(g), &
+                    &'; strength (weakest endpoint hold-out z / distinct z) ', zrs(g), ' / ', zcs(g), ': '//&
                     &trim(merge('kept    ', 'rejected', keep(g)))
                 write(logfhandle,'(A)') trim(line)
             end do
@@ -2721,106 +2728,81 @@ contains
                     fin   = plab
                 endif
             endif
+            call fold_small_states(newidx)
+            do g = 1, np
+                if( fin(g) > 0 )then
+                    if( newidx(fin(g)) == 0 ) keep(g) = .false.
+                    fin(g) = newidx(fin(g))
+                endif
+            end do
             call fopen(fu, string('site_pole_rule.txt'), status='replace', action='write', iostat=io)
             call fileiochk('site_rank: cannot write site_pole_rule.txt', io)
-            write(fu,'(A)') '# pole, seeds, share of the node, halves accept margin / SE of the seeds'' own maps (row, column), '//&
-                &'its state in site_seeds.txt after the rule and that state''s seeds (0 = none; a rejection re-seeds the kept '//&
-                &'poles at posterior >= 0.5), kept (share < 0.5 and both >= '//int2str(nint(HALVES_KSIG))//')'
+            write(fu,'(A)') '# pole, seeds, share of the node, strength = its weakest endpoint''s hold-out reproducibility z and '//&
+                &'distinctness z (strongest_pole ranks by their min), its state in site_seeds.txt after the rule and that '//&
+                &'state''s seeds (0 = none; a rejection re-seeds the kept poles at posterior >= 0.5), Fisher z of the seeds'' own '//&
+                &'deviation (reproducibility, distinctness), kept (share < 0.5 and both seed z >= '//int2str(nint(HALVES_KSIG))//')'
             do g = 1, np
                 if( .not. lpole(g) ) cycle
-                write(fu,'(I0,1X,I0,1X,F6.3,2(1X,F0.3),2(1X,I0),1X,A)') g, cnt0(g), shs(g), zrs(g), zcs(g), fin(g), &
-                    &merge(count(seeds == fin(g)), 0, fin(g) > 0), trim(merge('kept    ', 'rejected', keep(g)))
+                write(fu,'(I0,1X,I0,1X,F6.3,2(1X,F0.3),2(1X,I0),2(1X,F0.3),1X,A)') g, cnt0(g), shs(g), zrs(g), zcs(g), fin(g), &
+                    &merge(count(seeds == fin(g)), 0, fin(g) > 0), zse(g), zde(g), trim(merge('kept    ', 'rejected', keep(g)))
             end do
             call fclose(fu)
         end subroutine pole_rule
 
-        real function seed_z( dh, dhq, g, pt, l_row )
-            complex, intent(in) :: dh(:,:,:,:,:), dhq(:,:,:,:,:)
-            integer, intent(in) :: g
-            logical, intent(in) :: pt(:), l_row
-            integer, parameter :: QA(4) = [1, 1, 2, 2], QB(4) = [3, 4, 3, 4]
-            real    :: mm(0:4), best, c
-            integer :: k, f
-            do k = 0, 4
-                if( k == 0 )then
-                    mm(0) = site%half_corr(dh(:,:,:,:,1), dh(:,:,:,:,2))
-                else
-                    mm(k) = site%half_corr(dhq(:,:,:,:,QA(k)), dhq(:,:,:,:,QB(k)))
+        ! states below the seed floor fold into the remaining state with the highest mean posterior for their rows (a rest
+        ! bucket, which has no endpoints, is the complement of the others); newidx maps the old state numbers (0 = folded)
+        subroutine fold_small_states( newidx )
+            integer, allocatable, intent(out) :: newidx(:)
+            real(dp), allocatable :: gp(:,:)
+            integer,  allocatable :: cnt(:), oldidx(:)
+            logical,  allocatable :: alive(:)
+            integer :: ns, s, t, f, i, m, k
+            m  = size(names)
+            ns = maxval([0, seeds])
+            allocate(newidx(max(ns,1)), source=0)
+            if( ns == 0 ) return
+            allocate(alive(ns), source=.true.)
+            do
+                cnt = [(count(seeds == s), s=1,ns)]
+                s   = 0
+                do t = 1, ns
+                    if( .not. alive(t) .or. cnt(t) == 0 .or. cnt(t) >= minseed ) cycle
+                    if( s == 0 ) s = t
+                    if( cnt(t) < cnt(s) ) s = t
+                end do
+                if( s == 0 .or. count(alive .and. cnt > 0) < 2 ) exit
+                allocate(gp(n,ns), source=0._dp)
+                do f = 1, m
+                    if( grp(f) > 0 ) gp(:,grp(f)) = gp(:,grp(f)) + real(posts(:,f),dp) / real(count(grp == grp(f)),dp)
+                end do
+                do t = 1, ns
+                    if( .not. any(grp == t) ) gp(:,t) = 1._dp - maxval(gp, dim=2)
+                end do
+                alive(s) = .false.
+                do i = 1, n
+                    if( seeds(i) /= s ) cycle
+                    seeds(i) = maxloc(gp(i,:), dim=1, mask=alive .and. cnt > 0)
+                end do
+                where( grp == s ) grp = 0
+                write(logfhandle,'(A)') '>>> SITE_RANK state '//int2str(s)//' folded: '//int2str(cnt(s))//' seeds, fewer than the '//&
+                    &int2str(minseed)//' refine3D refines as a state; its rows join their best remaining state'
+                deallocate(gp)
+            end do
+            k = 0
+            do s = 1, ns
+                if( alive(s) .and. count(seeds == s) > 0 )then
+                    k = k + 1
+                    newidx(s) = k
                 endif
-                best = -huge(best)
-                do f = 1, size(pt)
-                    if( .not. pt(f) .or. grp(f) == g ) cycle
-                    if( k == 0 .and. l_row )then
-                        c = site%half_corr(dh(:,:,:,:,1), dall(:,:,:,:,f,2))
-                    else if( k == 0 )then
-                        c = site%half_corr(dall(:,:,:,:,f,1), dh(:,:,:,:,2))
-                    else if( l_row )then
-                        c = site%half_corr(dhq(:,:,:,:,QA(k)), dq(:,:,:,:,f,QB(k)))
-                    else
-                        c = site%half_corr(dq(:,:,:,:,f,QA(k)), dhq(:,:,:,:,QB(k)))
-                    endif
-                    best = max(best, c)
-                end do
-                if( best > -huge(best) ) mm(k) = mm(k) - best
             end do
-            seed_z = -huge(1.)
-            if( mm(0) > 0. ) seed_z = mm(0) / max(halves_se(mm(1:4)), 1.e-6)
-        end function seed_z
-
-        subroutine halves_margins
-            logical, allocatable :: cnd(:), solo(:), pt(:)
-            integer :: a, b, k, m
-            m    = size(names)
-            cnd  = halves_cand(craw, rel1, rel2, cq)
-            solo = [(names(a)%to_char() == 'rest', a=1,m)]
-            write(funit,'(A)') '# merge tests: endpoint pair, margin min(cross) - min(self), SE over the four cross-half quarter '//&
-                &'pairs (sd / sqrt 2), floor = the larger SE of the two normalised self-matches, margin / max(SE, floor) (groups merge, '//&
-                &'closest first, when every cross pair is above -'//int2str(nint(HALVES_KSIG))//'; only candidates, a self-match '//&
-                &int2str(nint(HALVES_KSIG))//' SE above 0, merge, the rest never), merged'
-            do a = 1, m
-                do b = a + 1, m
-                    call emit_margin('merge '//names(a)%to_char()//' '//names(b)%to_char(), halves_merge_margin(craw, rel1, rel2, a, b),&
-                        &[(halves_merge_margin(cq(:,:,k), r1q(:,k), r2q(:,k), a, b), k=1,4)], gm(a) == gm(b), &
-                        &halves_floor(cq, r1q, r2q, a, b))
-                end do
+            oldidx = seeds
+            do i = 1, n
+                if( oldidx(i) > 0 ) seeds(i) = newidx(oldidx(i))
             end do
-            write(funit,'(A)') '# accept tests: endpoint, its self correlation minus the best candidate partner outside its group '//&
-                &'(half 1 to half 2, then half 2 to half 1; accepted at '//int2str(nint(HALVES_KSIG))//' SE; the rest is no partner of '//&
-                &'the poles and is tested last, against the accepted poles), SE, margin / SE, accepted'
-            do a = 1, m
-                pt = cnd .and. .not. solo
-                if( solo(a) ) pt = ok .and. .not. solo
-                call emit_margin('accept '//names(a)%to_char()//' row', halves_accept_margin(craw, gm, pt, a, .true.), &
-                    &[(halves_accept_margin(cq(:,:,k), gm, pt, a, .true.), k=1,4)], ok(a), -1.)
-                call emit_margin('accept '//names(a)%to_char()//' column', halves_accept_margin(craw, gm, pt, a, .false.), &
-                    &[(halves_accept_margin(cq(:,:,k), gm, pt, a, .false.), k=1,4)], ok(a), -1.)
+            do f = 1, m
+                if( grp(f) > 0 ) grp(f) = newidx(grp(f))
             end do
-            write(funit,'(A)') '# quarter replicates k (a half-1 quarter vs a half-2 quarter): the endpoints'' reliabilities in '//&
-                &'each, then every endpoint''s row of correlations with the endpoints'' other-quarter versions'
-            do k = 1, 4
-                write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' rel1', r1q(:,k)
-                write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' rel2', r2q(:,k)
-                do a = 1, m
-                    write(funit,'(A,I0,A,*(1X,F7.4))') 'quarter ', k, ' row '//names(a)%to_char(), cq(a,:,k)
-                end do
-            end do
-        end subroutine halves_margins
-
-        subroutine emit_margin( what, m, reps, l_yes, flr )
-            character(len=*), intent(in) :: what
-            real,             intent(in) :: m, reps(:), flr
-            logical,          intent(in) :: l_yes
-            character(len=96) :: s
-            real :: se
-            se = halves_se(reps)
-            if( flr >= 0. )then
-                write(s,'(4(1X,F0.3))') m, se, flr, m / max(se, flr, 1.e-6)
-            else
-                write(s,'(3(1X,F0.3))') m, se, m / max(se, 1.e-6)
-            endif
-            write(funit,'(A)') what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
-            write(logfhandle,'(A)') '>>> SITE_RANK halves '//what//trim(s)//' '//trim(merge('yes', 'no ', l_yes))
-        end subroutine emit_margin
+        end subroutine fold_small_states
 
         subroutine size_rankings
             type(string), allocatable :: fn(:), ff(:)

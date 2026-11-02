@@ -15,10 +15,11 @@ use simple_parameters,    only: parameters
 use simple_builder,       only: builder
 use simple_state_tree,    only: state_tree
 use simple_stat,          only: avg_ranks
+use simple_linalg,        only: matinv
 implicit none
 
-public :: state_mergeup, merge_poles, merge_poles_halves, halves_merge_margin, halves_accept_margin, halves_se, EM_LIM
-public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_zcrit, locality_guard
+public :: state_mergeup, merge_poles, merge_poles_subspace, gram_corr, gram_resid, fisher_z, ivec, EM_LIM
+public :: HALVES_KSIG, mask_neff, seed_poles, split_zcrit, locality_guard
 private
 #include "simple_local_flags.inc"
 
@@ -120,6 +121,7 @@ type :: state_mergeup
     procedure, private :: band_terms
     procedure          :: half_rel
     procedure          :: half_corr
+    procedure          :: dev_gram
 end type state_mergeup
 
 contains
@@ -2908,140 +2910,174 @@ contains
         plab  = plab(1:np)
     end subroutine seed_poles
 
-    real function halves_merge_margin( cm, ra, rb, a, b )
-        real,    intent(in) :: cm(:,:), ra(:), rb(:)
-        integer, intent(in) :: a, b
-        halves_merge_margin = min(nm(cm(a,b), ra(a), rb(b)), nm(cm(b,a), ra(b), rb(a))) - &
-            &min(nm(cm(a,a), ra(a), rb(a)), nm(cm(b,b), ra(b), rb(b)))
-    contains
-        real function nm( c, r1, r2 )
-            real, intent(in) :: c, r1, r2
-            nm = c / sqrt(max(r1, 1.e-3) * max(r2, 1.e-3))
-        end function nm
-    end function halves_merge_margin
+    ! cross-half correlation of deviation map a's even half with map b's odd half, from the hold-out-band Gram matrices
+    real function gram_corr( gee, goo, geo, a, b )
+        real(dp), intent(in) :: gee(:,:), goo(:,:), geo(:,:)
+        integer,  intent(in) :: a, b
+        gram_corr = real(geo(a,b) / max(sqrt(gee(a,a) * goo(b,b)), 1.e-300_dp))
+    end function gram_corr
 
-    real function halves_accept_margin( cm, gp, cand, a, l_row )
-        real,    intent(in) :: cm(:,:)
-        integer, intent(in) :: gp(:), a
-        logical, intent(in) :: cand(:), l_row
-        real    :: best
-        integer :: f
-        best = -huge(best)
-        do f = 1, size(gp)
-            if( gp(f) == gp(a) .or. .not. cand(f) ) cycle
-            if( l_row )then
-                best = max(best, cm(a,f))
-            else
-                best = max(best, cm(f,a))
-            endif
+    ! Fisher z of a correlation over neff independent coefficients
+    real function fisher_z( r, neff )
+        real, intent(in) :: r, neff
+        fisher_z = atanh(min(max(r, -0.999999), 0.999999)) * sqrt(max(neff - 3., 1.))
+    end function fisher_z
+
+    ! the principal-angle test: the cross-half correlation of map b's residual after the span of the groups' directions (each
+    ! group's direction = the mean of its members' unit deviations) is projected out, in each half with that half's directions
+    real function gram_resid( gee, goo, geo, b, gmem ) result( r )
+        real(dp),   intent(in) :: gee(:,:), goo(:,:), geo(:,:)
+        integer,    intent(in) :: b
+        type(ivec), intent(in) :: gmem(:)
+        real(dp), allocatable :: we(:,:), wo(:,:), ge(:,:), go(:,:), gi(:,:), re(:), ro(:)
+        integer :: m, k, j, i, a, err
+        m = size(gee,1)
+        k = size(gmem)
+        allocate(we(m,k), wo(m,k), source=0._dp)
+        do j = 1, k
+            do i = 1, size(gmem(j)%v)
+                a = gmem(j)%v(i)
+                we(a,j) = we(a,j) + 1._dp / (sqrt(gee(a,a)) * real(size(gmem(j)%v),dp))
+                wo(a,j) = wo(a,j) + 1._dp / (sqrt(goo(a,a)) * real(size(gmem(j)%v),dp))
+            end do
         end do
-        halves_accept_margin = cm(a,a) - best
-        if( best == -huge(best) ) halves_accept_margin = cm(a,a)
-    end function halves_accept_margin
+        allocate(re(m), ro(m), source=0._dp)
+        re(b) = 1._dp
+        ro(b) = 1._dp
+        ge = matmul(transpose(we), matmul(gee, we))
+        go = matmul(transpose(wo), matmul(goo, wo))
+        do j = 1, k
+            ge(j,j) = ge(j,j) * (1._dp + 1.e-9_dp)
+            go(j,j) = go(j,j) * (1._dp + 1.e-9_dp)
+        end do
+        allocate(gi(k,k))
+        call matinv(ge, gi, k, err)
+        if( err == 0 ) re = re - matmul(we, matmul(gi, matmul(transpose(we), gee(:,b))))
+        call matinv(go, gi, k, err)
+        if( err == 0 ) ro = ro - matmul(wo, matmul(gi, matmul(transpose(wo), goo(:,b))))
+        r = real(dot_product(re, matmul(geo, ro)) / max(sqrt(max(dot_product(re, matmul(gee, re)), 0._dp) * &
+            &max(dot_product(ro, matmul(goo, ro)), 0._dp)), 1.e-300_dp))
+    end function gram_resid
 
-    real function halves_se( reps )
-        real, intent(in) :: reps(:)
-        halves_se = sqrt(sum((reps - sum(reps) / real(size(reps)))**2) / real(max(1, size(reps) - 1))) / sqrt(2.)
-    end function halves_se
-
-    real function halves_floor( cq, r1q, r2q, a, b )
-        real,    intent(in) :: cq(:,:,:), r1q(:,:), r2q(:,:)
-        integer, intent(in) :: a, b
-        integer :: k
-        halves_floor = max(halves_se([(cq(a,a,k) / sqrt(max(r1q(a,k), 1.e-3) * max(r2q(a,k), 1.e-3)), k=1,size(cq,3))]), &
-            &halves_se([(cq(b,b,k) / sqrt(max(r1q(b,k), 1.e-3) * max(r2q(b,k), 1.e-3)), k=1,size(cq,3))]))
-    end function halves_floor
-
-    function halves_cand( craw, rel1, rel2, cq ) result( cand )
-        real,    intent(in)  :: craw(:,:), rel1(:), rel2(:), cq(:,:,:)
-        logical, allocatable :: cand(:)
-        integer :: a
-        cand = [(craw(a,a) > 0. .and. rel1(a) > 0. .and. rel2(a) > 0. .and. craw(a,a) >= HALVES_KSIG * halves_se(cq(a,a,:)), &
-            &a=1,size(craw,1))]
-    end function halves_cand
-
-    ! groups merge, closest pair first, when every cross pair of candidates is within HALVES_KSIG SEs (floored at self-match SEs); a
-    ! group counts when each member beats its best outside partner by HALVES_KSIG SEs; solo ones never merge, tested last vs poles
-    subroutine merge_poles_halves( posts, craw, rel1, rel2, cq, r1q, r2q, minseed, l_rest, solo, grp, seeds, ok, twin, gm, lpool )
-        use simple_srch_sort_loc, only: hpsort
-        real,                 intent(in)  :: posts(:,:), craw(:,:), rel1(:), rel2(:), cq(:,:,:), r1q(:,:), r2q(:,:)
+    ! the subspace test (audit 6.3) on the endpoints' cross-half deviation maps: an endpoint is accepted when its even-odd
+    ! correlation is HALVES_KSIG Fisher SEs above zero; two accepted endpoints are one pole when they correlate positively and
+    ! neither's residual after the other reproduces; groups merge closest first when every cross pair is such a pair; a pole in
+    ! the span of two or more other positively correlated poles is redundant and dropped (zred)
+    subroutine merge_poles_subspace( gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred )
+        real(dp),             intent(in)  :: gee(:,:), goo(:,:), geo(:,:)
+        real,                 intent(in)  :: neff, posts(:,:)
         integer,              intent(in)  :: minseed
-        logical,              intent(in)  :: l_rest, solo(:)
-        logical, optional,    intent(in)  :: lpool(:)
-        integer, allocatable, intent(out) :: grp(:), seeds(:), twin(:), gm(:)
-        logical, allocatable, intent(out) :: ok(:)
-        real(dp), allocatable :: gpost(:,:)
-        real,     allocatable :: rat(:,:), key(:)
-        integer,  allocatable :: lab(:), plab(:), pa(:), pb(:), ord(:)
-        logical,  allocatable :: cand(:), cons(:), other(:), part(:)
-        integer :: ne, n, a, b, ga, gb, npole, ipass, br, bc, k
-        ne = size(craw,1)
+        integer, allocatable, intent(out) :: grp(:), seeds(:)
+        real,    allocatable, intent(out) :: zself(:), zdist(:), rho(:,:), zres(:,:), zred(:)
+        type(ivec), allocatable :: mem(:), oth(:)
+        real(dp),   allocatable :: gpost(:,:)
+        integer,    allocatable :: lab(:), plab(:), gl(:), ord(:)
+        logical,    allocatable :: acc(:), same(:,:)
+        type(ivec) :: one
+        real    :: best, zmin, gz
+        integer :: ne, n, a, b, ba, bb, npole, g, h, k, i, j
+        logical :: l_all
+        ne = size(gee,1)
         n  = size(posts,1)
-        cand = halves_cand(craw, rel1, rel2, cq)
-        part = cand .and. .not. solo
-        allocate(rat(ne,ne), source=-huge(1.))
-        allocate(pa(0), pb(0), key(0))
+        allocate(zself(ne), zdist(ne), zred(ne), rho(ne,ne), zres(ne,ne), acc(ne), same(ne,ne))
+        zdist = huge(1.)
+        zred  = huge(1.)
+        rho   = 0.
+        zres  = huge(1.)
+        same  = .false.
+        do a = 1, ne
+            zself(a) = fisher_z(gram_corr(gee, goo, geo, a, a), neff)
+        end do
+        acc = zself >= HALVES_KSIG
+        allocate(one%v(1))
         do a = 1, ne
             do b = a + 1, ne
-                if( .not. (cand(a) .and. cand(b)) .or. solo(a) .or. solo(b) ) cycle
-                rat(a,b) = halves_merge_margin(craw, rel1, rel2, a, b) / max(halves_se([(halves_merge_margin(cq(:,:,k), &
-                    &r1q(:,k), r2q(:,k), a, b), k=1,size(cq,3))]), halves_floor(cq, r1q, r2q, a, b), 1.e-6)
-                rat(b,a) = rat(a,b)
-                pa  = [pa, a]
-                pb  = [pb, b]
-                key = [key, -rat(a,b)]
+                if( .not. (acc(a) .and. acc(b)) ) cycle
+                rho(a,b) = 0.5 * (gram_corr(gee, goo, geo, a, b) + gram_corr(gee, goo, geo, b, a)) / &
+                    &sqrt(max(gram_corr(gee, goo, geo, a, a) * gram_corr(gee, goo, geo, b, b), 1.e-12))
+                rho(b,a) = rho(a,b)
+                one%v(1) = b
+                zres(a,b) = fisher_z(gram_resid(gee, goo, geo, a, [one]), neff - 1.)
+                one%v(1) = a
+                zres(b,a) = fisher_z(gram_resid(gee, goo, geo, b, [one]), neff - 1.)
+                same(a,b) = rho(a,b) > 0. .and. zres(a,b) < HALVES_KSIG .and. zres(b,a) < HALVES_KSIG
+                same(b,a) = same(a,b)
             end do
         end do
-        ord = [(k, k=1,size(key))]
-        if( size(key) > 1 ) call hpsort(key, ord)
-        grp = [(a, a=1,ne)]
-        do k = 1, size(ord)
-            a = pa(ord(k))
-            b = pb(ord(k))
-            if( rat(a,b) < -HALVES_KSIG .or. grp(a) == grp(b) ) cycle
-            if( any(spread(grp == grp(a), 2, ne) .and. spread(grp == grp(b), 1, ne) .and. rat < -HALVES_KSIG) ) cycle
-            ga = grp(a)
-            gb = grp(b)
-            where( grp == gb ) grp = ga
-        end do
-        allocate(cons(ne), ok(ne))
-        allocate(twin(ne), source=0)
-        do ipass = 1, 2
+        lab = [(a, a=1,ne)]
+        where( .not. acc ) lab = 0
+        do
+            best = -huge(best)
+            ba   = 0
+            bb   = 0
             do a = 1, ne
-                cons(a) = cand(a) .and. strong(a, .true.) .and. strong(a, .false.)
+                do b = a + 1, ne
+                    if( .not. same(a,b) .or. lab(a) == 0 .or. lab(b) == 0 .or. lab(a) == lab(b) ) cycle
+                    if( rho(a,b) <= best ) cycle
+                    l_all = .true.
+                    do i = 1, ne
+                        do j = 1, ne
+                            if( lab(i) == lab(a) .and. lab(j) == lab(b) ) l_all = l_all .and. same(i,j)
+                        end do
+                    end do
+                    if( .not. l_all ) cycle
+                    best = rho(a,b)
+                    ba   = a
+                    bb   = b
+                end do
             end do
-            if( ipass == 2 ) exit
-            do a = 1, ne
-                if( cons(a) .or. .not. cand(a) .or. solo(a) ) cycle
-                other = [(b /= a .and. cand(b) .and. .not. solo(b), b=1,ne)]
-                if( .not. any(other) ) cycle
-                br = maxloc(craw(a,:), dim=1, mask=other)
-                bc = maxloc(craw(:,a), dim=1, mask=other)
-                if( br /= bc ) cycle
-                if( any(spread(grp == grp(a), 2, ne) .and. spread(grp == grp(br), 1, ne) .and. rat < -HALVES_KSIG) ) cycle
-                twin(a) = br
-                ga = grp(a)
-                gb = grp(br)
-                where( grp == ga ) grp = gb
+            if( ba == 0 ) exit
+            where( lab == lab(bb) ) lab = lab(ba)
+        end do
+        do a = 1, ne
+            if( .not. acc(a) ) cycle
+            do b = 1, ne
+                if( b == a .or. .not. acc(b) .or. lab(b) == lab(a) .or. rho(a,b) <= 0. ) cycle
+                zdist(a) = min(zdist(a), max(zres(a,b), zres(b,a)))
+            end do
+            if( zdist(a) == huge(1.) ) zdist(a) = zself(a)
+        end do
+        ! redundancy, weakest group first
+        gl = pack([(a, a=1,ne)], [(lab(a) > 0 .and. .not. any(lab(1:a-1) == lab(a)), a=1,ne)])
+        allocate(mem(size(gl)))
+        do g = 1, size(gl)
+            mem(g)%v = pack([(a, a=1,ne)], lab == lab(gl(g)))
+        end do
+        ord = [(g, g=1,size(gl))]
+        do g = 2, size(gl)
+            h = g
+            do while( h > 1 )
+                if( group_z(ord(h-1)) <= group_z(ord(h)) ) exit
+                ord(h-1:h) = [ord(h), ord(h-1)]
+                h = h - 1
             end do
         end do
-        gm = grp
-        do a = 1, ne
-            ok(a) = all(pack(cons, grp == grp(a)))
+        do i = 1, size(ord)
+            g = ord(i)
+            if( lab(mem(g)%v(1)) == 0 ) cycle
+            allocate(oth(0))
+            do h = 1, size(gl)
+                if( h == g .or. lab(mem(h)%v(1)) == 0 ) cycle
+                gz = sum([(sum(rho(mem(g)%v, mem(h)%v(k))), k=1,size(mem(h)%v))]) / real(size(mem(g)%v) * size(mem(h)%v))
+                if( gz > 0. ) oth = [oth, mem(h)]
+            end do
+            if( size(oth) >= 2 )then
+                zmin = huge(zmin)
+                do k = 1, size(mem(g)%v)
+                    zred(mem(g)%v(k)) = fisher_z(gram_resid(gee, goo, geo, mem(g)%v(k), oth), neff - real(size(oth)))
+                    zmin = min(zmin, zred(mem(g)%v(k)))
+                end do
+                if( zmin < HALVES_KSIG ) lab(mem(g)%v) = 0
+            endif
+            deallocate(oth)
         end do
-        if( present(lpool) ) ok = ok .or. lpool
-        part = ok .and. .not. solo
-        do a = 1, ne
-            if( solo(a) ) ok(a) = cand(a) .and. strong(a, .true.) .and. strong(a, .false.)
-        end do
-        allocate(lab(ne), source=0)
+        allocate(grp(ne), source=0)
         npole = 0
         do a = 1, ne
-            if( .not. ok(a) .or. lab(a) > 0 ) cycle
+            if( lab(a) == 0 .or. grp(a) > 0 ) cycle
             npole = npole + 1
-            where( grp == grp(a) ) lab = npole
+            where( lab == lab(a) ) grp = npole
         end do
-        grp = lab
         allocate(seeds(n), source=0)
         if( npole == 0 ) return
         allocate(gpost(n,npole), source=0._dp)
@@ -3049,24 +3085,19 @@ contains
             if( grp(a) == 0 ) cycle
             gpost(:,grp(a)) = gpost(:,grp(a)) + real(posts(:,a),dp) / real(count(grp == grp(a)),dp)
         end do
-        call seed_poles(gpost, minseed, l_rest, seeds, plab)
+        call seed_poles(gpost, minseed, .true., seeds, plab)
         do a = 1, ne
             if( grp(a) > 0 ) grp(a) = plab(grp(a))
         end do
 
     contains
 
-        logical function strong( e, l_row )
-            integer, intent(in) :: e
-            logical, intent(in) :: l_row
-            real :: am
-            integer :: kk
-            am     = halves_accept_margin(craw, grp, part, e, l_row)
-            strong = am > 0. .and. am >= HALVES_KSIG * &
-                &halves_se([(halves_accept_margin(cq(:,:,kk), grp, part, e, l_row), kk=1,size(cq,3))])
-        end function strong
+        real function group_z( g )
+            integer, intent(in) :: g
+            group_z = sum(zself(mem(g)%v)) / real(size(mem(g)%v))
+        end function group_z
 
-    end subroutine merge_poles_halves
+    end subroutine merge_poles_subspace
 
     subroutine estep( self, idx, w, refs, l_alive, wnew, l_full, ll, kcut, llband, lpp )
         class(state_mergeup), target, intent(inout) :: self
@@ -3616,6 +3647,26 @@ contains
         complex,              intent(in) :: a(:,:,:,:), b(:,:,:,:)
         half_corr = self%shell_corr(a(:,:,:,1) + a(:,:,:,2), b(:,:,:,1) + b(:,:,:,2), self%kb + RB_MARGIN, self%khi)
     end function half_corr
+
+    ! Gram matrices of deviation maps over the hold-out band: within the even half, within the odd half, even by odd
+    subroutine dev_gram( self, d, gee, goo, geo )
+        class(state_mergeup),  intent(in)  :: self
+        complex,               intent(in)  :: d(:,:,:,:,:)
+        real(dp), allocatable, intent(out) :: gee(:,:), goo(:,:), geo(:,:)
+        integer :: a, b, m
+        m = size(d,5)
+        allocate(gee(m,m), goo(m,m), geo(m,m), source=0._dp)
+        do a = 1, m
+            do b = 1, m
+                geo(a,b) = self%shell_dot(d(:,:,:,1,a), d(:,:,:,2,b), self%kb + RB_MARGIN, self%khi)
+                if( b < a ) cycle
+                gee(a,b) = self%shell_dot(d(:,:,:,1,a), d(:,:,:,1,b), self%kb + RB_MARGIN, self%khi)
+                goo(a,b) = self%shell_dot(d(:,:,:,2,a), d(:,:,:,2,b), self%kb + RB_MARGIN, self%khi)
+                gee(b,a) = gee(a,b)
+                goo(b,a) = goo(a,b)
+            end do
+        end do
+    end subroutine dev_gram
 
     real(dp) function shell_dot( self, x, y, shlo, shhi )
         class(state_mergeup), intent(in) :: self
