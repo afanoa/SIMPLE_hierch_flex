@@ -19,7 +19,7 @@ use simple_linalg,        only: matinv
 implicit none
 
 public :: state_mergeup, merge_poles, merge_poles_subspace, gram_corr, gram_resid, fisher_z, ivec, EM_LIM
-public :: HALVES_KSIG, mask_neff, seed_poles, split_zcrit, locality_guard
+public :: HALVES_KSIG, mask_neff, seed_poles, split_zcrit, locality_guard, write_split_stats, read_split_stats, SITE_GRID
 private
 #include "simple_local_flags.inc"
 
@@ -43,7 +43,7 @@ type :: shuffle_null
     integer, allocatable :: sjidx(:)
     real,    allocatable :: nul(:), nul2(:)
     integer :: ng = 0, neq = 0, nsh = 0, ndone = 0, nstep = 0
-    real    :: zc = 0.
+    real    :: zc = 0., jsc = 1.
     logical :: l_z = .false.
 end type shuffle_null
 
@@ -68,7 +68,7 @@ type :: state_mergeup
     logical, allocatable :: cnl(:,:)
     logical :: l_equiv = .false.
     real    :: mdelta = 0., nmed = 0., nmax = 0.
-    integer :: nnull = 0
+    integer :: nnull = 0, mtests = 1
     integer :: audit_calls = 0
     integer, allocatable :: jhk(:,:), jsh(:)
     real,    allocatable :: jw(:), f2j(:,:)
@@ -86,6 +86,9 @@ type :: state_mergeup
     procedure :: leaf_focus
     procedure :: run
     procedure :: test
+    procedure :: test_once
+    procedure :: quality_flag
+    procedure :: write_weights
     procedure :: site_em
     procedure :: fit_contrast
     procedure :: junk_screen
@@ -97,6 +100,7 @@ type :: state_mergeup
     procedure, private :: consensus
     procedure, private :: screen
     procedure, private :: decide
+    procedure, private :: decide_once
     procedure, private :: null_upto
     procedure, private :: null_resolve
     procedure, private :: eqn_stats
@@ -605,10 +609,10 @@ contains
             else
                 tdir = parent_dir(parent_dir(self%p%infile%to_char()))
             endif
-            call equiv_tree_inputs(tdir, ndelta, npairs, nrs)
+            call equiv_tree_inputs(tdir, ndelta, npairs, nrs, self%mtests)
             write(logfhandle,'(A)') '>>> STATE_MERGEUP merge rule inputs from '//tdir//': '//int2str(nrs)//&
                 &' node splits kept K* >= 2, smallest effect '//fmtr(real(ndelta,dp),6)//'; '//int2str(size(npairs,2))//&
-                &' sibling leaf pairs shown distinct:'//pair_list(npairs)
+                &' sibling leaf pairs shown distinct:'//pair_list(npairs)//'; '//int2str(self%mtests)//' split tests in the tree'
             self%mdelta = ndelta
             call move_alloc(npairs, dpairs)
             write(logfhandle,'(A)') '>>> STATE_MERGEUP merge rule: a pair merges only when shown equivalent at margin '//&
@@ -1007,6 +1011,553 @@ contains
 
     end subroutine test
 
+    ! the single-pass split test (audit 6.7): the SSNR junk screen, one cross-half EM from the stage-B labels, one equal N (the
+    ! smallest EM group in either half), maps of every group built once at it, every pair statistic read off them in the hold-out
+    ! band, one stratified shuffle null at the same N and one z_crit; the weakest kept pair, the null's mean and sd and N as numbers
+    subroutine test_once( self, cand, k0, child, kstar, junk, ntests, ugrp, stats )
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: cand(:), k0, ntests
+        integer, allocatable, intent(out)   :: child(:), junk(:)
+        integer,              intent(out)   :: kstar
+        integer, allocatable, optional, intent(out) :: ugrp(:)
+        real,    optional,    intent(out)   :: stats(6)
+        complex, allocatable :: cons(:,:,:,:)
+        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:), starta(:), startb(:)
+        integer, allocatable :: plist(:), gof(:), exa(:), exb(:), sizes(:), order(:), rank(:), mapb(:)
+        real,    allocatable :: eps(:)
+        type(shuffle_null) :: nl
+        real    :: mu2, sd2, tmin, tmin0, thr
+        integer :: neq, neq2, s, g, m, ii, jj, kem, ng, nsj, nthr, npair
+        ia = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 0)
+        ib = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 1)
+        la = cand(ia)
+        lb = cand(ib)
+        write(logfhandle,'(A)') 'A: '//int2str(size(ia))//' node particles (labels '//joined(counts(la, k0))//&
+            &'); B: '//int2str(size(ib))//' (labels '//joined(counts(lb, k0))//')'
+        call self%consensus(ia, ib, la, lb, k0, neq, eps, cons)
+        call self%screen(ia, ib, la, lb, k0, neq, eps, cons, junk)
+        gcom = pack([(g, g=1,k0)], [(count(la == g) > 0 .and. count(lb == g) > 0, g=1,k0)])
+        ng   = size(gcom)
+        sta  = self%strata(ia)
+        stb  = self%strata(ib)
+        nl%ng  = ng
+        nl%neq = neq
+        nl%nsh = NSHUF_BONF
+        nl%l_z = .true.
+        nl%zc  = split_zcrit(ntests)
+        nthr   = 1
+        !$ nthr = omp_get_max_threads()
+        nl%nstep = max(NSHUF_STEP, ceiling(real(nthr) / real(max(1, 2*ng))))
+        allocate(nl%nul(0), nl%nul2(0))
+        write(logfhandle,'(A)') 'single pass: equal N '//int2str(neq)//' per group; test band '//int2str(self%kt)//'..'//&
+            &int2str(self%khi)//'; up to '//int2str(nl%nsh)//' shuffles; stratified null: '//int2str(nuniq(sta))//' / '//&
+            &int2str(nuniq(stb))//' nuisance strata (view x defocus); z_crit '//fmtr(real(nl%zc,dp),2)//' (alpha 1/21 over '//&
+            &int2str(ntests)//' split tests)'
+        kstar = min(ng, 1)
+        mu2   = 0.
+        sd2   = 0.
+        tmin  = 0.
+        tmin0 = 0.
+        kem   = ng
+        allocate(plist(0), gof(0), exa(0:k0), exb(0:k0))
+        exa = 0
+        exb = 0
+        if( ng >= 2 )then
+            ! the cross-half EM from the stage-B labels of every group present in both halves
+            allocate(starta(size(ia)), startb(size(ib)), source=0)
+            do m = 1, ng
+                where( la == gcom(m) ) starta = m
+                where( lb == gcom(m) ) startb = m
+            end do
+            pa = la
+            pb = lb
+            call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
+            write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
+                &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
+            ! one N for the pairs and the null: the smallest EM group in either half, at most the stage-B equal N
+            neq2 = neq
+            do g = 1, kem
+                if( count(la == g) > 0 .and. count(lb == g) > 0 ) neq2 = min(neq2, count(la == g), count(lb == g))
+            end do
+            nl%neq = neq2
+            nl%jsc = real(neq2) / real(neq)
+            allocate(nl%sjidx(2*ng*neq2*nl%nsh))
+            nsj = 0
+            do s = 1, nl%nsh
+                call add_subset_jobs(ia, sshuf(pa, sta))
+                call add_subset_jobs(ib, sshuf(pb, stb))
+            end do
+            call self%null_upto(nl, NSHUF, eps, cons)
+            call null_thr(nl, mu2, sd2, thr)
+            write(logfhandle,'(A)') 'equal N after the EM '//int2str(neq2)//' (stage-B equal N '//int2str(neq)//'); shuffle null '//&
+                &'in the test band at that N ('//int2str(size(nl%nul2))//' pair statistics): mean / sd '//fmtr(real(mu2,dp),4)//&
+                &' / '//fmtr(real(sd2,dp),4)//', max '//fmtr(real(maxval(nl%nul2),dp),3)//' -> threshold '//fmtr(real(thr,dp),3)//&
+                &' from '//int2str(nl%ndone)//' shuffles'
+            if( allocated(self%cnl) ) call link_em_groups
+            call self%decide_once(ia, ib, la, lb, kem, eps, neq, neq2, cons, nl, plist, gof, exa, exb, kstar, tmin0, tmin)
+            call null_thr(nl, mu2, sd2, thr)
+            write(logfhandle,'(A)') 'test band '//int2str(self%kt)//'..'//int2str(self%khi)//': null mean / sd '//&
+                &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)//' from '//int2str(nl%ndone)//' of '//int2str(nl%nsh)//&
+                &' shuffles -> threshold '//fmtr(real(thr,dp),3)//'; weakest pair at the start '//&
+                &fmtr(real(tmin0,dp),3)//' (z '//fmtr(real((tmin0 - mu2) / max(sd2, 1.e-12),dp),2)//'), weakest kept pair '//&
+                &fmtr(real(tmin,dp),3)//' -> '//merge('PASS', 'FAIL', kstar >= 2)//', K* '//int2str(kstar)
+        else
+            if( ng == 1 )then
+                plist = [1]
+                gof   = [1]
+                where( la == gcom(1) ) la = 1
+                where( lb == gcom(1) ) lb = 1
+            endif
+        endif
+        npair = size(plist)
+        allocate(sizes(max(1,kstar)), order(max(1,kstar)), rank(max(1,kstar)), source=0)
+        do m = 1, npair
+            sizes(gof(m)) = sizes(gof(m)) + count(la == plist(m)) + count(lb == plist(m))
+        end do
+        order = [(ii, ii=1,max(1,kstar))]
+        do ii = 2, kstar
+            jj = ii
+            do while( jj > 1 )
+                if( sizes(order(jj-1)) >= sizes(order(jj)) ) exit
+                order(jj-1:jj) = [order(jj), order(jj-1)]
+                jj = jj - 1
+            end do
+        end do
+        do ii = 1, max(1,kstar)
+            rank(order(ii)) = ii
+        end do
+        allocate(child(self%n), source=0)
+        do ii = 1, size(ia)
+            child(ia(ii)) = group_of(la(ii), exa)
+        end do
+        do ii = 1, size(ib)
+            child(ib(ii)) = group_of(lb(ii), exb)
+        end do
+        if( kstar >= 2 ) call choose_members
+        if( present(ugrp) )then
+            ! a stage-B unit follows the EM group that holds most of its particles
+            allocate(ugrp(k0), source=0)
+            allocate(mapb(k0), source=0)
+            do g = 1, k0
+                if( count(cand(ia) == g .and. child(ia) > 0) + count(cand(ib) == g .and. child(ib) > 0) == 0 ) cycle
+                ugrp(g) = mode_of_pos([pack(child(ia), cand(ia) == g .and. child(ia) > 0), &
+                    &pack(child(ib), cand(ib) == g .and. child(ib) > 0)])
+            end do
+        endif
+        if( present(stats) ) stats = [tmin, tmin0, mu2, sd2, nl%zc, real(nl%neq)]
+        write(logfhandle,'(A)') 'K* = '//int2str(kstar)//'; sizes '//joined([(count(child == ii), ii=1,max(1,kstar))])//&
+            &'; junk units '//joined(junk)
+        deallocate(cons)
+
+    contains
+
+        integer function group_of( lab, ex )
+            integer, intent(in) :: lab, ex(0:)
+            integer :: mm, lab_here
+            group_of = 0
+            lab_here = lab
+            if( lab_here <= ubound(ex,1) )then
+                if( ex(lab_here) > 0 ) lab_here = ex(lab_here)
+            endif
+            do mm = 1, npair
+                if( plist(mm) == lab_here ) group_of = rank(gof(mm))
+            end do
+        end function group_of
+
+        integer function mode_of_pos( v )
+            integer, intent(in) :: v(:)
+            integer :: c, best, mm
+            mode_of_pos = 0
+            best = 0
+            do mm = 1, maxval(v)
+                c = count(v == mm)
+                if( c > best )then
+                    best = c
+                    mode_of_pos = mm
+                endif
+            end do
+        end function mode_of_pos
+
+        subroutine add_subset_jobs( idx, lab )
+            integer, intent(in) :: idx(:), lab(:)
+            integer, allocatable :: sel(:)
+            integer :: gg
+            do gg = 1, ng
+                sel = pack(idx, lab == gcom(gg))
+                if( size(sel) < nl%neq ) THROW_HARD('a shuffled group is smaller than the equal N')
+                call rnd_subset(sel, nl%neq)
+                nl%sjidx(nsj+1:nsj+nl%neq) = sel(1:nl%neq)
+                nsj = nsj + nl%neq
+            end do
+        end subroutine add_subset_jobs
+
+        ! membership by the choose rule (the production default): one full-band cross-half pass from the K* groups and one from
+        ! the stage-B states (each state to the group holding most of its particles); the states win when their per-particle
+        ! cross-half log-likelihood in the test band exceeds the groups' by 3 SE
+        subroutine choose_members
+            integer,  allocatable :: ja(:), jb(:), a1(:), b1(:), a2(:), b2(:), smap(:), cnt(:,:), sz(:), rk(:)
+            real(dp), allocatable :: pa1(:), pb1(:), pa2(:), pb2(:), dl(:)
+            real(dp) :: lb1(2), lb2(2), dmg, dse
+            integer  :: ss, gg, mm, nchg, k1
+            logical  :: l_two, l_win2
+            k1 = kstar
+            ja = pack(ia, child(ia) > 0)
+            jb = pack(ib, child(ib) > 0)
+            allocate(cnt(k0,k1), source=0)
+            do mm = 1, size(ja)
+                cnt(cand(ja(mm)),child(ja(mm))) = cnt(cand(ja(mm)),child(ja(mm))) + 1
+            end do
+            do mm = 1, size(jb)
+                cnt(cand(jb(mm)),child(jb(mm))) = cnt(cand(jb(mm)),child(jb(mm))) + 1
+            end do
+            allocate(smap(k0), source=0)
+            do ss = 1, k0
+                if( sum(cnt(ss,:)) > 0 ) smap(ss) = maxloc(cnt(ss,:), dim=1)
+            end do
+            l_two = all([(any(smap == gg), gg=1,k1)])
+            if( k0 == k1 .and. .not. l_two )then
+                smap  = [(ss, ss=1,k0)]
+                l_two = .true.
+            endif
+            nchg   = 0
+            l_win2 = .false.
+            dmg    = 0._dp
+            dse    = 0._dp
+            if( l_two )then
+                a1 = child(ja)
+                b1 = child(jb)
+                a2 = smap(cand(ja))
+                b2 = smap(cand(jb))
+                call self%cross_em(ja, jb, child(ja), child(jb), k1, eps, neq, a1, b1, l_full=.true., kcut=self%kt, &
+                    &llband=lb1, niter=1, lpa=pa1, lpb=pb1)
+                call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, l_full=.true., &
+                    &kcut=self%kt, llband=lb2, niter=1, lpa=pa2, lpb=pb2)
+                a2  = smap(cand(ja))
+                b2  = smap(cand(jb))
+                dl  = [pa2 - pa1, pb2 - pb1]
+                dmg = sum(dl)
+                dse = sqrt(real(size(dl),dp)) * sqrt(sum((dl - dmg / real(size(dl),dp))**2) / real(max(size(dl) - 1, 1),dp))
+                l_win2 = dmg > 3._dp * dse
+                if( l_win2 )then
+                    nchg = count(child(ja) /= a2) + count(child(jb) /= b2)
+                    child(ja) = a2
+                    child(jb) = b2
+                endif
+            endif
+            sz = [(count(child == gg), gg=1,k1)]
+            allocate(rk(0:k1), source=0)
+            do gg = 1, k1
+                if( sz(gg) > 0 ) rk(gg) = count(sz > sz(gg)) + count(sz(1:gg-1) == sz(gg)) + 1
+            end do
+            child = rk(child)
+            kstar = count(sz > 0)
+            if( l_two )then
+                write(logfhandle,'(A)') 'membership by the choose rule, test band '//int2str(self%kt)//'..'//int2str(self%khi)//&
+                    &': cross-half log-likelihood of the raw stage-B states minus the raw EM groups '//fmtr(dmg,1)//', SE '//&
+                    &fmtr(dse,1)//' (sqrt(N) x the sd of '//int2str(size(dl))//' per-particle deltas), 3 SE '//fmtr(3._dp*dse,1)//&
+                    &' -> '//trim(merge('stage-B states', 'EM groups     ', l_win2))//' (raw); '//int2str(nchg)//' particles change group'
+            else
+                write(logfhandle,'(A)') 'membership by the choose rule: the stage-B states do not cover the '//int2str(k1)//&
+                    &' groups; the EM groups (raw) stand'
+            endif
+        end subroutine choose_members
+
+        ! the cannot-link matrix over stage-B units becomes one over EM groups: linked when any of their start units were
+        subroutine link_em_groups
+            logical, allocatable :: cg(:,:)
+            integer :: m1, m2
+            allocate(cg(kem,kem), source=.false.)
+            do m1 = 1, ng
+                do m2 = 1, ng
+                    if( m1 /= m2 ) cg(m1,m2) = self%cnl(gcom(m1),gcom(m2))
+                end do
+            end do
+            call move_alloc(cg, self%cnl)
+        end subroutine link_em_groups
+
+    end subroutine test_once
+
+    ! the pair decision on equal-N maps built once: every present group's maps at min(neq, its size) per half, docked onto the
+    ! other half's consensus; T(p,q) in the test band from one FSC curve per pair; the smallest T merges while it sits below the
+    ! null threshold (the null extended while it is within reach), the merged group redrawn at neq; tmin0 / tmin = the weakest
+    ! pair at the start / among the kept groups
+    subroutine decide_once( self, ia, ib, la, lb, kmax, eps, neq, ndraw, cons, nl, plist, gof, exa, exb, kout, tmin0, tmin )
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), kmax, neq, ndraw
+        real,                 intent(in)    :: eps(0:)
+        complex,              intent(in)    :: cons(:,:,:,:)
+        type(shuffle_null),   intent(inout) :: nl
+        integer, allocatable, intent(out)   :: plist(:), gof(:), exa(:), exb(:)
+        integer,              intent(out)   :: kout
+        real,                 intent(out)   :: tmin0, tmin
+        complex, allocatable :: allm(:,:,:,:), pm(:,:,:,:)
+        integer, allocatable :: presa(:), presb(:), jidx(:), joff(:), mapa(:), mapb(:), groupof(:), ga(:), gb(:)
+        real,    allocatable :: jscale(:), rmat(:,:), merged(:)
+        logical, allocatable :: l_alive(:)
+        real    :: best, mu, sd, thr
+        logical :: l_merge
+        integer :: g, npair, p, q, bp, bq, mm, nsub
+        presa = pack([(g, g=1,kmax)], [(count(la == g) > 0, g=1,kmax)])
+        presb = pack([(g, g=1,kmax)], [(count(lb == g) > 0, g=1,kmax)])
+        allocate(jidx(0), joff(1), jscale(0))
+        joff(1) = 1
+        call add_jobs(ia, la, presa)
+        call add_jobs(ib, lb, presb)
+        allocate(allm(self%nh,self%box,self%box,size(jscale)))
+        call self%maps(jidx, joff, jscale, eps, .true., .false., allm)
+        !$omp parallel do default(shared) private(mm) schedule(dynamic) proc_bind(close)
+        do mm = 1, size(jscale)
+            call self%dock(allm(:,:,:,mm), cons(:,:,:,merge(2,1,mm <= size(presa))), self%kt, self%khi)
+        end do
+        !$omp end parallel do
+        plist = pack(presa, [(any(presb == presa(g)), g=1,size(presa))])
+        npair = size(plist)
+        allocate(mapa(npair), mapb(npair))
+        do mm = 1, npair
+            mapa(mm) = findloc(presa, plist(mm), dim=1)
+            mapb(mm) = size(presa) + findloc(presb, plist(mm), dim=1)
+        end do
+        allocate(exa(0:kmax), exb(0:kmax), source=0)
+        call extras(presa, 0, 1, exa)
+        call extras(presb, size(presa), 2, exb)
+        groupof = [(p, p=1,npair)]
+        allocate(rmat(npair,npair), source=huge(1.))
+        !$omp parallel do default(shared) private(p,q) schedule(dynamic) collapse(2) proc_bind(close)
+        do p = 1, npair
+            do q = 1, npair
+                if( q > p ) rmat(p,q) = self%pair_stat(allm(:,:,:,mapa(p)), allm(:,:,:,mapa(q)), allm(:,:,:,mapb(p)), &
+                    &allm(:,:,:,mapb(q)), self%kt)
+            end do
+        end do
+        !$omp end parallel do
+        tmin0 = huge(tmin0)
+        do p = 1, npair
+            do q = p + 1, npair
+                tmin0 = min(tmin0, rmat(p,q))
+            end do
+        end do
+        if( npair < 2 ) tmin0 = 0.
+        write(logfhandle,'(A)') '[single pass] equal N '//int2str(ndraw)//'; test band '//int2str(self%kt)//'..'//&
+            &int2str(self%khi)//'; paired '//int2str(npair)//' groups; pair statistics at the start (sorted): '//&
+            &sorted_upper(rmat, npair)
+        allocate(l_alive(npair), source=.true.)
+        allocate(merged(0))
+        ga = [(group_of_label(la(mm)), mm=1,size(la))]
+        gb = [(group_of_label(lb(mm)), mm=1,size(lb))]
+        do
+            best = huge(best)
+            bp   = 0
+            bq   = 0
+            do p = 1, npair
+                if( .not. l_alive(p) ) cycle
+                do q = p+1, npair
+                    if( .not. l_alive(q) ) cycle
+                    if( rmat(p,q) < best )then
+                        best = rmat(p,q)
+                        bp   = p
+                        bq   = q
+                    endif
+                end do
+            end do
+            if( bp == 0 ) exit
+            call self%null_resolve(nl, best, eps, cons, l_merge)
+            if( .not. l_merge ) exit
+            if( self%l_equiv )then
+                if( .not. shown_equal(bp, bq, best) )then
+                    rmat(bp,bq) = huge(best)
+                    cycle
+                endif
+            endif
+            merged = [merged, best]
+            l_alive(bq) = .false.
+            where( groupof == bq ) groupof = bp
+            where( ga == bq ) ga = bp
+            where( gb == bq ) gb = bp
+            ! the merged group's maps, redrawn at the equal N, replace the maps of its first member
+            deallocate(jidx, joff, jscale)
+            allocate(jidx(0), joff(1), jscale(0))
+            joff(1) = 1
+            call add_group(ia, ga, bp)
+            call add_group(ib, gb, bp)
+            allocate(pm(self%nh,self%box,self%box,2))
+            call self%maps(jidx, joff, jscale, eps, .true., .false., pm)
+            call self%dock(pm(:,:,:,1), cons(:,:,:,2), self%kt, self%khi)
+            call self%dock(pm(:,:,:,2), cons(:,:,:,1), self%kt, self%khi)
+            allm(:,:,:,mapa(bp)) = pm(:,:,:,1)
+            allm(:,:,:,mapb(bp)) = pm(:,:,:,2)
+            deallocate(pm)
+            do q = 1, npair
+                if( q == bp .or. .not. l_alive(q) ) cycle
+                rmat(min(bp,q),max(bp,q)) = self%pair_stat(allm(:,:,:,mapa(bp)), allm(:,:,:,mapa(q)), allm(:,:,:,mapb(bp)), &
+                    &allm(:,:,:,mapb(q)), self%kt)
+            end do
+        end do
+        allocate(gof(npair))
+        do mm = 1, npair
+            gof(mm) = count(l_alive(1:groupof(mm)))
+        end do
+        kout = count(l_alive)
+        tmin = huge(tmin)
+        do p = 1, npair
+            if( .not. l_alive(p) ) cycle
+            do q = p + 1, npair
+                if( l_alive(q) ) tmin = min(tmin, rmat(p,q))
+            end do
+        end do
+        if( kout < 2 ) tmin = tmin0
+        call null_thr(nl, mu, sd, thr)
+        write(logfhandle,'(A)') int2str(size(merged))//' merges at '//joinedr(merged)//' -> '//int2str(kout)//' groups'
+        deallocate(allm, rmat, l_alive, groupof, merged, mapa, mapb, jidx, joff, jscale)
+
+    contains
+
+        ! one-sided equivalence at the margin: r_eq = r_hat(stat + 1.645 sd) <= mdelta, sd the null's own
+        logical function shown_equal( p, q, t )
+            integer, intent(in) :: p, q
+            real,    intent(in) :: t
+            real    :: sg, y, req
+            integer :: nn, i, j
+            logical :: lnk
+            lnk = .false.
+            if( allocated(self%cnl) )then
+                do i = 1, npair
+                    if( groupof(i) /= p ) cycle
+                    do j = 1, npair
+                        if( groupof(j) == q ) lnk = lnk .or. self%cnl(plist(i), plist(j))
+                    end do
+                end do
+            endif
+            nn  = min(members(la, p), members(la, q), members(lb, p), members(lb, q))
+            call null_thr(nl, mu, sd, thr)
+            sg  = max(sd, 1.e-3)
+            y   = min(max((t + 1.645 * sg - mu) / (1. - mu), 1.e-4), 0.995)
+            req = 2. * y / ((1. - y) * real(max(nn, 1)))
+            shown_equal = (.not. lnk) .and. req <= self%mdelta
+            write(logfhandle,'(A)') 'equivalence: groups '//int2str(p)//' '//int2str(q)//' stat '//fmtr(real(t,dp),3)//' n '//&
+                &int2str(nn)//' null sd '//fmtr(real(sg,dp),3)//' r_eq '//fmtr(real(req,dp),6)//' margin '//&
+                &fmtr(real(self%mdelta,dp),6)//' -> '//trim(merge('merge             ', merge('keep (cannot-link)', &
+                &'keep (unresolved) ', lnk), shown_equal))
+        end function shown_equal
+
+        integer function members( lab, g )
+            integer, intent(in) :: lab(:), g
+            integer :: i
+            members = 0
+            do i = 1, npair
+                if( groupof(i) == g ) members = members + count(lab == plist(i))
+            end do
+        end function members
+
+        integer function group_of_label( lab )
+            integer, intent(in) :: lab
+            integer :: mm2
+            group_of_label = 0
+            do mm2 = 1, npair
+                if( plist(mm2) == lab ) group_of_label = mm2
+            end do
+        end function group_of_label
+
+        subroutine add_jobs( idx, lab, pres )
+            integer, intent(in) :: idx(:), lab(:), pres(:)
+            integer, allocatable :: sel(:)
+            integer :: gg
+            do gg = 1, size(pres)
+                sel  = pack(idx, lab == pres(gg))
+                nsub = min(size(sel), ndraw)
+                call rnd_subset(sel, nsub)
+                jidx   = [jidx, sel(1:nsub)]
+                joff   = [joff, size(jidx) + 1]
+                jscale = [jscale, real(nsub) / real(neq)]
+            end do
+        end subroutine add_jobs
+
+        subroutine add_group( idx, grp, g )
+            integer, intent(in) :: idx(:), grp(:), g
+            integer, allocatable :: sel(:)
+            sel  = pack(idx, grp == g)
+            nsub = min(size(sel), ndraw)
+            call rnd_subset(sel, nsub)
+            jidx   = [jidx, sel(1:nsub)]
+            joff   = [joff, size(jidx) + 1]
+            jscale = [jscale, real(nsub) / real(neq)]
+        end subroutine add_group
+
+        subroutine extras( pres, off, hh, ex )
+            integer, intent(in)    :: pres(:), off, hh
+            integer, intent(inout) :: ex(0:)
+            real    :: cc, bestc
+            integer :: gg, mmm, ipair
+            do gg = 1, size(pres)
+                if( any(plist == pres(gg)) ) cycle
+                bestc = -huge(bestc)
+                do mmm = 1, npair
+                    ipair = findloc(pres, plist(mmm), dim=1)
+                    cc = self%shell_corr(allm(:,:,:,off+gg) - cons(:,:,:,hh), allm(:,:,:,off+ipair) - cons(:,:,:,hh), &
+                        &2, self%klo - 2)
+                    if( cc > bestc )then
+                        bestc = cc
+                        ex(pres(gg)) = plist(mmm)
+                    endif
+                end do
+            end do
+        end subroutine extras
+
+    end subroutine decide_once
+
+    ! the quality-split flag (reporting only): each delivered group's mean of three per-particle quality terms, the contrast
+    ! and zero-contrast posterior of fit_contrast, the log noise variance the planes were whitened with and the stage-B
+    ! correlation, each as a standardised offset d from the node mean (unit: the pooled within-group sd); |d| >= 1 flags
+    subroutine quality_flag( self, child, kstar, lines, l_flag )
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: child(:), kstar
+        type(string), allocatable, intent(out) :: lines(:)
+        logical,              intent(out)   :: l_flag
+        real, allocatable :: x(:,:), mp(:)
+        real    :: mc(3), sw(3), mall(3), d(3)
+        integer :: g, n, i, k
+        character(len=:), allocatable :: ln
+        l_flag = .false.
+        allocate(lines(0))
+        if( .not. allocated(self%cam) ) call self%fit_contrast
+        if( kstar < 2 ) return
+        allocate(x(self%n,3))
+        x(:,1) = self%cam
+        x(:,2) = log(max(self%nv, 1.e-12))
+        x(:,3) = self%qv
+        sw = 0.
+        n  = 0
+        do g = 1, kstar
+            if( count(child == g) == 0 ) cycle
+            do k = 1, 3
+                mc(k) = sum(x(:,k), child == g) / real(count(child == g))
+                sw(k) = sw(k) + sum((x(:,k) - mc(k))**2, child == g)
+            end do
+            n = n + count(child == g)
+        end do
+        sw   = sqrt(sw / real(max(n - kstar, 1)))
+        mall = [(sum(x(:,k), child > 0) / real(max(count(child > 0), 1)), k=1,3)]
+        allocate(mp(kstar), source=0.)
+        do g = 1, kstar
+            if( count(child == g) == 0 ) cycle
+            do k = 1, 3
+                mc(k) = sum(x(:,k), child == g) / real(count(child == g))
+                d(k)  = (mc(k) - mall(k)) / max(sw(k), 1.e-12)
+            end do
+            mp(g)  = sum(self%cpj, child == g) / real(count(child == g))
+            l_flag = l_flag .or. any(abs(d) >= 1.)
+            ln = 'group '//int2str(g)//' n '//int2str(count(child == g))//' contrast '//fmtr(real(mc(1),dp),4)//' d '//&
+                &fmtr(real(d(1),dp),3)//' | log noise var '//fmtr(real(mc(2),dp),4)//' d '//fmtr(real(d(2),dp),3)//&
+                &' | stage-B corr '//fmtr(real(mc(3),dp),4)//' d '//fmtr(real(d(3),dp),3)//' | p_empty '//fmtr(real(mp(g),dp),4)
+            lines = [lines, string(ln)]
+        end do
+        lines = [lines, string('quality split flag '//trim(merge('yes', 'no ', l_flag))//' (within-group sd: contrast '//&
+            &fmtr(real(sw(1),dp),4)//', log noise var '//fmtr(real(sw(2),dp),4)//', corr '//fmtr(real(sw(3),dp),4)//&
+            &'; |d| >= 1 on any term flags)')]
+        do i = 1, size(lines)
+            write(logfhandle,'(A)') 'quality: '//lines(i)%to_char()
+        end do
+    end subroutine quality_flag
+
     subroutine consensus( self, ia, ib, la, lb, k0, neq, eps, cons )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), k0
@@ -1376,7 +1927,7 @@ contains
             nb     = s2 - s1 + 1
             nj     = 2 * ng * nb
             joff   = [(1 + j*nl%neq, j=0,nj)]
-            jscale = [(1., j=1,nj)]
+            jscale = [(nl%jsc, j=1,nj)]
             allocate(nm(self%nh,self%box,self%box,nj))
             call self%maps(nl%sjidx((s1-1)*2*ng*nl%neq+1:s2*2*ng*nl%neq), joff, jscale, eps, .true., .false., nm)
             !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
@@ -3891,30 +4442,39 @@ contains
         blom_emax = real(0.5_dp * (lo + hi))
     end function blom_emax
 
-    ! the equivalence merge-up's inputs from a tree's own tables: every node whose split log shows K* >= 2 after the cross-half
-    ! EM re-test gives an effect r_hat (the margin is the smallest); its stage-B leaves <node>_s1 / _s2 (and swing poles
-    ! <node>_pA / _pB) are pairs shown distinct. Leaf indices follow hetero_tree_leaves.txt, as the tree's labels do
-    subroutine equiv_tree_inputs( tdir, delta, dpairs, nrs )
+    ! the equivalence merge-up's inputs from a tree's own tables: every node whose split wrote K* >= 2 to split/split_stats.txt
+    ! gives the effect r_hat of its weakest kept pair (the margin is the smallest); its stage-B leaves <node>_s1 / _s2 are
+    ! pairs shown distinct; ntests = the largest split test count the nodes used. Leaf indices follow hetero_tree_leaves.txt
+    subroutine equiv_tree_inputs( tdir, delta, dpairs, nrs, ntests )
         character(len=*),     intent(in)  :: tdir
         real,                 intent(out) :: delta
         integer, allocatable, intent(out) :: dpairs(:,:)
-        integer,              intent(out) :: nrs
+        integer,              intent(out) :: nrs, ntests
         character(len=256), allocatable :: lnames(:), nids(:)
-        character(len=:),   allocatable :: logf
-        integer :: i, a, b, k, kst
-        real    :: r
-        logical :: l_ok, l_ex
+        character(len=:),   allocatable :: statf
+        integer :: i, a, b, k, kst, nt
+        real    :: r, st(6)
+        logical :: l_ex, l_ok
         allocate(dpairs(2,0))
-        delta = 0.
-        nrs   = 0
+        delta  = 0.
+        nrs    = 0
+        ntests = 1
         call first_tokens(tdir//'/hetero_tree_leaves.txt', lnames)
         call first_tokens(tdir//'/hetero_tree_nodes.txt', nids)
         do i = 1, size(nids)
-            logf = tdir//'/node_'//trim(nids(i))//'/split/hetero_step.log'
-            inquire(file=logf, exist=l_ex)
+            statf = tdir//'/node_'//trim(nids(i))//'/split/split_stats.txt'
+            inquire(file=statf, exist=l_ex)
             if( .not. l_ex ) cycle
-            call node_effect(logf, kst, r, l_ok)
-            if( .not. l_ok ) cycle
+            call read_split_stats(statf, st, kst, nt)
+            ntests = max(ntests, nt)
+            if( st(4) <= 0. )then
+                ! the production test wrote no numbers: its step log is parsed as before
+                call node_effect(tdir//'/node_'//trim(nids(i))//'/split/hetero_step.log', kst, r, l_ok)
+                if( .not. l_ok ) cycle
+            else
+                if( kst < 2 ) cycle
+                r = split_effect(st(1), st(3), nint(st(6)))
+            endif
             nrs = nrs + 1
             if( nrs == 1 )then
                 delta = r
@@ -3925,17 +4485,76 @@ contains
             b = name_index(lnames, trim(nids(i))//'_s2')
             if( a > 0 .and. b > 0 ) dpairs = reshape([dpairs, a, b], [2, size(dpairs,2) + 1])
         end do
-        do i = 1, size(lnames)
-            k = len_trim(lnames(i))
-            if( k <= 3 ) cycle
-            if( lnames(i)(k-2:k) /= '_pA' ) cycle
-            b = name_index(lnames, lnames(i)(1:k-3)//'_pB')
-            if( b > 0 ) dpairs = reshape([dpairs, i, b], [2, size(dpairs,2) + 1])
-        end do
     end subroutine equiv_tree_inputs
 
-    ! a node split's re-test from its step log: T (first pair statistic of the cross-half EM groups), their equal N, the
-    ! re-test null's mean (median when the log has no mean) and K*; r_hat = 2 y / ((1 - y) n), y = (T - m) / (1 - m)
+    ! a split's effect per particle from its weakest kept pair statistic t at equal N n against the null mean m:
+    ! y = (t - m) / (1 - m), r_hat = 2 y / ((1 - y) n)
+    real function split_effect( t, m, n )
+        real,    intent(in) :: t, m
+        integer, intent(in) :: n
+        real :: y
+        y = min(max((t - m) / max(1. - m, 1.e-6), 1.e-4), 0.995)
+        split_effect = 2. * y / ((1. - y) * real(max(n, 1)))
+    end function split_effect
+
+    ! split/split_stats.txt: one line of numbers written by state_split (weakest kept pair, weakest pair at the start, null mean,
+    ! null sd, z_crit, equal N, K*, split tests)
+    subroutine write_split_stats( fname, st, kst, ntests, kpre )
+        character(len=*),  intent(in) :: fname
+        real,              intent(in) :: st(6)
+        integer,           intent(in) :: kst, ntests
+        integer, optional, intent(in) :: kpre
+        integer :: fu, io
+        call fopen(fu, string(fname), status='replace', action='write', iostat=io)
+        call fileiochk('state_split: cannot write '//fname, io)
+        write(fu,'(A)') '# weakest kept pair statistic, weakest pair at the start, null mean, null sd, z_crit, equal N, K* (after the '//&
+            &'guard), split tests, K* before the guard (zeros in the first six: the production test ran, see the log)'
+        if( present(kpre) )then
+            write(fu,'(5(ES14.6,1X),I0,1X,I0,1X,I0,1X,I0)') st(1:5), nint(st(6)), kst, ntests, kpre
+        else
+            write(fu,'(5(ES14.6,1X),I0,1X,I0,1X,I0)') st(1:5), nint(st(6)), kst, ntests
+        endif
+        call fclose(fu)
+    end subroutine write_split_stats
+
+    ! per-particle quality terms for the node's reconstructions (the controller applies them): project row, 1 - p_empty, contrast
+    subroutine write_weights( self, fname )
+        class(state_mergeup), intent(inout) :: self
+        character(len=*),     intent(in)    :: fname
+        integer :: fu, io, i
+        if( .not. allocated(self%cpj) ) call self%fit_contrast
+        call fopen(fu, string(fname), status='replace', action='write', iostat=io)
+        call fileiochk('state_split: cannot write '//fname, io)
+        write(fu,'(A)') '# project row, 1 - zero-contrast posterior, posterior-mean contrast, log noise variance, stage-B corr'
+        do i = 1, self%n
+            write(fu,'(I0,1X,F8.5,1X,ES12.5,1X,F9.4,1X,F8.5)') self%rows(i), 1. - self%cpj(i), max(self%con(i), 1.e-6), &
+                &log(max(self%nv(i), 1.e-12)), self%qv(i)
+        end do
+        call fclose(fu)
+    end subroutine write_weights
+
+    subroutine read_split_stats( fname, st, kst, ntests )
+        character(len=*), intent(in)  :: fname
+        real,             intent(out) :: st(6)
+        integer,          intent(out) :: kst, ntests
+        character(len=1024) :: ln
+        integer :: fu, io, n6
+        st     = 0.
+        kst    = 0
+        ntests = 1
+        call fopen(fu, string(fname), status='old', action='read', iostat=io)
+        if( io /= 0 ) return
+        do
+            read(fu,'(A)',iostat=io) ln
+            if( io /= 0 ) exit
+            if( len_trim(ln) == 0 .or. ln(1:1) == '#' ) cycle
+            read(ln,*,iostat=io) st(1:5), n6, kst, ntests
+            if( io == 0 ) st(6) = real(n6)
+            exit
+        end do
+        call fclose(fu)
+    end subroutine read_split_stats
+
     subroutine node_effect( fname, kst, rh, l_ok )
         character(len=*), intent(in)  :: fname
         integer,          intent(out) :: kst

@@ -2144,7 +2144,7 @@ contains
     end subroutine exec_state_mergeup
 
     subroutine exec_state_split( self, cline )
-        use simple_state_mergeup, only: state_mergeup, EM_LIM, locality_guard
+        use simple_state_mergeup, only: state_mergeup, EM_LIM, locality_guard, write_split_stats
         use simple_eo_partition,  only: ensure_field_halves
         class(commander_state_split), intent(inout) :: self
         class(cmdline),               intent(inout) :: cline
@@ -2153,8 +2153,10 @@ contains
         type(sp_project)     :: spproj
         type(state_mergeup)  :: split
         integer, allocatable :: labels(:), rows(:), child(:), junk(:), out(:)
-        real    :: smpd
-        integer :: box, i, kstar, funit, ios
+        type(string), allocatable :: qlines(:)
+        real    :: smpd, st(6)
+        integer :: box, i, kstar, kpre, funit, ios
+        logical :: l_q
         character(len=8) :: envv
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
@@ -2186,7 +2188,28 @@ contains
         endif
         rows = split%get_rows()
         call split%test(labels(rows), maxval(labels), child, kstar, junk, ntests=params%split_ntests)
+        ! the quality flag describes the split the test proposed, before the guard; it gates nothing
+        call split%quality_flag(child, kstar, qlines, l_q)
+        kpre = kstar
+        allocate(out(size(labels)), source=0)
+        out(rows) = child
+        call fopen(funit, string('split_children_pre.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('state_split: cannot write split_children_pre.txt', ios)
+        do i = 1, size(out)
+            write(funit,'(I0)') out(i)
+        end do
+        call fclose(funit)
+        deallocate(out)
         call locality_guard(labels(rows), child, kstar, params%mskdiam, split)
+        st = 0.
+        call write_split_stats('split_stats.txt', st, kstar, params%split_ntests, kpre)
+        call split%write_weights('ptcl_weights.txt')
+        call fopen(funit, string('split_stats.txt'), status='old', action='write', position='append', iostat=ios)
+        call fileiochk('state_split: cannot append to split_stats.txt', ios)
+        do i = 1, size(qlines)
+            write(funit,'(A)') '# '//qlines(i)%to_char()
+        end do
+        call fclose(funit)
         allocate(out(size(labels)), source=0)
         out(rows) = child
         call fopen(funit, string('split_children.txt'), status='replace', action='write', iostat=ios)
