@@ -4550,7 +4550,7 @@ contains
         character(len=:),   allocatable :: statf
         integer :: i, a, b, k, kst, nt
         real    :: r, st(6)
-        logical :: l_ex, l_ok
+        logical :: l_ex
         allocate(dpairs(2,0))
         delta  = 0.
         nrs    = 0
@@ -4563,14 +4563,8 @@ contains
             if( .not. l_ex ) cycle
             call read_split_stats(statf, st, kst, nt)
             ntests = max(ntests, nt)
-            if( st(4) <= 0. )then
-                ! the production test wrote no numbers: its step log is parsed as before
-                call node_effect(tdir//'/node_'//trim(nids(i))//'/split/hetero_step.log', kst, r, l_ok)
-                if( .not. l_ok ) cycle
-            else
-                if( kst < 2 ) cycle
-                r = split_effect(st(1), st(3), nint(st(6)))
-            endif
+            if( st(4) <= 0. .or. kst < 2 ) cycle
+            r = split_effect(st(1), st(3), nint(st(6)))
             nrs = nrs + 1
             if( nrs == 1 )then
                 delta = r
@@ -4604,7 +4598,7 @@ contains
         call fopen(fu, string(fname), status='replace', action='write', iostat=io)
         call fileiochk('state_split: cannot write '//fname, io)
         write(fu,'(A)') '# weakest kept pair statistic, weakest pair at the start, null mean, null sd, z_crit, equal N, K* (after the '//&
-            &'guard), split tests, K* before the guard (zeros in the first six: the production test ran, see the log)'
+            &'guard and the floor), split tests, K* before them'
         if( present(kpre) )then
             write(fu,'(5(ES14.6,1X),I0,1X,I0,1X,I0,1X,I0)') st(1:5), nint(st(6)), kst, ntests, kpre
         else
@@ -4650,69 +4644,6 @@ contains
         end do
         call fclose(fu)
     end subroutine read_split_stats
-
-    subroutine node_effect( fname, kst, rh, l_ok )
-        character(len=*), intent(in)  :: fname
-        integer,          intent(out) :: kst
-        real,             intent(out) :: rh
-        logical,          intent(out) :: l_ok
-        character(len=8192) :: line
-        character(len=*), parameter :: SEM = '[cross-half EM groups] equal N ', SBO = '[board groups] equal N ', &
-            &SPS = 'pair statistics at the start (sorted):', SNU = 'beyond-EM band ', SKS = 'K* = '
-        integer :: funit, ios, p, n, stage
-        real    :: t, mmed, mmean, y, m
-        logical :: l_t, l_med, l_mean, l_em
-        kst = 0
-        rh  = 0.
-        n   = 0
-        stage  = 0
-        l_t    = .false.
-        l_med  = .false.
-        l_mean = .false.
-        l_em   = .false.
-        l_ok   = .false.
-        open(newunit=funit, file=fname, status='old', action='read', iostat=ios)
-        if( ios /= 0 ) return
-        do
-            read(funit,'(A)',iostat=ios) line
-            if( ios /= 0 ) exit
-            if( index(line, SBO) == 1 )then
-                stage = 1
-            else if( index(line, SEM) == 1 )then
-                stage = 2
-                l_em  = .true.
-                l_t   = .false.
-                p = index(line(len(SEM)+1:), ';')
-                if( p > 1 ) read(line(len(SEM)+1:len(SEM)+p-1),*,iostat=ios) n
-            else if( index(line, SPS) == 1 )then
-                if( stage == 2 .and. len_trim(line) > len(SPS) )then
-                    read(line(len(SPS)+1:),*,iostat=ios) t
-                    l_t = ios == 0
-                endif
-            else if( index(line, SNU) == 1 )then
-                p = index(line, 'shuffle null median ')
-                if( p > 0 )then
-                    read(line(p+20:),*,iostat=ios) mmed
-                    if( ios == 0 ) l_med = .true.
-                endif
-                p = index(line, 'mean / sd ')
-                if( p > 0 .and. index(line, '-> threshold') > p )then
-                    read(line(p+10:),*,iostat=ios) mmean
-                    if( ios == 0 ) l_mean = .true.
-                endif
-            else if( index(line, SKS) == 1 )then
-                p = index(line, ';')
-                if( p > len(SKS) + 1 ) read(line(len(SKS)+1:p-1),*,iostat=ios) kst
-            endif
-        end do
-        close(funit)
-        l_ok = l_em .and. l_t .and. kst >= 2 .and. (l_med .or. l_mean) .and. n > 0
-        if( .not. l_ok ) return
-        m  = mmed
-        if( l_mean ) m = mmean
-        y  = min(max((t - m) / (1. - m), 1.e-4), 0.995)
-        rh = 2. * y / ((1. - y) * real(n))
-    end subroutine node_effect
 
     subroutine first_tokens( fname, toks )
         character(len=*),                intent(in)  :: fname
