@@ -31,8 +31,8 @@ private
 #include "simple_local_flags.inc"
 
 integer,  parameter :: KMAX = 8, NCHILD = 10, PERBIN = 1300, NBIN_MIN = 20, NKM_ITS = 40, POLL_SECS = 5, RND_SEED = 0
-integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000, DFACT_ITS = 20
-real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDICE = 0.9, DMAXMOL = 0.3, DMATE = 0.99
+integer,  parameter :: DMINVOX = 200, DSEEDMIN = 1000
+real,     parameter :: DMINSHARE = 0.05, DFACT_SHARE = 0.2, DFACT_Z = 3., DDICE = 0.9, DMAXMOL = 0.3, DMATE = 0.99
 integer,  parameter :: ITA0 = 1, ITA = 3, ITB = 3, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
 integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32, SBATCH_PTCLS = 200000, PTCLS_PER_THR = 5000
 ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
@@ -3776,14 +3776,14 @@ contains
         type(dcand), allocatable :: cands(:), tmp(:)
         type(dreg),  allocatable :: regs(:), rtmp(:)
         type(image)              :: img
-        real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pn(:,:), cc(:,:), vv(:)
-        logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:), cm(:,:,:), b(:,:,:), okk(:)
-        integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:), psz(:)
-        real(dp), allocatable :: wn(:)
+        real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pe(:,:), po(:,:), um(:,:), ue(:), uo(:), key(:), shv(:)
+        logical,  allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:), cm(:,:,:), b(:,:,:), okk(:), keep(:)
+        integer,  allocatable :: lab(:,:,:), lb(:,:,:), asg(:), vidx(:,:), ord(:), rep(:), memb(:), psz(:), ordf(:)
+        real(dp), allocatable :: wn(:), g(:,:), u(:,:), lam(:)
         real,     allocatable :: rots(:,:,:)
-        character(len=:), allocatable :: mlist
-        real    :: smpd, tot, cosv, sh(2), cut2, dm
-        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios, ir, nc0, np2, nsup
+        character(len=:), allocatable :: mlist, fline
+        real    :: smpd, tot, cut2, dm, neff, rr, zz
+        integer :: n, nk, nl, ic, nv, iv, it, j, i, k, x, y, z, nb, funit, ios, ir, nc0, np2, nsup, f, nrot
         logical :: l_sib, l_fac
         wn  = counts / sum(counts)
         nk  = size(evens)
@@ -3809,7 +3809,7 @@ contains
             l_fac = .false.
             if( count(cm) >= 2 * DMINVOX )then
                 nv = count(cm)
-                allocate(pn(nv,nk), vidx(3,nv), vv(nv))
+                allocate(pe(nv,nk), po(nv,nk), vidx(3,nv))
                 iv = 0
                 do z = 1, n
                     do y = 1, n
@@ -3817,28 +3817,50 @@ contains
                             if( .not. cm(x,y,z) ) cycle
                             iv = iv + 1
                             vidx(:,iv) = [x, y, z]
-                            vv(iv)     = vs(x,y,z)
-                            pn(iv,:)   = real(sqrt(wn)) * 0.5 * (de(x,y,z,:) + dv(x,y,z,:))
-                            pn(iv,:)   = pn(iv,:) / max(sqrt(sum(pn(iv,:)**2)), 1.e-30)
+                            pe(iv,:)   = real(sqrt(wn)) * de(x,y,z,:)
+                            po(iv,:)   = real(sqrt(wn)) * dv(x,y,z,:)
                         end do
                     end do
                 end do
-                cc = top_dirs(pn, 2)
-                do it = 1, DFACT_ITS
-                    asg = merge(1, 2, abs(matmul(pn, cc(1,:))) >= abs(matmul(pn, cc(2,:))))
-                    do j = 1, 2
-                        if( count(asg == j) > 2 ) cc(j:j,:) = top_dirs(pn(pack([(iv, iv=1,nv)], asg == j),:), 1)
-                    end do
+                ! weighted SVD of the even half's voxel-by-state deviations through their K x K Gram matrix; a factor is kept when the
+                ! odd half projected on its state direction reproduces its map (Fisher z over the 15 A voxel count) and it holds DFACT_SHARE
+                allocate(g(nk,nk), u(nk,nk), lam(nk), key(nk), ordf(nk), shv(nk), keep(nk), um(nv,nk))
+                g = matmul(transpose(real(pe,dp)), real(pe,dp))
+                call jacobi(g, nk, nk, lam, u, nrot)
+                lam  = max(lam, 0._dp)
+                key  = real(-lam)
+                ordf = [(f, f=1,nk)]
+                call hpsort(key, ordf)
+                neff  = real(nv) * 4. / 3. * real(PI) * (smpd / MLP)**3 / 2.
+                keep  = .false.
+                fline = ''
+                do j = 1, nk
+                    f       = ordf(j)
+                    shv(f)  = real(lam(f) / max(sum(lam), 1.e-300_dp))
+                    ue      = matmul(pe, real(u(:,f)))
+                    uo      = matmul(po, real(u(:,f)))
+                    um(:,f) = 0.5 * (ue + uo)
+                    rr      = pearson(ue, uo)
+                    zz      = atanh(min(max(rr, -0.999999), 0.999999)) * sqrt(max(neff - 3., 1.))
+                    keep(f) = zz >= DFACT_Z .and. shv(f) >= DFACT_SHARE
+                    if( j <= 4 ) fline = fline//' '//rfmt(shv(f))//'/'//rfmt(rr)
                 end do
-                cosv = abs(dot_product(cc(1,:), cc(2,:)))
-                sh   = [(sum(vv, mask=asg == j) / sum(vv), j=1,2)]
-                if( cosv < DFACT_COS .and. minval(sh) >= DFACT_SHARE .and. min(count(asg == 1), count(asg == 2)) >= DMINVOX )then
-                    write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2)') '>>> SITE_DISCOVER component ', ic, &
-                        &' splits into two factors: |cos| of their state profiles ', cosv, ', variance shares ', sh(1), ' / ', sh(2)
-                    do j = 1, 2
+                write(logfhandle,'(A,I0,A,I0,A,F6.1,A,I0,A)') '>>> SITE_DISCOVER component ', ic, ': ', count(keep), &
+                    &' factor(s) kept of its SVD (share / cross-half r per factor:'//fline//'; n_eff', neff, ', kept at z >= '//&
+                    &int2str(nint(DFACT_Z))//' and share >= '//rfmt(DFACT_SHARE)//'), ', nv, ' voxels'
+                if( count(keep) >= 2 )then
+                    allocate(asg(nv), source=0)
+                    do iv = 1, nv
+                        asg(iv) = maxloc(merge(abs(um(iv,:)), -1., keep), dim=1)
+                    end do
+                    j = 0
+                    do it = 1, nk
+                        f = ordf(it)
+                        if( .not. keep(f) ) cycle
+                        j = j + 1
                         allocate(b(n,n,n), source=.false.)
                         do iv = 1, nv
-                            if( asg(iv) == j ) b(vidx(1,iv),vidx(2,iv),vidx(3,iv)) = .true.
+                            if( asg(iv) == f ) b(vidx(1,iv),vidx(2,iv),vidx(3,iv)) = .true.
                         end do
                         call label6(b, lb, nb)
                         psz = piece_sizes(lb, nb)
@@ -3849,15 +3871,13 @@ contains
                                 end do
                             end do
                         end do
-                        call add(b, ic, j, cc(j,:) / real(sqrt(wn)))
+                        if( any(b) ) call add(b, ic, j, real(u(:,f)) / real(sqrt(wn)))
                         deallocate(b)
                     end do
-                    l_fac = .true.
-                else
-                    write(logfhandle,'(A,I0,A,F5.2,A,F5.2,A,F5.2,A)') '>>> SITE_DISCOVER component ', ic, ' is one factor (|cos| ', &
-                        &cosv, ', shares ', sh(1), ' / ', sh(2), ')'
+                    l_fac = size(cands) > nc0
+                    deallocate(asg)
                 endif
-                deallocate(pn, vidx, vv)
+                deallocate(pe, po, vidx, g, u, lam, key, ordf, shv, keep, um)
             endif
             if( .not. l_fac ) call add(cm, ic, 0)
             if( all([(cands(k)%mol <= DMAXMOL, k=nc0+1,size(cands))]) ) cycle
@@ -4105,6 +4125,23 @@ contains
                 &' % of the molecule, centre ', cands(nc)%rad, ' A, repro ', cands(nc)%r, ', seed state ', cands(nc)%seed
         end subroutine add
 
+        real function pearson( a, bb )
+            real, intent(in) :: a(:), bb(:)
+            real(dp) :: ma, mb
+            ma = sum(real(a,dp)) / real(size(a),dp)
+            mb = sum(real(bb,dp)) / real(size(bb),dp)
+            pearson = real(sum((real(a,dp) - ma) * (real(bb,dp) - mb)) / max(sqrt(sum((real(a,dp) - ma)**2) * &
+                &sum((real(bb,dp) - mb)**2)), 1.e-300_dp))
+        end function pearson
+
+        function rfmt( x ) result( t )
+            real, intent(in) :: x
+            character(len=:), allocatable :: t
+            character(len=8) :: buf
+            write(buf,'(F5.2)') x
+            t = trim(adjustl(buf))
+        end function rfmt
+
         function ctag( i ) result( t )
             integer, intent(in) :: i
             character(len=:), allocatable :: t
@@ -4136,24 +4173,6 @@ contains
         end function dice
 
     end subroutine discover_sites
-
-    function top_dirs( p, m ) result( c )
-        real,    intent(in) :: p(:,:)
-        integer, intent(in) :: m
-        real, allocatable :: c(:,:)
-        real(dp) :: g(size(p,2),size(p,2)), u(size(p,2),size(p,2)), lam(size(p,2))
-        integer  :: nrot, j, ord(size(p,2))
-        real     :: key(size(p,2))
-        g   = matmul(transpose(real(p,dp)), real(p,dp))
-        call jacobi(g, size(p,2), size(p,2), lam, u, nrot)
-        key = real(-lam)
-        ord = [(j, j=1,size(p,2))]
-        call hpsort(key, ord)
-        allocate(c(m,size(p,2)))
-        do j = 1, m
-            c(j,:) = real(u(:,ord(j)))
-        end do
-    end function top_dirs
 
     subroutine label6( mk, lab, nl )
         logical,              intent(in)  :: mk(:,:,:)
