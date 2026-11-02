@@ -300,6 +300,9 @@ this node, in either test, is set by the draw, the "variance of one seeded rando
 mismatch it also lists moves the threshold by nothing here. The remedy is to average the pair statistic (and the null's)
 over several equal-N draws, which neither test does yet.
 
+At seed 1 (variant C's sites, `build_r2f`) the one-N single pass refuses r2 as well, the node whose stage-B state is
+the corner (0.97 / 0.51), so it delivers the corner at neither seed where the production test delivers it at both.
+
 **Rework 2 verdict: no-go as a default.** The single pass is implemented (one EM from the stage-B labels, maps built once,
 one N for pairs and null, one z_crit, numeric `split_stats.txt` read by the merge-up, the choose routing retained, the
 quality-split flag) and passes the nulls, but it loses the r131 corner at seed 2 on a node the old test passes by one
@@ -399,3 +402,25 @@ margin flipped between seeds) is evidence enough.
 With the one-N single pass on top of D (`build_r2g`): nulls one leaf each, qtoy2 9 leaves at NMI 0.742 (combo 28 split
 again, 0.94 -> 0.69), r131 r1 refused at seed 2 (corner lost): the same verdicts as on variant C's upstream, so rework
 2's no-go does not depend on which site test feeds it.
+
+## 7. Summary (2026-11-02)
+
+| rework | state | verdict |
+|---|---|---|
+| 1. subspace site test (6.3) | committed 6b4697c38 (variant D) | **go**: nulls one leaf each, qtoy2 NMI 0.764 against 0.712, r131 corner at both seeds as the baseline, OLE within the null; site_rank 2.2-3.3x faster per site |
+| 2. single-pass split test (6.7) | committed ee764dda6, not the default | **no-go as default**: nulls pass, qtoy2 within-combo splits move, r131 corner lost at both seeds (two upstreams at seed 2); the verdict is set by the one equal-N subsample draw, so average the pair statistic over draws and re-gate |
+| 3. null-calibrated mask core (6.1) | prototype only | **no-go**: between-state variance is above the half-map noise on 34-100 % of the sphere on every root, null included; the 0.2-of-peak rule stays |
+| 4. cross-validated SVD factors (6.2) | prototype only | **partial**: the weighted SVD should replace the 2-means, but reproducibility alone over-counts factors; one share threshold stays |
+| 5. map-space same-variable test, scored climbs (6.4 / 6.5) | prototype / design | **partial / design**: agrees with the posterior Spearman on 6 pairs (one fold case), needs an angle threshold; climbs as one scoring pass are available through site_em but untested |
+| item 7 (one ranking quantity) | in 6b4697c38 | the weakest endpoint's hold-out z, the quantity that accepts an endpoint, ranks every pole and site; r131 order and corner per arm in 6.1 |
+| item 13 (quality as a nuisance) | in ee764dda6 | weights: in the site EM already (con); per-particle weights written for the node reconstructions; flag: numbers in split_stats.txt, gating nothing; it stays off on the one-conformer null because that split is not a quality split (truth d 0.03) |
+
+Cost of the replay campaign (sacct, 2026-11-01 18:00 to 2026-11-02 00:30): about 1350 core-h over 13 arms, of which
+the baseline 178, the rework 1 arms (sub, sub2, sub3, sub4) 430, the rework 2 arms (r2, r2c, r2d, r2e, r2f, r2g) 590,
+site and split replays, prototypes and builds 150. The routing-less rework 2 arm (128 core-h) ran because a cancel
+was refused by the session's permission layer.
+
+Not done: the p_empty weight in the node reconstructions needs the controller to read `split/ptcl_weights.txt` (the
+controller is another session's tonight); the averaged pair statistic for the split test; the SVD factor masks against
+the 2-means masks; the map-angle test on a deliverable OLE tree; the deletion of the old `test` / `decide` /
+`eqn_stats` / `node_effect` path, which waits for the rebase onto the cleanup branch.
