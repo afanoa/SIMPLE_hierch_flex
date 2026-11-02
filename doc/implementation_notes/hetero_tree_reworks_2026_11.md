@@ -391,7 +391,7 @@ needed to see it fire. The memory note that called the qtoynull root split a qua
 | qtoy2 md1, seed 1 | 7 leaves, NMI 0.712 | 8 leaves, NMI 0.764; best-leaf F1 better on 7 of 8 combos (22: 0.54 -> 0.72, 43: 0.32 -> 0.85, 101: 0.71 -> 0.94), equal on one |
 | r131 md1, seed 2 | site 1 > site 3; corner r1_s2 0.99 / 0.51 | site 1 (5.73) > site 3 (4.13); the baseline's tree to the particle, corner r1_s2 0.99 / 0.51 |
 | r131 md1, seed 1 | site 3 > site 1; corner r2_s1 0.97 / 0.54 | site 1 (5.13) > site 3 (3.78); corner r2_s1 0.97 / 0.51 |
-| OLE md1 | 10 leaves | variant A: 8 leaves, landscapes as close as the null; variant D's tree in 6.4 |
+| OLE md1 | 10 leaves | 8 leaves (identical for variants A, C, D), landscapes as close as the null (6.4) |
 | site_rank cost | 28 EM fits per site; 49-382 s | 4 EM fits + 1-3 scoring passes; 20-119 s (2.2-3.3x less) |
 
 **Rework 1 verdict: go**, as variant D (the subspace test, the endpoint hold-out z as the pole strength, refine3D's floor
@@ -434,10 +434,12 @@ the 2-means masks; the map-angle test on a deliverable OLE tree; the deletion of
 | variant C | 8 | 4-way (identical to A) | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
 | variant C + one-N single pass | 8 | 4-way (identical to A) | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
 
-The three rework arms give the same OLE tree to the particle, and all three differ from the baseline by no more than the
+| variant D (committed rework 1) | 8 | 4-way (identical to A) | 0.002 / 0.001, 0.003, 0.20 / 0.68 | 0.002 |
+
+The four rework arms give the same OLE tree to the particle, and all differ from the baseline by no more than the
 baseline differs from its own shuffled null, so the OLE span is retained. At maxdepth 1 the leaf means barely spread
 along the leading flex axes (ends at 0.48-0.56 of the span), so this gate has little power here; a deliverable OLE tree
-at maxdepth 4 is where span differences would show. Variant D's OLE tree is appended when it finishes.
+at maxdepth 4 is where span differences would show.
 
 ## 8. The draw-free pair statistic (overnight item, 2026-11-02)
 
