@@ -2249,7 +2249,7 @@ contains
         real(dp),allocatable :: gee(:,:), goo(:,:), geo(:,:)
         integer, allocatable :: rows(:), ord(:), top(:), eo(:), ordh(:), sel(:), dirs(:), grp(:), seeds(:), nsx(:)
         integer, allocatable :: fidx(:), ntopx(:), epmx(:)
-        logical, allocatable :: seed(:), fit(:), starts(:,:)
+        logical, allocatable :: seed(:), fit(:), starts(:,:), took(:)
         complex, allocatable :: devs(:,:,:,:), dfull(:,:,:,:,:)
         character(len=:), allocatable :: tag, members
         character(len=2048) :: line
@@ -2367,7 +2367,9 @@ contains
         neff = mask_neff(params%pcg_mskfile, params%smpd, params%box_crop, params%smpd_crop, params%msk_crop, band(1), band(2))
         if( l_halves )then
             call site%dev_gram(dfull, gee, goo, geo)
-            call merge_poles_subspace(gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred)
+            ! a class that grew past half the node has found no minority state: it is no pole and claims no seeds
+            took = cls2 > 0.5
+            call merge_poles_subspace(gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred, l_ok=.not. took)
             call write_subspace
             if( maxval([0, seeds]) > maxval([0, grp]) ) call test_rest
             call fclose(funit)
@@ -2376,6 +2378,13 @@ contains
         do i = 1, size(names)
             if( grp(i) /= 0 ) cycle
             if( l_halves )then
+                if( i <= ne )then
+                    if( took(i) )then
+                        write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' rejected: its site class grew '//&
+                            &'past half the node (share '//fstr(cls2(i))//'), no minority state'
+                        cycle
+                    endif
+                endif
                 if( zself(i) < HALVES_KSIG )then
                     write(logfhandle,'(A)') '>>> SITE_RANK endpoint '//names(i)%to_char()//' rejected: its cross-half deviation '//&
                         &'does not reproduce (z '//fstr(zself(i))//' below '//fstr(HALVES_KSIG)//')'
@@ -2478,10 +2487,11 @@ contains
             end do
             write(funit,'(A)') '# accept tests: endpoint, row = its cross-half correlation, Fisher SE and z (accepted at '//&
                 &int2str(nint(HALVES_KSIG))//'); column = the smallest residual z against a positively correlated other pole '//&
-                &'(twice, SE 1; its own z when there is none), accepted (reproducible and not in the span of the other poles)'
+                &'(twice, SE 1; its own z when there is none), accepted (reproducible, not in the span of the other poles and '//&
+                &'its site class under half the node)'
             do a = 1, ne
                 call accept_lines(names(a)%to_char(), gram_corr(gee, goo, geo, a, a), zself(a), zdist(a), &
-                    &zself(a) >= HALVES_KSIG .and. zred(a) >= HALVES_KSIG)
+                    &zself(a) >= HALVES_KSIG .and. zred(a) >= HALVES_KSIG .and. .not. took(a))
             end do
             call fopen(fu, string('site_gram.txt'), status='replace', action='write', iostat=io)
             call fileiochk('site_rank: cannot write site_gram.txt', io)
@@ -2621,7 +2631,8 @@ contains
                 call seed_poles(gp2, minseed, .false., seeds, plab)
                 grp = [grp, np + 1]
             else
-                call seed_poles(gp, minseed, .false., seeds, plab)
+                ! a rejected minority rest joins its best pole; a majority rest stays the complement of the poles
+                call seed_poles(gp, minseed, real(count(seeds == np + 1)) >= 0.5 * real(n), seeds, plab)
                 grp = [grp, 0]
             endif
             do f = 1, m + 1
@@ -2645,7 +2656,7 @@ contains
             allocate(keep(np), source=.true.)
             allocate(shs(np), zrs(np), zcs(np), zse(np), zde(np), source=0.)
             allocate(cnt0(np), fin(np), pos(np), source=0)
-            lpole = [(.not. any([(grp(f) == g .and. names(f)%to_char() == 'rest', f=1,m)]), g=1,np)]
+            lpole = [(any([(grp(f) == g .and. names(f)%to_char() /= 'rest', f=1,m)]), g=1,np)]
             allocate(gpp(n,np), source=0._dp)
             do f = 1, m
                 if( grp(f) > 0 ) gpp(:,grp(f)) = gpp(:,grp(f)) + real(posts(:,f),dp) / real(count(grp == grp(f)),dp)

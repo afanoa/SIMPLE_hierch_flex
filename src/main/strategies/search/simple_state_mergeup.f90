@@ -3607,12 +3607,13 @@ contains
     ! correlation is HALVES_KSIG Fisher SEs above zero; two accepted endpoints are one pole when they correlate positively and
     ! neither's residual after the other reproduces; groups merge closest first when every cross pair is such a pair; a pole in
     ! the span of two or more other positively correlated poles is redundant and dropped (zred)
-    subroutine merge_poles_subspace( gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred )
+    subroutine merge_poles_subspace( gee, goo, geo, neff, posts, minseed, grp, seeds, zself, zdist, rho, zres, zred, l_ok )
         real(dp),             intent(in)  :: gee(:,:), goo(:,:), geo(:,:)
         real,                 intent(in)  :: neff, posts(:,:)
         integer,              intent(in)  :: minseed
         integer, allocatable, intent(out) :: grp(:), seeds(:)
         real,    allocatable, intent(out) :: zself(:), zdist(:), rho(:,:), zres(:,:), zred(:)
+        logical, optional,    intent(in)  :: l_ok(:)
         type(ivec), allocatable :: mem(:), oth(:)
         real(dp),   allocatable :: gpost(:,:)
         integer,    allocatable :: lab(:), plab(:), gl(:), ord(:)
@@ -3633,6 +3634,7 @@ contains
             zself(a) = fisher_z(gram_corr(gee, goo, geo, a, a), neff)
         end do
         acc = zself >= HALVES_KSIG
+        if( present(l_ok) ) acc = acc .and. l_ok
         allocate(one%v(1))
         do a = 1, ne
             do b = a + 1, ne
@@ -5067,8 +5069,6 @@ contains
             end do
         end do
         do i = 1, 4
-            call img(i)%new(ldim, smpd)
-            call img(i)%read(string(trim(fn(i))))
             call img(i)%set_rmat(img(i)%get_rmat() * m, .false.)
             call img(i)%fft()
         end do
@@ -5108,8 +5108,13 @@ contains
         lref = top_share(pack(smoothed(con * con), m > 0.5))
         ratio = 0.
         if( lref > 0. ) ratio = lsh / lref
+        p = sum(pack(ex, m > 0.5))
+        if( present(pnoise) )then
+            nse    = banded(0.5 * (r1 - r2))
+            pnoise = sum(pack(smoothed(nse * nse), m > 0.5))
+        endif
         do i = 1, 4
-            call img(i)%kill
+            call img(i)%ifft()
         end do
         call w%kill
 
