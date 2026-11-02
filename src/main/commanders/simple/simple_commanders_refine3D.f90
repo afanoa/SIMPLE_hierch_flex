@@ -2153,10 +2153,11 @@ contains
         type(sp_project)     :: spproj
         type(state_mergeup)  :: split
         integer, allocatable :: labels(:), rows(:), child(:), junk(:), out(:)
-        type(string), allocatable :: qlines(:)
+        type(string), allocatable :: qlines(:), plines(:)
+        real,         allocatable :: eul_in(:,:)
         real    :: smpd, st(6)
         integer :: box, i, kstar, kpre, funit, ios
-        logical :: l_q
+        logical :: l_q, l_ex
         character(len=8) :: envv
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
@@ -2204,10 +2205,26 @@ contains
         call effect_floor(labels(rows), child, kstar, params%mskdiam)
         call write_split_stats('split_stats.txt', st, kstar, params%split_ntests, kpre)
         call split%write_weights('ptcl_weights.txt')
+        inquire(file='../n.simple', exist=l_ex)
+        if( l_ex )then
+            call spproj%read_segment('ptcl3D', string('../n.simple'))
+            if( spproj%os_ptcl3D%get_noris() == size(labels) )then
+                allocate(eul_in(3,size(labels)))
+                do i = 1, size(labels)
+                    eul_in(:,i) = spproj%os_ptcl3D%get_euler(i)
+                end do
+            endif
+            call spproj%kill
+        endif
+        call split%pose_lines(labels(rows), child, kstar, eul_in, trim(params%pgrp), plines)
         call fopen(funit, string('split_stats.txt'), status='old', action='write', position='append', iostat=ios)
         call fileiochk('state_split: cannot append to split_stats.txt', ios)
         do i = 1, size(qlines)
             write(funit,'(A)') '# '//qlines(i)%to_char()
+        end do
+        do i = 1, size(plines)
+            write(funit,'(A)') plines(i)%to_char()
+            write(logfhandle,'(A)') plines(i)%to_char()
         end do
         call fclose(funit)
         allocate(out(size(labels)), source=0)

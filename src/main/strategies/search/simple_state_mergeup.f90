@@ -89,6 +89,7 @@ type :: state_mergeup
     procedure :: test
     procedure :: test_once
     procedure :: quality_flag
+    procedure :: pose_lines
     procedure :: write_weights
     procedure :: site_em
     procedure :: fit_contrast
@@ -1542,6 +1543,99 @@ contains
             write(logfhandle,'(A)') 'quality: '//lines(i)%to_char()
         end do
     end subroutine quality_flag
+
+    ! report only: the rotation from the node's input pose to the stage-B pose (over the point group), the share that turned more
+    ! than POSE_FLIP degrees, and per pair of children (stage-B states where none) the flip-share difference against strata shuffles
+    subroutine pose_lines( self, lab, child, kstar, eul_in, pgrp, lines )
+        class(state_mergeup),      intent(inout) :: self
+        integer,                   intent(in)    :: lab(:), child(:), kstar
+        real,         allocatable, intent(in)    :: eul_in(:,:)
+        character(len=*),          intent(in)    :: pgrp
+        type(string), allocatable, intent(out)   :: lines(:)
+        real,    parameter :: POSE_FLIP = 30., DFLIP_MIN = 0.04, DFLIP_Z = 5.
+        integer, parameter :: NSHUF_POSE = 200
+        type(sym) :: pg
+        type(ori) :: o1, o2, o3
+        real,    allocatable :: ang(:), dn(:)
+        integer, allocatable :: idx(:), st(:), grp(:), pl(:)
+        logical, allocatable :: flip(:)
+        character(len=512) :: ln
+        real    :: amin, fa, fb, fa0, fb0, d, mu, sd, z
+        integer :: i, k, g, h, nsym, na, nb, is, ng
+        character(len=6) :: kind
+        allocate(lines(0))
+        if( .not. allocated(eul_in) )then
+            lines = [string('# pose: the node''s input poses (../n.simple) were not found, no pose statistics')]
+            return
+        endif
+        call pg%new(pgrp)
+        nsym = pg%get_nsym()
+        call o1%new(.false.)
+        call o2%new(.false.)
+        call o3%new(.false.)
+        allocate(ang(self%n))
+        do i = 1, self%n
+            call o1%set_euler(eul_in(:,self%rows(i)))
+            call o2%set_euler(self%eul(:,i))
+            amin = huge(amin)
+            do k = 1, nsym
+                call pg%apply(o2, k, o3)
+                amin = min(amin, o1%geodesic_dist_trace(o3))
+            end do
+            ang(i) = amin * 180. / PI
+        end do
+        flip = ang > POSE_FLIP
+        write(ln,'(A,F8.5,A,I0,A,I0,A,F8.3)') '# pose node flip30 ', real(count(flip)) / real(self%n), ' nact ', self%n, &
+            &' nsym ', nsym, ' mean_angle ', sum(ang) / real(self%n)
+        lines = [lines, string(trim(ln))]
+        call o1%kill
+        call o2%kill
+        call o3%kill
+        call pg%kill
+        if( kstar >= 2 )then
+            grp  = child
+            ng   = kstar
+            kind = 'split '
+        else
+            grp  = lab
+            ng   = maxval(lab)
+            kind = 'states'
+        endif
+        allocate(dn(NSHUF_POSE))
+        do g = 1, ng - 1
+            do h = g + 1, ng
+                na = count(grp == g)
+                nb = count(grp == h)
+                if( min(na, nb) < 50 ) cycle
+                idx = pack([(i, i=1,self%n)], grp == g .or. grp == h)
+                pl  = merge(1, 2, grp(idx) == g)
+                st  = self%strata(idx)
+                d   = dflip(pl)
+                fa0 = fa
+                fb0 = fb
+                do is = 1, NSHUF_POSE
+                    dn(is) = dflip(sshuf(pl, st))
+                end do
+                mu = sum(dn) / real(NSHUF_POSE)
+                sd = sqrt(sum((dn - mu)**2) / real(NSHUF_POSE - 1))
+                z  = (d - mu) / max(sd, 1.e-9)
+                write(ln,'(A,I0,A,I0,A,I0,1X,I0,A,F7.4,1X,F7.4,A,F7.4,A,F8.2,A,F7.4,1X,F7.4,A)') '# pose '//kind//' pair ', g, '|', h, ' n ', na, nb, &
+                    &' flips ', fa0, fb0, ' dflip ', d, ' z ', z, ' null ', mu, sd, ' flag '//merge('yes', 'no ', &
+                    &d >= DFLIP_MIN .and. z >= DFLIP_Z)
+                lines = [lines, string(trim(ln))]
+            end do
+        end do
+
+    contains
+
+        real function dflip( l )
+            integer, intent(in) :: l(:)
+            fa = real(count(flip(idx) .and. l == 1)) / real(max(1, count(l == 1)))
+            fb = real(count(flip(idx) .and. l == 2)) / real(max(1, count(l == 2)))
+            dflip = abs(fa - fb)
+        end function dflip
+
+    end subroutine pose_lines
 
     subroutine consensus( self, ia, ib, la, lb, k0, neq, eps, cons )
         class(state_mergeup), intent(inout) :: self
