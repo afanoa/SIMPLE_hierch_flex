@@ -38,6 +38,8 @@ integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32, S
 ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
 integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
+! the split step logs the molecule fraction the level set holding MSHARE of the stage-B cross-half variance covers (nulls 33-46 %, real splits <= 23 %)
+real,     parameter :: MSHARE = 0.7
 real,     parameter :: ATHR = 0.01, LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
@@ -589,6 +591,7 @@ contains
         integer,      allocatable :: rows(:), st(:), pres(:), ch(:), seeds(:), jk(:)
         real(dp),     allocatable :: w(:)
         character(len=:), allocatable :: d, mask, sitemask, sd, tmsg
+        real    :: fdif
         integer :: s, k, j, ks
         logical :: l_tp
         s = self%nodes(i)%step
@@ -850,6 +853,9 @@ contains
                     self%nodes(i)%step = S_DONE
                     return
                 endif
+                fdif = variance_spread(d, st, pres, self%p%mskdiam)
+                write(logfhandle,'(A,F5.1,A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': the level set holding '//&
+                    &int2str(nint(100. * MSHARE))//' % of the stage-B cross-half variance covers ', 100. * fdif, ' % of the molecule'
                 call simple_copy_file(string(d//'/stageB/b.simple'), string(d//'/split/s.simple'))
                 call cl%set('prg',         'state_split')
                 call cl%set('projfile',    's.simple')
@@ -4283,6 +4289,54 @@ contains
         dpx = vol%get_rmat() / smpd
         call vol%kill
     end function dist_px
+
+    ! the level set of the variance inside the molecule support that holds share s of the positive variance there
+    function share_core( vs, sup, s, cut ) result( core )
+        real,    intent(in)  :: vs(:,:,:), s
+        logical, intent(in)  :: sup(:,:,:)
+        real,    intent(out) :: cut
+        logical, allocatable :: core(:,:,:)
+        real,    allocatable :: vals(:)
+        integer, allocatable :: inds(:)
+        real(dp) :: tot, acc
+        integer  :: i
+        vals = pack(max(vs, 0.), sup)
+        tot  = sum(real(vals, dp))
+        cut  = huge(1.)
+        if( tot > 0._dp )then
+            inds = [(i, i=1,size(vals))]
+            call hpsort(vals, inds)
+            acc = 0._dp
+            do i = size(vals), 1, -1
+                acc = acc + real(vals(i), dp)
+                cut = vals(i)
+                if( acc >= real(s, dp) * tot ) exit
+            end do
+        endif
+        core = sup .and. vs >= cut .and. vs > 0.
+    end function share_core
+
+    ! the molecule fraction the level set holding MSHARE of the stage-B states' cross-half variance covers
+    real function variance_spread( d, st, pres, mskdiam ) result( frac )
+        character(len=*), intent(in)  :: d
+        integer,          intent(in)  :: st(:), pres(:)
+        real,             intent(in)  :: mskdiam
+        type(string), allocatable :: evens(:), odds(:)
+        real(dp),     allocatable :: w(:)
+        real,         allocatable :: vs(:,:,:)
+        logical,      allocatable :: sph(:,:,:), sup(:,:,:), core(:,:,:)
+        integer :: j, n
+        real    :: smpd, cut
+        allocate(evens(size(pres)), odds(size(pres)), w(size(pres)))
+        do j = 1, size(pres)
+            evens(j) = d//'/stageB/'//hv(pres(j), 'even')
+            odds(j)  = d//'/stageB/'//hv(pres(j), 'odd')
+            w(j)     = real(count(st == pres(j)), dp)
+        end do
+        call half_variance(evens, odds, w, mskdiam, n, smpd, sph, sup, vs)
+        core = share_core(vs, sup, MSHARE, cut)
+        frac = real(count(core)) / real(max(1, count(sup)))
+    end function variance_spread
 
     subroutine add_leaf( self, i, mem, l_junk, l_rest )
         class(hetero_tree), intent(inout) :: self
