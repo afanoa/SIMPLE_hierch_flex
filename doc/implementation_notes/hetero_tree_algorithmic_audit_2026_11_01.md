@@ -357,3 +357,34 @@ Consequences to know: launchers that export `SIMPLE_SPLIT_RHOMIN`, `SIMPLE_SPLIT
 silently run the defaults (floor off, choose, equivalence rule). The step codes kept their numbers (`S_SBATCH` 18,
 `S_SDISC` 20), so a node table from the previous build resumes; a tree stopped inside a motion step (15-17, 19) cannot
 and has to be restarted at its site step.
+
+## 9. Where the 692k's 5 h 31 min go (2026-11-02, from the recipe17d run's job accounting)
+
+Source: the SLURM accounting of the 10,130 step jobs of `integration/f692_r17d_s1` (work directory = node / step), read by
+`scripts/hetero_tree_profile/profile_692k.py`; 873 core-h, 5.52 h wall, 84 nodes, 67 leaves. The run has three phases:
+
+| phase | wall | share | cores busy (mean, cap 642) | core-h |
+|---|---|---|---|---|
+| root: one node, 692,392 particles | 0 to 1.91 h | 35 % | about 60 | about 115 |
+| body: depths 1 to 4, up to 12 nodes in flight | 1.91 to 4.20 h | 41 % | 230 to 310 (264 while only depth 1 ran) | about 690 |
+| end phase: plain maps 3 min, landscape 2 min, merge-up 73 min | 4.20 to 5.52 h | 24 % | 48 (one job) | 65 |
+
+The root is a serial chain of steps whose distributed ones are capped at nparts 12 x nthr 8 = 96 cores, each over all 692k
+particles (wall minutes): mean 3, flex 16, cheap 3, focused flex 12, stA0 5, recB0 3, the site layer 19 (site_rank and five
+per-site jobs at 32 cores, in parallel), seeds 5, stage A 13, recB 2, stage B 24, split 6; 113 of the phase's 115 minutes.
+Core-hours by step over the whole run: stage B 176 (20 %), stage A 103 (12 %), flex and focused flex 88 (10 %), stA0 / recB0 /
+recB / seeds 93 (11 %), the site layer 332 (38 %: the node's site_rank 41, the per-site site_rank 169, the per-site refine_rec
+122), split 14, merge-up 58 (7 %), plain maps 7.
+
+Three levers that leave the science alone:
+
+1. **A core budget instead of a fixed nparts.** While one node is in flight the root's five nparts-bound steps (flex, focused
+   flex, stA0, stage A, stage B: 70 of its 113 minutes) run on 96 of 642 cores; at 60 to 80 parts they would take a quarter of
+   the time, the root phase about 0.8 h instead of 1.9, and depth 1 (four nodes, 264 cores busy) about half. Expected wall about
+   4 h at the same core-hours; results change only in reduction order (numerically close, not bitwise).
+2. **The merge-up on the draw-free statistic** (reworks note, section 11): the 73-minute job repeats the production split test
+   (subsample draws and shuffles) at every level of the leaf tree; the single-pass statistic removes the draws. The end phase is
+   24 % of the wall and serial.
+3. **The site layer** is 38 % of the core-hours. The subspace site test of the combined build replaced the ~45 EM fits per site by
+   4, which touches the per-site site_rank (169 core-h) but not the per-site refine_rec (122); the run `f692_lf_s1` shows what
+   remains.
