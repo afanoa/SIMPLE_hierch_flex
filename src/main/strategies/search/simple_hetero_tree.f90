@@ -4468,6 +4468,8 @@ contains
         character(len=*),   intent(in)    :: mask
         call cl%set('refine',          'prob_neigh')
         call cl%set('prob_neigh_mode', 'geom')
+        ! the stages draw at the tree's tempering factor (refine3D's own default unless the tree is given one)
+        call cl%set('prob_beta',       self%p%prob_beta)
         call cl%set('lp',              lp)
         call cl%set('maxits',          maxits)
         call cl%set('center',          'no')
