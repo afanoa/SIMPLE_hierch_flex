@@ -8,6 +8,7 @@ use simple_defs,         only: sp, dp
 use simple_error,        only: simple_exception
 use simple_parameters,   only: parameters
 use simple_polarft_calc, only: polarft_calc
+use simple_builder,      only: builder
 !$ use omp_lib,          only: omp_get_wtime, omp_get_thread_num, omp_get_max_threads, omp_set_num_threads
 implicit none
 #include "simple_local_flags.inc"
@@ -15,16 +16,18 @@ implicit none
 public :: polar_matching_bench
 public :: PMB_PER_PAIR, PMB_REPLICA, PMB_BLOCKED, PMB_STATES_INNER, PMB_MATRIX, PMB_MATRIX_T, PMB_PER_PAIR_CC
 public :: PMB_NKINDS
+public :: pmb_fill_result, PMB_ROUTE_3D_DENSE, PMB_ROUTE_3D_NEIGH, PMB_ROUTE_2D_DENSE, PMB_ROUTE_2D_SPARSE, PMB_NROUTES
+public :: PMB_NDIFF, PMB_DIFF_NAMES, pmb_route_name, kill_fill_result, compare_fill_results
 private
 
-integer, parameter :: PMB_PER_PAIR     = 1   !< layout 1: production gen_likelihood_val, particle against every reference
+integer, parameter :: PMB_PER_PAIR     = 1   !< layout 1: production gen_posterior_val, particle against every reference
 integer, parameter :: PMB_REPLICA      = 2   !< layout 1's sums and FFT on the benchmark memo (the identity baseline)
 integer, parameter :: PMB_BLOCKED      = 3   !< layout 2: B particles x R references per tile, same per-pair sums
 integer, parameter :: PMB_STATES_INNER = 4   !< layout 3: every state of a direction, one batched inverse FFT
 integer, parameter :: PMB_MATRIX       = 5   !< layout 4: cgemm per angular bin over a tile, batched inverse FFT
 integer, parameter :: PMB_MATRIX_T     = 6   !< layout 4 with the products transposed to contiguous FFT input
 integer, parameter :: PMB_PER_PAIR_CC  = 7   !< layout 1 with objfun=cc (gen_corrs)
-integer, parameter :: PMB_NKINDS       = 4   !< production kernels of prod_kernels: unshifted, shifted, bank draw, bank values
+integer, parameter :: PMB_NKINDS       = 4   !< production kernels of prod_kernels: unshifted, shifted, bank row, bank values
 real(sp), parameter :: PMB_SHIFT(2)    = [1.3, -0.7]  !< the shift of the shifted and bank kernels (pixels)
 integer, parameter :: PMB_BOX      = 180           !< native box (pixels)
 integer, parameter :: PMB_BOX_CROP = 160
@@ -34,6 +37,36 @@ real,    parameter :: PMB_LP       = 6.            !< matching limit (A)
 real,    parameter :: PMB_FALLOFF  = 40.           !< e-fold of the synthetic spectra's radial amplitude (shells)
 real,    parameter :: PMB_KV = 300., PMB_CS = 2.7, PMB_FRACA = 0.1
 integer, parameter :: PMB_SEED     = 20261021
+! the fill harness (suite=fills of polar_matching_bench; prob_align_batch_pipeline.md, level 2 of section 8): each
+! probabilistic route's batch pipeline (the fill, the selection and the extras of the matchers) on the synthetic
+! data, in parts as the distributed parts run it, compared by particle and reference identity between thread
+! counts, batch sizes and part counts
+integer, parameter :: PMB_ROUTE_3D_DENSE  = 1   !< refine=prob on ptcl3D: the dense table (eul_prob_tab)
+integer, parameter :: PMB_ROUTE_3D_NEIGH  = 2   !< refine=prob_neigh prob_neigh_mode=snhc on ptcl3D (eul_prob_tab_neigh)
+integer, parameter :: PMB_ROUTE_2D_DENSE  = 3   !< refine=prob on ptcl2D: the dense rows (eul_prob_tab2D)
+integer, parameter :: PMB_ROUTE_2D_SPARSE = 4   !< refine=prob_neigh on ptcl2D: the candidate stream (eul_prob_tab2D)
+integer, parameter :: PMB_NROUTES         = 4
+real,    parameter :: PMB_TRS   = 3.            !< the fills' shift window (pixels); the polar shift map is on, as in production
+real,    parameter :: PMB_RES05 = 300.          !< the insertion cone's FSC=0.5 resolution of every state (A): above the mask diameter, so that every refined entry is an eligible extra on random rows (the extras path is exercised)
+integer, parameter :: PMB_NDIFF = 7             !< the categories compare_fill_results counts
+character(len=*), parameter :: PMB_DIFF_NAMES(PMB_NDIFF) = [character(len=10) :: 'dists', 'inpls', 'shifts', 'temps',&
+    &'seeds', 'assignment', 'extras']
+
+!> the outputs of one fill-and-select run (run_fill), by particle and full reference identity ((state-1)*nspace+proj
+!! in 3D, the class in 2D); huge, zero or false where a row holds no entry (the sparse routes' candidate lists)
+type :: pmb_fill_result
+    real(sp), allocatable :: dists(:,:)       !< (nrefs, nptcls) the rows' distances
+    integer,  allocatable :: inpls(:,:)       !< (nrefs, nptcls) the drawn in-plane indices
+    real(sp), allocatable :: shifts(:,:,:)    !< (2, nrefs, nptcls) the refined entries' shifts
+    real(sp), allocatable :: temps(:)         !< (nptcls) the particle temperatures, which no draw enters
+    real(sp), allocatable :: seed_shifts(:,:) !< (2, nptcls) the seeded shifts
+    logical,  allocatable :: seed_has_sh(:)   !< (nptcls) their flags
+    integer,  allocatable :: assign_ref(:)    !< (nptcls) the assigned reference
+    integer,  allocatable :: assign_inpl(:)   !< (nptcls) its in-plane index
+    real(sp), allocatable :: assign_vals(:,:) !< (4, nptcls) its distance, shift and posterior shift width
+    real(sp), allocatable :: extras(:,:,:)    !< (5, topk, nptcls) the weighted insertion's extras: reference, in-plane, shift, weight (3D)
+    integer :: nptcls = 0, nrefs = 0, nentries = 0 !< entries of the rows (dense: references x particles; sparse: the candidates)
+end type pmb_fill_result
 
 ! the BLAS of the build, called inside the OpenMP team: run with a single-threaded BLAS (OPENBLAS_NUM_THREADS=1)
 interface
@@ -58,8 +91,7 @@ type :: pmb_buf
     real(c_float),            pointer :: rout(:,:)   => null()   !< (nrots, R*B)
     complex(c_float_complex), pointer :: ct(:,:)     => null()   !< (pftsz+1, R*B) transposed products
     complex(sp), allocatable :: q(:,:,:)                         !< (2nk, B, pftsz) weighted particle block
-    real(sp),    allocatable :: dists(:), pvec(:), cdf(:)
-    integer,     allocatable :: inds(:)
+    real(sp),    allocatable :: dists(:), w(:)                   !< one row over the rotations, the draw's weights
     real(dp) :: t_parts(3) = 0._dp                               !< thread seconds: sums, inverse FFTs, distances and draw
 end type pmb_buf
 
@@ -76,26 +108,27 @@ type :: polar_matching_bench
     complex(sp),         allocatable :: gmat(:,:,:,:)        !< layout 4 bin-major (2nk, nrefs, pftsz, half)
     real(dp),            allocatable :: wk8(:,:)             !< k/sigma2 (shell, half)
     real(dp),            allocatable :: norms(:)             !< wsqsum * 2 nrots per particle
+    real(sp),            allocatable :: temps(:)             !< the temperature of every draw (ptcl_posterior_temp)
     logical,             allocatable :: iseven(:)
-    ! check records of particles 1..nkeep: full distance vectors and the nsample lowest with their rotations
+    ! check records of particles 1..nkeep: the full rows over the rotations (the distances; the correlations with cc)
     real(sp),            allocatable :: vecs(:,:,:)          !< (nrots, nrefs, nkeep)
-    real(sp),            allocatable :: tops_d(:,:,:)        !< (nsample, nrefs, nkeep)
-    integer,             allocatable :: tops_i(:,:,:)
     type(c_ptr) :: plan_c2r = c_null_ptr, plan_bat = c_null_ptr, plan_bins = c_null_ptr
     integer :: plan_bins_shape(3) = 0                      !< R, B and layout the plan was made for
     integer :: nspace = 0, nstates = 0, nrefs = 0, nptcls = 0, nthr_max = 0, nkeep = 0
-    integer :: pftsz = 0, nrots = 0, kfromto(2) = 0, nk = 0, interpklim = 0, nsample = 0
+    integer :: pftsz = 0, nrots = 0, kfromto(2) = 0, nk = 0, interpklim = 0
     real(dp) :: t_gmat = 0._dp                                !< seconds spent building gmat
     real(dp) :: t_parts(3) = 0._dp                            !< last score's thread seconds per part (replica, matrix)
     logical :: with_prod_refs = .false., with_memo = .false., with_gmat = .false., l_cc = .false.
     logical :: exists = .false.
+    class(builder), allocatable :: build  !< the fill harness's toolbox (fill_route > 0): the same references and particles in build%pftc, the particle field of previous poses, the direction space
+    integer :: fill_route = 0            !< the harness's route (PMB_ROUTE_*; 0: no harness)
 contains
     procedure :: new
+    procedure :: run_fill
     procedure :: kill
     procedure :: score
     procedure :: get_sizes
     procedure :: get_vecs
-    procedure :: get_tops
     procedure :: get_gmat_build_time
     procedure :: get_parts
     procedure :: ref_bytes_per_pair
@@ -108,13 +141,15 @@ contains
     !> Synthetic references (nspace directions x nstates states, both halves) and nptcls CTF-weighted particles
     !! for teams of up to nthr_max threads: in the production calculator (prod_refs), in the benchmark memo
     !! (memo) and in layout 4's bin-major copy (gmat); the data are the same in every combination.
-    !! objfun (euclid by default) is the objective of the production calculator.
-    subroutine new( self, nspace, nstates, nptcls, nthr_max, prod_refs, memo, gmat, nkeep, objfun )
+    !! objfun (euclid by default) is the objective of the production calculator. fills_route (PMB_ROUTE_*) builds
+    !! the fill harness's toolbox beside: the same data in a builder's calculator and a particle field (run_fill).
+    subroutine new( self, nspace, nstates, nptcls, nthr_max, prod_refs, memo, gmat, nkeep, objfun, fills_route )
         use simple_cmdline,    only: cmdline
         use simple_sp_project, only: sp_project
         use simple_math_ft,    only: calc_fourier_index
-        use simple_rnd,        only: ran3
+        use simple_rnd,        only: ran3, rnd_scope_key, RND_PROG_REFINE3D, RND_PASS_ALIGN
         use simple_test_utils, only: set_fixed_seed
+        use, intrinsic :: iso_fortran_env, only: int64
         use simple_fftw3,      only: fftwf_alloc_complex, fftwf_free, fftwf_plan_many_dft, fftwf_plan_many_dft_r2c,&
             &fftwf_execute_dft, fftwf_execute_dft_r2c, fftwf_destroy_plan, FFTW_FORWARD, FFTW_ESTIMATE
         use, intrinsic :: iso_c_binding, only: c_f_pointer, c_int, c_size_t
@@ -122,6 +157,7 @@ contains
         integer,                             intent(in)    :: nspace, nstates, nptcls, nthr_max, nkeep
         logical,                             intent(in)    :: prod_refs, memo, gmat
         character(len=*), optional,          intent(in)    :: objfun
+        integer,          optional,          intent(in)    :: fills_route
         class(cmdline),    allocatable :: cline
         class(sp_project), allocatable :: spproj
         complex(sp),       allocatable :: pft(:,:)
@@ -145,6 +181,11 @@ contains
         self%with_gmat      = gmat
         self%l_cc           = .false.
         if( present(objfun) ) self%l_cc = objfun == 'cc'
+        self%fill_route = 0
+        if( present(fills_route) ) self%fill_route = fills_route
+        if( self%fill_route < 0 .or. self%fill_route > PMB_NROUTES ) THROW_HARD('invalid fill route')
+        if( self%fill_route > 0 .and. (self%l_cc .or. .not. prod_refs) )&
+            &THROW_HARD('the fill harness needs production references and objfun=euclid')
         allocate(cline, self%params, self%pftc, spproj)
         call cline%set('box',      real(PMB_BOX))
         call cline%set('box_crop', real(PMB_BOX_CROP))
@@ -160,6 +201,29 @@ contains
             call cline%set('objfun', 'cc')
         else
             call cline%set('objfun', 'euclid')
+        endif
+        if( self%fill_route > 0 )then
+            ! the fills' keys: the shift window, the point group of the direction space and the route (the polar
+            ! shift map is on by default, shift_sigma, as in production)
+            call cline%set('trs',  PMB_TRS)
+            call cline%set('pgrp', 'c1')
+            select case(self%fill_route)
+                case(PMB_ROUTE_3D_DENSE)
+                    call cline%set('oritype', 'ptcl3D')
+                    call cline%set('refine',  'prob')
+                case(PMB_ROUTE_3D_NEIGH)
+                    call cline%set('oritype', 'ptcl3D')
+                    call cline%set('refine',  'prob_neigh')
+                    call cline%set('prob_neigh_mode', 'snhc')
+                case(PMB_ROUTE_2D_DENSE)
+                    call cline%set('oritype', 'ptcl2D')
+                    call cline%set('refine',  'prob')
+                    call cline%set('ncls',    real(self%nrefs))
+                case(PMB_ROUTE_2D_SPARSE)
+                    call cline%set('oritype', 'ptcl2D')
+                    call cline%set('refine',  'prob_neigh')
+                    call cline%set('ncls',    real(self%nrefs))
+            end select
         endif
         call self%params%new(cline, silent=.true.)
         ! the shell range of set_bp_range at an explicit lp
@@ -179,8 +243,6 @@ contains
         self%nk         = self%kfromto(2) - self%kfromto(1) + 1
         pdim            = self%pftc%get_pdim_interp()
         self%interpklim = pdim(3)
-        ! fill_tab_range's in-plane sample size on a fresh project (inpl_athres = prob_athres)
-        self%nsample    = min(self%nrots, max(1, int(self%params%prob_athres * real(self%nrots) / 180.)))
         ! production's memo transforms, on buffers of its alignment
         p_cmat  = fftwf_alloc_complex(int(self%nrots * self%nk, c_size_t))
         call c_f_pointer(p_cmat, cmat, [self%nrots, self%nk])
@@ -250,18 +312,17 @@ contains
         call self%pftc%assign_sigma2_noise(self%sigma2)
         call self%pftc%memoize_refs
         call self%pftc%memoize_ptcls
-        allocate(self%norms(nptcls))
+        call self%pftc%set_rnd_scope(rnd_scope_key(int(PMB_SEED, int64), RND_PROG_REFINE3D, RND_PASS_ALIGN, 1))
+        allocate(self%norms(nptcls), self%temps(nptcls))
         do i = 1,nptcls
             self%norms(i) = self%pftc%wsqsum_ptcl_now(i) * real(2*self%nrots, dp)
+            self%temps(i) = self%pftc%ptcl_posterior_temp(i)
         enddo
         if( memo .or. gmat ) call memoize_ptcls_here
+        if( self%fill_route > 0 ) call build_fill_toolbox
         allocate(self%dists(self%nrefs,nptcls), source=0._sp)
         allocate(self%irots(self%nrefs,nptcls), source=0)
-        if( nkeep > 0 )then
-            allocate(self%vecs(self%nrots,self%nrefs,nkeep),     source=0._sp)
-            allocate(self%tops_d(self%nsample,self%nrefs,nkeep), source=0._sp)
-            allocate(self%tops_i(self%nsample,self%nrefs,nkeep), source=0)
-        endif
+        if( nkeep > 0 ) allocate(self%vecs(self%nrots,self%nrefs,nkeep), source=0._sp)
         call fftwf_destroy_plan(plan_fwd)
         call fftwf_destroy_plan(plan_r2c)
         call fftwf_free(p_cmat)
@@ -368,11 +429,70 @@ contains
             deallocate(px, py, spafreqsq, angs, ctfmat, bank)
         end subroutine memoize_ptcls_here
 
+        ! the harness's toolbox: the calculator the tables reach through the builder holds the same references,
+        ! particles, CTFs and noise; the particle field carries the CTF records with the state (round robin, so
+        ! that every state is populated), a previous pose of random direction, a previous class, the sampling
+        ! bookkeeping calc_num2sample reads and the centring status of the polar shift map (odd particles not yet
+        ! centred take the disk, even ones the window); the direction space is the point group's spiral
+        subroutine build_fill_toolbox
+            complex(sp), allocatable :: pft_band(:,:)
+            integer :: istate
+            allocate(self%build)
+            call self%build%pftc%new(self%params, self%nrefs, [1,nptcls], self%kfromto)
+            call self%build%pftc%set_with_ctf(.true.)
+            allocate(pft_band(self%pftsz,self%kfromto(1):self%kfromto(2)))
+            pft = cmplx(0.,0.,kind=sp)
+            do iref = 1,self%nrefs
+                do ieo = 1,2
+                    call self%pftc%get_ref_pft(iref, ieo == 1, pft_band)
+                    pft(:,self%kfromto(1):self%kfromto(2)) = pft_band
+                    call self%build%pftc%set_ref_pft(iref, pft, iseven=(ieo == 1))
+                enddo
+            enddo
+            do i = 1,nptcls
+                call self%pftc%get_ptcl_pft(i, pft_band)
+                pft(:,self%kfromto(1):self%kfromto(2)) = pft_band
+                call self%build%pftc%set_ptcl_pft(i, pft)
+                call self%build%pftc%set_eo(i, self%iseven(i))
+            enddo
+            call self%build%pftc%create_polar_absctfmats(spproj, 'ptcl3D')
+            call self%build%pftc%assign_sigma2_noise(self%sigma2)
+            call self%build%pftc%memoize_refs
+            call self%build%pftc%memoize_ptcls
+            call self%build%spproj%os_ptcl3D%copy(spproj%os_ptcl3D, is_ptcl=.true.)
+            do i = 1,nptcls
+                istate = mod(i-1, nstates) + 1
+                call self%build%spproj%os_ptcl3D%set_state(i, istate)
+                call self%build%spproj%os_ptcl3D%set_euler(i, [360. * ran3(), 180. * ran3(), 360. * ran3()])
+                call self%build%spproj%os_ptcl3D%set_shift(i, [0., 0.])
+                call self%build%spproj%os_ptcl3D%set(i, 'corr',     0.5)
+                call self%build%spproj%os_ptcl3D%set(i, 'sampled',  1.)
+                call self%build%spproj%os_ptcl3D%set(i, 'dist',     20. * ran3())
+                call self%build%spproj%os_ptcl3D%set(i, 'shincarg', ran3())
+                call self%build%spproj%os_ptcl3D%set(i, 'shsig',    merge(-1., 0.5, mod(i,2) == 1))
+                call self%build%spproj%os_ptcl3D%set(i, 'class',    real(min(self%nrefs, 1 + int(real(self%nrefs) * ran3()))))
+                call self%build%spproj%os_ptcl3D%set(i, 'eo',       merge(0., 1., self%iseven(i)))
+            enddo
+            call self%build%spproj%os_ptcl2D%copy(self%build%spproj%os_ptcl3D, is_ptcl=.true.)
+            call self%build%pgrpsyms%new('c1')
+            call self%build%build_eulspace(self%params)
+            deallocate(pft_band)
+        end subroutine build_fill_toolbox
+
     end subroutine new
 
     subroutine kill( self )
         use simple_fftw3, only: fftwf_destroy_plan
         class(polar_matching_bench), intent(inout) :: self
+        if( allocated(self%build) )then
+            nullify(self%build%spproj_field)
+            call self%build%pftc%kill
+            call self%build%spproj%kill
+            call self%build%eulspace%kill
+            call self%build%pgrpsyms%kill
+            deallocate(self%build)
+        endif
+        self%fill_route = 0
         if( allocated(self%pftc) )then
             call self%pftc%kill
             deallocate(self%pftc)
@@ -386,8 +506,9 @@ contains
         if( allocated(self%gmat)        ) deallocate(self%gmat)
         if( allocated(self%wk8)         ) deallocate(self%wk8)
         if( allocated(self%norms)       ) deallocate(self%norms)
+        if( allocated(self%temps)       ) deallocate(self%temps)
         if( allocated(self%iseven)      ) deallocate(self%iseven)
-        if( allocated(self%vecs)        ) deallocate(self%vecs, self%tops_d, self%tops_i)
+        if( allocated(self%vecs)        ) deallocate(self%vecs)
         if( c_associated(self%plan_c2r)  ) call fftwf_destroy_plan(self%plan_c2r)
         if( c_associated(self%plan_bat)  ) call fftwf_destroy_plan(self%plan_bat)
         if( c_associated(self%plan_bins) ) call fftwf_destroy_plan(self%plan_bins)
@@ -465,8 +586,7 @@ contains
             bufs(ithr)%p_vec = fftwf_alloc_complex(int(n1, c_size_t))
             call c_f_pointer(bufs(ithr)%p_vec, bufs(ithr)%cvec, [n1])
             call c_f_pointer(bufs(ithr)%p_vec, bufs(ithr)%rvec, [self%nrots+2])
-            allocate(bufs(ithr)%dists(self%nrots), bufs(ithr)%pvec(self%nrots), bufs(ithr)%cdf(self%nrots),&
-                &bufs(ithr)%inds(self%nrots))
+            allocate(bufs(ithr)%dists(self%nrots), bufs(ithr)%w(self%nrots))
             bufs(ithr)%cvec = cmplx(0.,0.,kind=c_float_complex)
             if( layout == PMB_STATES_INNER )then
                 bufs(ithr)%p_bat = fftwf_alloc_complex(int(n1 * nst, c_size_t))
@@ -529,38 +649,41 @@ contains
     end subroutine kill_bufs
 
     !> Layout 1: fill_tab_range's loop, a thread takes a particle and scores it against every reference in turn
+    !! (the posterior in-plane draw at the particle's temperature; with cc the correlations and their best rotation).
+    !! A kept particle's check record is its full row, read again through the same kernel after the draw.
     function score_per_pair( self, nptcls_use ) result( wall )
         class(polar_matching_bench), intent(inout) :: self
         integer,                     intent(in)    :: nptcls_use
         real(dp) :: wall
-        real(sp), allocatable :: pvec_sorted(:,:)
-        integer,  allocatable :: sorted_inds(:,:)
-        real(sp) :: dist, corr
+        real(sp), allocatable :: row(:,:)
+        real(sp) :: dist
         integer  :: nteam, i, ithr, iref, irot
         nteam = 1
         !$ nteam = omp_get_max_threads()
-        allocate(pvec_sorted(self%nrots,nteam), source=0._sp)
-        allocate(sorted_inds(self%nrots,nteam), source=0)
+        allocate(row(self%nrots,nteam), source=0._sp)
         wall = 0._dp
         !$ wall = omp_get_wtime()
-        !$omp parallel do default(shared) private(i,ithr,iref,dist,corr,irot) proc_bind(close) schedule(dynamic)
+        !$omp parallel do default(shared) private(i,ithr,iref,dist,irot) proc_bind(close) schedule(dynamic)
         do i = 1,nptcls_use
             ithr = 1
             !$ ithr = omp_get_thread_num() + 1
             do iref = 1,self%nrefs
-                call self%pftc%gen_likelihood_val(iref, i, [0._sp,0._sp], self%nsample, dist, corr, irot,&
-                    &pvec_sorted(:,ithr), sorted_inds(:,ithr))
+                if( self%l_cc )then
+                    call self%pftc%gen_objfun_vals(iref, i, [0._sp,0._sp], row(:,ithr))
+                    irot = maxloc(row(:,ithr), dim=1)
+                    dist = 1. - row(irot,ithr)
+                    if( i <= self%nkeep ) self%vecs(:,iref,i) = row(:,ithr)
+                else
+                    call self%pftc%gen_posterior_val(iref, i, [0._sp,0._sp], self%temps(i), dist, irot)
+                    if( i <= self%nkeep ) call self%pftc%gen_euclid_dists(iref, i, [0._sp,0._sp], self%vecs(:,iref,i))
+                endif
                 self%dists(iref,i) = dist
                 self%irots(iref,i) = irot
-                if( i <= self%nkeep )then
-                    self%tops_d(:,iref,i) = pvec_sorted(1:self%nsample,ithr)
-                    self%tops_i(:,iref,i) = sorted_inds(1:self%nsample,ithr)
-                endif
             enddo
         enddo
         !$omp end parallel do
         !$ wall = omp_get_wtime() - wall
-        deallocate(pvec_sorted, sorted_inds)
+        deallocate(row)
     end function score_per_pair
 
     !> The replica of layout 1 on the benchmark memo: particle-major, gen_euclid_crvec's sums and FFT per pair
@@ -788,32 +911,34 @@ contains
         integer,                     intent(in)    :: i, iref
         complex(c_float_complex),    intent(inout) :: cvec(:)
         complex(sp) :: c
-        real(dp)    :: wk
+        real(sp)    :: wk
         integer     :: k, p, ieo, ih
         ih  = merge(1, 2, self%iseven(i))
         ieo = ih
         cvec = cmplx(0.,0.,kind=c_float_complex)
         do k = self%kfromto(1), self%kfromto(2)
-            wk = self%wk8(k,ih)
+            ! single precision, as production's sigma2_wk
+            wk = real(k,sp) / self%sigma2(k,ih)
             do p = 1,self%pftsz
                 c = self%ft_ctf2(p,k,i) * self%ft_ref2(p,k,iref,ieo)
                 c = c - 2.0 * self%ft_ptcl_ctf(p,k,i) * conjg(self%ft_ref(p,k,iref,ieo))
-                cvec(p) = cmplx(cvec(p) + wk * c, kind=kind(cvec))
+                cvec(p) = cvec(p) + wk * c
             enddo
         enddo
     end subroutine pair_sums
 
-    !> euclid_dists_from_crvec over all rotations, then the production likelihood draw; stores the row entry
-    !! and, for kept particles, the check records
+    !> euclid_dists_from_crvec over all rotations, then the production posterior draw at the particle's temperature
+    !! (draw_posterior_row, as draw_posterior_crvec); stores the row entry and, for kept particles, the check record
     subroutine pair_finish( self, i, iref, rv, buf )
         use simple_defs,               only: TINY
-        use simple_eul_prob_tab_utils, only: sample_likelihood_dists
+        use simple_eul_prob_tab_utils, only: draw_posterior_row
+        use simple_rnd,                only: ran3
         class(polar_matching_bench), intent(inout) :: self
         integer,                     intent(in)    :: i, iref
         real(c_float),               intent(in)    :: rv(:)
         type(pmb_buf),               intent(inout) :: buf
         real(dp) :: v
-        real(sp) :: dist, corr
+        real(sp) :: dist
         integer  :: p, irot
         do p = 1,self%nrots
             v = 1.d0 + real(rv(p), dp) / self%norms(i)
@@ -823,52 +948,42 @@ contains
                 buf%dists(p) = real(v, sp)
             endif
         enddo
-        call sample_likelihood_dists(self%nrots, buf%dists, self%nsample, dist, corr, irot, buf%pvec, buf%inds, buf%cdf)
+        call draw_posterior_row(self%nrots, buf%dists, self%temps(i), buf%w, real(ran3(),dp), irot, dist)
+        if( irot < 1 )then
+            irot = 1
+            dist = huge(dist)
+        endif
         self%dists(iref,i) = dist
         self%irots(iref,i) = irot
-        if( i <= self%nkeep )then
-            self%vecs(:,iref,i)   = buf%dists
-            self%tops_d(:,iref,i) = buf%pvec(1:self%nsample)
-            self%tops_i(:,iref,i) = buf%inds(1:self%nsample)
-        endif
+        if( i <= self%nkeep ) self%vecs(:,iref,i) = buf%dists
     end subroutine pair_finish
 
-    !> The production kernels on particles 1..nptcls_use against every reference, team of nthr: the full distance
-    !! vectors (nrots, nrefs, nptcls_use, PMB_NKINDS) of the unshifted kernel, the kernel at PMB_SHIFT, the bank draw
-    !! and the bank values at PMB_SHIFT, the nsample lowest of gen_likelihood_val and, for euclid, gen_best_euclid_val.
-    !! Euclid: gen_likelihood_val and gen_likelihood_val_bank with nsample = nrots sort every rotation's distance,
-    !! gen_objfun_vals_bank gives exp(-loss). cc: gen_objfun_vals and gen_objfun_vals_bank give the correlations,
-    !! gen_likelihood_val_bank the distances 1 - cc.
-    subroutine prod_kernels( self, nthr, nptcls_use, vecs, tops_d, tops_i, best_d, best_i )
+    !> The production kernels on particles 1..nptcls_use against every reference, team of nthr: the full rows
+    !! (nrots, nrefs, nptcls_use, PMB_NKINDS) of the unshifted kernel, the kernel at PMB_SHIFT, the bank entry at
+    !! PMB_SHIFT and the bank values, and, for euclid, gen_best_euclid_val. Euclid: gen_euclid_dists and
+    !! gen_euclid_dists_bank give the losses the posterior draws run over, gen_objfun_vals_bank exp(-loss). cc:
+    !! gen_objfun_vals and gen_objfun_vals_bank give the correlations (kinds 1-3; kind 4 stays zero).
+    subroutine prod_kernels( self, nthr, nptcls_use, vecs, best_d, best_i )
         class(polar_matching_bench), intent(inout) :: self
         integer,                     intent(in)    :: nthr, nptcls_use
-        real(sp), allocatable,       intent(inout) :: vecs(:,:,:,:), tops_d(:,:,:), best_d(:,:)
-        integer,  allocatable,       intent(inout) :: tops_i(:,:,:), best_i(:,:)
-        real(sp),    allocatable :: pvec(:,:)
-        integer,     allocatable :: inds(:,:)
+        real(sp), allocatable,       intent(inout) :: vecs(:,:,:,:), best_d(:,:)
+        integer,  allocatable,       intent(inout) :: best_i(:,:)
         complex(sp), allocatable :: bank(:,:,:)
-        real(sp) :: dist, corr
-        integer  :: nteam, i, ithr, iref, irot, j
+        integer  :: nteam, i, ithr, iref
         if( .not. self%with_prod_refs ) THROW_HARD('polar_matching_bench: prod_kernels needs production references')
         if( nthr < 1 .or. nthr > self%nthr_max ) THROW_HARD('polar_matching_bench: team larger than the calculator')
         if( nptcls_use < 1 .or. nptcls_use > self%nptcls ) THROW_HARD('polar_matching_bench: invalid particle count')
         if( allocated(vecs)   ) deallocate(vecs)
-        if( allocated(tops_d) ) deallocate(tops_d)
-        if( allocated(tops_i) ) deallocate(tops_i)
         if( allocated(best_d) ) deallocate(best_d)
         if( allocated(best_i) ) deallocate(best_i)
         allocate(vecs(self%nrots,self%nrefs,nptcls_use,PMB_NKINDS), source=0._sp)
-        allocate(tops_d(self%nsample,self%nrefs,nptcls_use), source=0._sp)
-        allocate(tops_i(self%nsample,self%nrefs,nptcls_use), source=0)
         allocate(best_d(self%nrefs,nptcls_use), source=0._sp)
         allocate(best_i(self%nrefs,nptcls_use), source=0)
         !$ call omp_set_num_threads(nthr)
         nteam = 1
         !$ nteam = omp_get_max_threads()
-        allocate(pvec(self%nrots,nteam), source=0._sp)
-        allocate(inds(self%nrots,nteam), source=0)
         allocate(bank(self%pftsz+1,self%nk,nteam), source=cmplx(0.,0.,kind=sp))
-        !$omp parallel do default(shared) private(i,ithr,iref,irot,j,dist,corr) proc_bind(close) schedule(dynamic)
+        !$omp parallel do default(shared) private(i,ithr,iref) proc_bind(close) schedule(dynamic)
         do i = 1,nptcls_use
             ithr = 1
             !$ ithr = omp_get_thread_num() + 1
@@ -877,64 +992,38 @@ contains
                 if( self%l_cc )then
                     call self%pftc%gen_objfun_vals(iref, i, [0._sp,0._sp], vecs(:,iref,i,1))
                     call self%pftc%gen_objfun_vals(iref, i, PMB_SHIFT, vecs(:,iref,i,2))
+                    call self%pftc%gen_objfun_vals_bank(iref, i, bank(:,:,ithr), vecs(:,iref,i,3))
                 else
-                    call self%pftc%gen_likelihood_val(iref, i, [0._sp,0._sp], self%nrots, dist, corr, irot,&
-                        &pvec(:,ithr), inds(:,ithr))
-                    do j = 1,self%nrots
-                        vecs(inds(j,ithr),iref,i,1) = pvec(j,ithr)
-                    enddo
-                    call self%pftc%gen_likelihood_val(iref, i, PMB_SHIFT, self%nrots, dist, corr, irot,&
-                        &pvec(:,ithr), inds(:,ithr))
-                    do j = 1,self%nrots
-                        vecs(inds(j,ithr),iref,i,2) = pvec(j,ithr)
-                    enddo
+                    call self%pftc%gen_euclid_dists(iref, i, [0._sp,0._sp], vecs(:,iref,i,1))
+                    call self%pftc%gen_euclid_dists(iref, i, PMB_SHIFT, vecs(:,iref,i,2))
+                    call self%pftc%gen_euclid_dists_bank(iref, i, bank(:,:,ithr), vecs(:,iref,i,3))
+                    call self%pftc%gen_objfun_vals_bank(iref, i, bank(:,:,ithr), vecs(:,iref,i,4))
                     call self%pftc%gen_best_objfun_val(iref, i, [0._sp,0._sp], best_d(iref,i), best_i(iref,i))
                 endif
-                call self%pftc%gen_likelihood_val_bank(iref, i, bank(:,:,ithr), self%nrots, dist, corr, irot,&
-                    &pvec(:,ithr), inds(:,ithr))
-                do j = 1,self%nrots
-                    vecs(inds(j,ithr),iref,i,3) = pvec(j,ithr)
-                enddo
-                call self%pftc%gen_objfun_vals_bank(iref, i, bank(:,:,ithr), vecs(:,iref,i,4))
-                call self%pftc%gen_likelihood_val(iref, i, [0._sp,0._sp], self%nsample, dist, corr, irot,&
-                    &pvec(:,ithr), inds(:,ithr))
-                tops_d(:,iref,i) = pvec(1:self%nsample,ithr)
-                tops_i(:,iref,i) = inds(1:self%nsample,ithr)
             enddo
         enddo
         !$omp end parallel do
         !$ call omp_set_num_threads(self%nthr_max)
-        deallocate(pvec, inds, bank)
+        deallocate(bank)
     end subroutine prod_kernels
 
-    !> pftsz, nrots, kfromto, nsample, nrefs
-    subroutine get_sizes( self, pftsz, nrots, kfromto, nsample, nrefs )
+    !> pftsz, nrots, kfromto, nrefs
+    subroutine get_sizes( self, pftsz, nrots, kfromto, nrefs )
         class(polar_matching_bench), intent(in)  :: self
-        integer,                     intent(out) :: pftsz, nrots, kfromto(2), nsample, nrefs
+        integer,                     intent(out) :: pftsz, nrots, kfromto(2), nrefs
         pftsz   = self%pftsz
         nrots   = self%nrots
         kfromto = self%kfromto
-        nsample = self%nsample
         nrefs   = self%nrefs
     end subroutine get_sizes
 
-    !> the distance vectors of the kept particles from the last score
+    !> the rows of the kept particles from the last score
     subroutine get_vecs( self, vecs )
         class(polar_matching_bench), intent(in)    :: self
         real(sp), allocatable,       intent(inout) :: vecs(:,:,:)
         if( .not. allocated(self%vecs) ) THROW_HARD('polar_matching_bench: no kept particles')
         vecs = self%vecs
     end subroutine get_vecs
-
-    !> the nsample lowest distances and their rotations of the kept particles from the last score
-    subroutine get_tops( self, tops_d, tops_i )
-        class(polar_matching_bench), intent(in)    :: self
-        real(sp), allocatable,       intent(inout) :: tops_d(:,:,:)
-        integer,  allocatable,       intent(inout) :: tops_i(:,:,:)
-        if( .not. allocated(self%tops_d) ) THROW_HARD('polar_matching_bench: no kept particles')
-        tops_d = self%tops_d
-        tops_i = self%tops_i
-    end subroutine get_tops
 
     !> thread seconds of the last score (replica, matrix): sums or cgemm, inverse FFTs, distances and draw
     function get_parts( self ) result( parts )
@@ -967,5 +1056,317 @@ contains
         endif
         memo_gbytes = (refs + ptcls) / 1.e9_dp
     end function memo_gbytes
+
+    ! ---- the fill harness ----
+
+    !> One fill-and-select of the harness's route on the pipeline of the matchers: the particles in nparts parts, each
+    !! part a pipeline table over its index range (as the distributed parts are), the iteration's model computed once
+    !! from the complete incoming field and set on every part (as each part computes it from the field the master
+    !! wrote), the cone of the weighted insertion (3D); then batch by batch the fill and the selection on a team of
+    !! nthr threads, the rows gathered from the batch's store before it is released; the temperatures, seeds,
+    !! assignment and extras at the close. The seed is reset before the parts. The outputs are gathered by particle
+    !! and full reference identity. With l_perturb, after each part's fill the field of the particles already filled
+    !! is changed as a commit would change it (their distances, states, classes and shift increments), so that the
+    !! later parts' rows show whether a fill reads other particles' outputs (the input-boundary regression of the
+    !! iteration's model); the field is restored afterwards.
+    subroutine run_fill( self, nthr, batchsz, nparts, res, l_perturb )
+        use simple_eul_prob_tab,       only: eul_prob_tab
+        use simple_eul_prob_tab_neigh, only: eul_prob_tab_neigh
+        use simple_eul_prob_tab2D,     only: eul_prob_tab2D
+        use simple_eul_prob_tab_utils, only: prob_insert_cone, prob_insert_pose, calc_num2sample, shift_prior_sigma2, &
+            &prob_candidate_buffer
+        use simple_map_reduce,         only: split_nobjs_even
+        use simple_test_utils,         only: set_fixed_seed
+        use simple_oris,               only: oris
+        class(polar_matching_bench), target, intent(inout) :: self
+        integer,                             intent(in)    :: nthr, batchsz, nparts
+        type(pmb_fill_result),               intent(inout) :: res
+        logical, optional,                   intent(in)    :: l_perturb
+        type(eul_prob_tab),       allocatable :: tab3D
+        type(eul_prob_tab_neigh), allocatable :: tabnb
+        type(eul_prob_tab2D),     allocatable :: tab2D
+        type(prob_insert_cone) :: cone
+        type(oris)             :: field_saved
+        integer,  allocatable  :: parts(:,:), pinds(:)
+        integer :: ipart, nloc, first, last, i, ioff, projs_ns_model
+        real    :: sigma2_model
+        logical :: l_pert
+        l_pert = .false.
+        if( present(l_perturb) ) l_pert = l_perturb
+        if( self%fill_route < 1 ) THROW_HARD('polar_matching_bench: no fill harness (new with fills_route)')
+        if( nthr < 1 .or. nthr > self%nthr_max ) THROW_HARD('polar_matching_bench: team larger than the calculator')
+        if( batchsz < 1 .or. nparts < 1 .or. nparts > self%nptcls ) THROW_HARD('polar_matching_bench: invalid batch size or part count')
+        call kill_fill_result(res)
+        select case(self%fill_route)
+            case(PMB_ROUTE_3D_DENSE, PMB_ROUTE_3D_NEIGH)
+                self%build%spproj_field => self%build%spproj%os_ptcl3D
+            case DEFAULT
+                self%build%spproj_field => self%build%spproj%os_ptcl2D
+        end select
+        !$ call omp_set_num_threads(nthr)
+        call set_fixed_seed(PMB_SEED, propagate=.true.)
+        if( l_pert ) call field_saved%copy(self%build%spproj_field, .true.)
+        parts = split_nobjs_even(self%nptcls, nparts)
+        ! the iteration's model once, from the complete incoming field, as every part computes it from the field
+        ! the master wrote (the perturbation of the earlier parts' rows must not enter it)
+        sigma2_model   = iteration_shift_prior()
+        projs_ns_model = 0
+        if( self%fill_route == PMB_ROUTE_3D_DENSE )then
+            allocate(tab3D)
+            call tab3D%new_pipeline(self%params, self%build, [(i, i=1,self%nptcls)])
+            projs_ns_model = dense_projs_ns(tab3D)
+            call tab3D%kill
+            deallocate(tab3D)
+        endif
+        call cone%new([(PMB_RES05, i=1,self%nstates)], PMB_MSKDIAM, PMB_SMPD)
+        call alloc_result
+        do ipart = 1,nparts
+            pinds = [(i, i=parts(ipart,1),parts(ipart,2))]
+            nloc  = size(pinds)
+            ioff  = parts(ipart,1) - 1
+            select case(self%fill_route)
+                case(PMB_ROUTE_3D_DENSE)
+                    allocate(tab3D)
+                    call tab3D%new_pipeline(self%params, self%build, pinds)
+                    call tab3D%set_iteration_model(projs_ns_model, sigma2_model)
+                    call tab3D%set_insert_cone(cone)
+                    call tab3D%open_assignment(nglob=self%nptcls, rank0=ioff)
+                    first = 1
+                    do while( first <= nloc )
+                        last = min(nloc, first + batchsz - 1)
+                        call tab3D%fill_tab_range(first, last)
+                        call gather_dense_batch3D(tab3D, first, last)
+                        call tab3D%assign_batch(first, last)
+                        first = last + 1
+                    enddo
+                    call tab3D%close_assignment
+                    call gather_tab3D(tab3D)
+                    call tab3D%kill
+                    deallocate(tab3D)
+                case(PMB_ROUTE_3D_NEIGH)
+                    allocate(tabnb)
+                    call tabnb%new_neigh_pipeline(self%params, self%build, pinds)
+                    call tabnb%set_iteration_model(0, sigma2_model)
+                    call tabnb%set_insert_cone(cone)
+                    call tabnb%open_assignment(nglob=self%nptcls, rank0=ioff)
+                    first = 1
+                    do while( first <= nloc )
+                        last = min(nloc, first + batchsz - 1)
+                        call tabnb%fill_tab_range(first, last)
+                        call gather_buffers(tabnb%candidate_buffers, .true.)
+                        call tabnb%assign_batch(first, last)
+                        first = last + 1
+                    enddo
+                    call tabnb%close_assignment
+                    call gather_tab3D(tabnb)
+                    call tabnb%kill
+                    deallocate(tabnb)
+                case DEFAULT
+                    allocate(tab2D)
+                    call tab2D%new_pipeline(self%params, self%build, pinds)
+                    call tab2D%set_iteration_model(sigma2_model)
+                    call tab2D%open_assignment(nglob=self%nptcls, rank0=ioff)
+                    first = 1
+                    do while( first <= nloc )
+                        last = min(nloc, first + batchsz - 1)
+                        call tab2D%fill_tab_range(first, last)
+                        call gather_buffers(tab2D%candidate_buffers, self%fill_route == PMB_ROUTE_2D_SPARSE)
+                        call tab2D%assign_batch(first, last)
+                        first = last + 1
+                    enddo
+                    call tab2D%close_assignment
+                    call gather_tab2D(tab2D)
+                    call tab2D%kill
+                    deallocate(tab2D)
+            end select
+            if( l_pert ) call perturb_committed(parts(ipart,1), parts(ipart,2))
+        enddo
+        if( l_pert ) call self%build%spproj_field%copy(field_saved, .true.)
+        call cone%kill
+        !$ call omp_set_num_threads(self%nthr_max)
+
+    contains
+
+        !> the batch's dense 3D rows and refined shifts, from the store the fill kept
+        subroutine gather_dense_batch3D( tab, ifirst, ilast )
+            class(eul_prob_tab), intent(in) :: tab
+            integer,             intent(in) :: ifirst, ilast
+            integer :: ri, iref, k
+            do i = ifirst,ilast
+                do ri = 1,tab%nrefs
+                    iref = tab%ref_full(ri)
+                    res%dists(iref,ioff+i) = tab%batch_rows(ri,i)%dist
+                    res%inpls(iref,ioff+i) = tab%batch_rows(ri,i)%inpl
+                enddo
+                do k = 1,tab%batch_nrefined(i)
+                    iref = tab%ref_full(tab%batch_refined(k,i)%ri)
+                    res%shifts(:,iref,ioff+i) = [tab%batch_refined(k,i)%x, tab%batch_refined(k,i)%y]
+                enddo
+                res%nentries = res%nentries + tab%nrefs
+            enddo
+        end subroutine gather_dense_batch3D
+
+        !> the candidates of a batch as the row, from the thread buffers the fill kept: the sparse routes take every
+        !! candidate's shift, as the batch's store holds it (l_all_shifts); the 2D dense route the refined entries'
+        subroutine gather_buffers( buffers, l_all_shifts )
+            type(prob_candidate_buffer), intent(in) :: buffers(:)
+            logical,                     intent(in) :: l_all_shifts
+            integer :: ithr, j, iref
+            do ithr = 1,size(buffers)
+                do j = 1,buffers(ithr)%nused
+                    i    = buffers(ithr)%particle_indices(j)
+                    iref = buffers(ithr)%candidates(j)%iref
+                    if( iref < 1 .or. iref > self%nrefs ) cycle
+                    res%dists(iref,ioff+i) = buffers(ithr)%candidates(j)%dist
+                    res%inpls(iref,ioff+i) = buffers(ithr)%candidates(j)%inpl
+                    if( l_all_shifts .or. buffers(ithr)%candidates(j)%has_sh )&
+                        &res%shifts(:,iref,ioff+i) = [buffers(ithr)%candidates(j)%x, buffers(ithr)%candidates(j)%y]
+                    res%nentries = res%nentries + 1
+                enddo
+            enddo
+        end subroutine gather_buffers
+
+        !> the temperatures, seeds, assignment and extras of a 3D pipeline table at its close
+        subroutine gather_tab3D( tab )
+            class(eul_prob_tab), intent(in) :: tab
+            type(prob_insert_pose) :: pose
+            integer :: k
+            do i = 1,nloc
+                res%temps(ioff+i)         = tab%temps(i)
+                res%seed_shifts(:,ioff+i) = tab%seed_shifts(:,i)
+                res%seed_has_sh(ioff+i)   = tab%seed_has_sh(i)
+                res%assign_ref(ioff+i)    = (tab%assgn_map(i)%istate - 1) * self%nspace + tab%assgn_map(i)%iproj
+                res%assign_inpl(ioff+i)   = tab%assgn_map(i)%inpl
+                res%assign_vals(:,ioff+i) = [tab%assgn_map(i)%dist, tab%assgn_map(i)%x, tab%assgn_map(i)%y, tab%assgn_map(i)%sdev]
+            enddo
+            if( tab%insert_tab%get_nptcls() == nloc )then
+                do i = 1,nloc
+                    do k = 1,min(tab%insert_tab%get_nextra(i), size(res%extras,2))
+                        pose = tab%insert_tab%get_extra(i, k)
+                        res%extras(:,k,ioff+i) = [real(pose%iref), real(pose%inpl), pose%x, pose%y, pose%w]
+                    enddo
+                enddo
+            endif
+        end subroutine gather_tab3D
+
+        !> the temperatures, seeds and assignment of a 2D pipeline table at its close
+        subroutine gather_tab2D( tab )
+            type(eul_prob_tab2D), intent(in) :: tab
+            do i = 1,nloc
+                res%temps(ioff+i)         = tab%temps(i)
+                res%seed_shifts(:,ioff+i) = tab%seed_shifts(:,i)
+                res%seed_has_sh(ioff+i)   = tab%seed_has_sh(i)
+                res%assign_ref(ioff+i)    = tab%assgn_map(i)%icls
+                res%assign_inpl(ioff+i)   = tab%assgn_map(i)%inpl
+                res%assign_vals(:,ioff+i) = [tab%assgn_map(i)%dist, tab%assgn_map(i)%x, tab%assgn_map(i)%y, tab%assgn_map(i)%sdev]
+            enddo
+        end subroutine gather_tab2D
+
+        !> what a commit changes in the field of the particles of a part already filled: their distances,
+        !! states, classes and shift increments move, and the later parts must not see it
+        subroutine perturb_committed( ifirst, ilast )
+            integer, intent(in) :: ifirst, ilast
+            integer :: j, istate, icls
+            do j = ifirst, ilast
+                call self%build%spproj_field%set(j, 'dist',     self%build%spproj_field%get(j, 'dist') + 7.5)
+                call self%build%spproj_field%set(j, 'shincarg', 3. * self%build%spproj_field%get(j, 'shincarg') + 0.5)
+                istate = self%build%spproj_field%get_state(j)
+                call self%build%spproj_field%set_state(j, mod(istate, self%nstates) + 1)
+                icls = nint(self%build%spproj_field%get(j, 'class'))
+                call self%build%spproj_field%set(j, 'class', real(mod(icls, self%nrefs) + 1))
+            enddo
+        end subroutine perturb_committed
+
+        !> the iteration's model as a part computes it from the complete incoming field: the dense table's
+        !! refined-reference budget over the active states
+        integer function dense_projs_ns( tab )
+            class(eul_prob_tab), intent(in) :: tab
+            integer :: si, n
+            dense_projs_ns = 0
+            do si = 1, tab%nstates
+                call calc_num2sample(self%build%spproj_field, self%params%nspace, 'dist', n, self%params%prob_athres, &
+                    &state=tab%ssinds(si))
+                dense_projs_ns = max(dense_projs_ns, n)
+            enddo
+        end function dense_projs_ns
+
+        !> and the shift prior's variance per axis
+        real function iteration_shift_prior()
+            iteration_shift_prior = 0.
+            if( self%params%l_shift_prior )&
+                &iteration_shift_prior = shift_prior_sigma2(self%build%spproj_field, self%params%lp / self%params%smpd)
+        end function iteration_shift_prior
+
+        subroutine alloc_result
+            res%nptcls   = self%nptcls
+            res%nrefs    = self%nrefs
+            res%nentries = 0
+            allocate(res%dists(self%nrefs,self%nptcls),    source=huge(1._sp))
+            allocate(res%inpls(self%nrefs,self%nptcls),    source=0)
+            allocate(res%shifts(2,self%nrefs,self%nptcls), source=huge(1._sp))
+            allocate(res%temps(self%nptcls),               source=0._sp)
+            allocate(res%seed_shifts(2,self%nptcls),       source=0._sp)
+            allocate(res%seed_has_sh(self%nptcls),         source=.false.)
+            allocate(res%assign_ref(self%nptcls),          source=0)
+            allocate(res%assign_inpl(self%nptcls),         source=0)
+            allocate(res%assign_vals(4,self%nptcls),       source=0._sp)
+            allocate(res%extras(5,max(1,self%params%topk),self%nptcls), source=0._sp)
+        end subroutine alloc_result
+
+    end subroutine run_fill
+
+    subroutine kill_fill_result( res )
+        type(pmb_fill_result), intent(inout) :: res
+        if( allocated(res%dists) )then
+            deallocate(res%dists, res%inpls, res%shifts, res%temps, res%seed_shifts, res%seed_has_sh, res%assign_ref,&
+                &res%assign_inpl, res%assign_vals, res%extras)
+        endif
+        res%nptcls   = 0
+        res%nrefs    = 0
+        res%nentries = 0
+    end subroutine kill_fill_result
+
+    !> the counts of differing entries between two fill results, by particle and reference identity: the rows'
+    !! distances (value or presence), their in-plane indices, the refined shifts, the temperatures, the seeds (shift
+    !! or flag), the assignments (reference, in-plane index, distance, shift or posterior shift width) and the extras
+    subroutine compare_fill_results( a, b, ndiff )
+        type(pmb_fill_result), intent(in)  :: a, b
+        integer,               intent(out) :: ndiff(PMB_NDIFF)
+        integer :: i, iref, k
+        ndiff = 0
+        if( a%nptcls /= b%nptcls .or. a%nrefs /= b%nrefs ) THROW_HARD('fill results of different sizes; compare_fill_results')
+        do i = 1,a%nptcls
+            do iref = 1,a%nrefs
+                if( a%dists(iref,i) /= b%dists(iref,i) )         ndiff(1) = ndiff(1) + 1
+                if( a%inpls(iref,i) /= b%inpls(iref,i) )         ndiff(2) = ndiff(2) + 1
+                if( any(a%shifts(:,iref,i) /= b%shifts(:,iref,i)) ) ndiff(3) = ndiff(3) + 1
+            enddo
+            if( a%temps(i) /= b%temps(i) ) ndiff(4) = ndiff(4) + 1
+            if( any(a%seed_shifts(:,i) /= b%seed_shifts(:,i)) .or. (a%seed_has_sh(i) .neqv. b%seed_has_sh(i)) )&
+                &ndiff(5) = ndiff(5) + 1
+            if( a%assign_ref(i) /= b%assign_ref(i) .or. a%assign_inpl(i) /= b%assign_inpl(i) .or.&
+                &any(a%assign_vals(:,i) /= b%assign_vals(:,i)) ) ndiff(6) = ndiff(6) + 1
+            do k = 1,min(size(a%extras,2), size(b%extras,2))
+                if( any(a%extras(:,k,i) /= b%extras(:,k,i)) ) ndiff(7) = ndiff(7) + 1
+            enddo
+        enddo
+    end subroutine compare_fill_results
+
+    function pmb_route_name( route ) result( name )
+        integer, intent(in) :: route
+        character(len=:), allocatable :: name
+        select case(route)
+            case(PMB_ROUTE_3D_DENSE)
+                name = '3D_dense'
+            case(PMB_ROUTE_3D_NEIGH)
+                name = '3D_neigh'
+            case(PMB_ROUTE_2D_DENSE)
+                name = '2D_dense'
+            case(PMB_ROUTE_2D_SPARSE)
+                name = '2D_sparse'
+            case DEFAULT
+                name = 'unknown'
+        end select
+    end function pmb_route_name
 
 end module simple_polar_matching_bench

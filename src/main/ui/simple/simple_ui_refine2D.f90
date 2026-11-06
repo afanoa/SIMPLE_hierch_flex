@@ -37,7 +37,7 @@ contains
             &'De novo 2D class-average determination from particle images', &
             &'is a distributed workflow, the 2D equivalent of solve3D, that couples ab initio 2D '//&
             &'classification with initial 2D refinement of the class averages', &
-            &UI_VIS_STANDARD, 'De Novo 2D Class Averages')
+            &UI_VIS_STANDARD, 'Solve 2D Class Averages')
         call add_ui_program('solve2D', solve2D, prgtab, UI_CATEGORY)
     end subroutine new_solve2D
 
@@ -58,19 +58,27 @@ contains
         ! image input/output
         call refine2D%add_input(UI_FILE, projfile, required_override=.true., visibility=UI_VIS_STANDARD)
         ! parameter input/output
-        call refine2D%add_input(UI_PARM, 'cache', 'binary', 'Cache downscaled particles', &
-         &'Write Fourier-cropped particles once and read those instead of the originals on every iteration, &
-         &trading disk space for I/O(yes|no){no}', '', &
-         &.false., 'no', choices=ui_choices([character(len=3) :: 'yes', 'no']), &
-         &visibility=UI_VIS_DEVELOPER)
         ! search controls
         call refine2D%add_input(UI_SRCH, ncls, required_override=.false., group="search", visibility=UI_VIS_ADVANCED)
         call refine2D%add_input(UI_SRCH, 'refine', 'multi', 'Refinement mode', &
         &'Refinement mode: snhc_smpl and snhc search stochastically, prob assigns from the dense probabilistic table, &
-        &prob_snhc from a sparse one(snhc_smpl|snhc|prob|prob_snhc){snhc_smpl}', '', &
+        &prob_neigh from a sparse one(snhc_smpl|snhc|prob|prob_neigh){snhc_smpl}', '', &
         &.false., 'snhc_smpl', group="search", &
-        &choices=ui_choices([character(len=9) :: 'snhc_smpl', 'snhc', 'prob', 'prob_snhc']), &
+        &choices=ui_choices([character(len=10) :: 'snhc_smpl', 'snhc', 'prob', 'prob_neigh']), &
         &visibility=UI_VIS_ADVANCED)
+        call refine2D%add_input(UI_SRCH, 'shift_prior', 'binary', 'Shift prior in the probability tables', &
+        &'The 2D tables'' shift refinements and seed estimates carry a Gaussian prior on the shift''s distance from '//&
+        &'the seed, with the previous iteration''s shift variance as its width and the particle''s temperature '//&
+        &'converting it to loss units; the row holds the MAP loss(yes|no){yes}', '', .false., 'yes', group="search", &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
+        &visibility=UI_VIS_ADVANCED)
+        call refine2D%add_input(UI_SRCH, 'shift_sigma', 'num', 'Polar shift map prior width', &
+        &'Sigma (in A) of the Gaussian prior on each particle''s shift from its current origin (the picking error''s width); the probability '//&
+        &'tables and the classic modes centre each particle as it needs: one not yet centred in this workflow, or whose '//&
+        &'shift posterior is wider than a third of the window, locates its likely classes over the disk of 3 sigma with a '//&
+        &'coarse polar shift map under the box''s mask and polishes from the map''s optimum, the others polish from the '//&
+        &'map over the window of trs; 0 is the window search; off under objfun=cc{10}', &
+        &'sigma in A{10}', .false., 10., group="search", visibility=UI_VIS_ADVANCED)
         call refine2D%add_input(UI_SRCH, maxits, group="search", visibility=UI_VIS_ADVANCED)
         call refine2D%add_input(UI_SRCH, startit, group="search", visibility=UI_VIS_ADVANCED)
         call refine2D%add_input(UI_SRCH, update_frac, group="search", visibility=UI_VIS_ADVANCED)
@@ -113,15 +121,6 @@ contains
         ! image input/output
         ! <empty>
         ! parameter input/output
-        call program%add_input(UI_PARM, 'cache', 'binary', 'Cache downscaled particles', &
-         &'Write Fourier-cropped particles once and read those instead of the originals on every iteration, &
-         &trading disk space for I/O(yes|no){no}', '', &
-         &.false., 'no', choices=ui_choices([character(len=3) :: 'yes', 'no']), &
-         &visibility=UI_VIS_DEVELOPER)
-        call program%add_input(UI_PARM, 'cache_dir', 'dir', 'Particle cache directory', &
-         &'Where to keep the downscaled particle cache; point it at a fast local disk when the project lives &
-         &on a slow one. Defaults to the execution directory', 'e.g. /scratch/ptcl_cache/', &
-         &.false., '', visibility=UI_VIS_DEVELOPER)
         ! <no additional inputs>
         ! <empty>
         ! search controls
@@ -135,14 +134,22 @@ contains
         &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
         &visibility=UI_VIS_ADVANCED)
         call program%add_input(UI_SRCH, 'refine', 'multi', 'Refinement mode',&
-        &'Refinement mode of the stages from the third on (the first two always use snhc_smpl): prob_snhc scores &
+        &'Refinement mode of the stages from the third on (the first two always use snhc_smpl): prob_neigh scores &
         &a sparse probabilistic table and assigns the last stage from a dense one; prob uses the dense table in every &
-        &stage; snhc_smpl is prob_snhc with the last stage sparse too(prob_snhc|prob|snhc_smpl){prob_snhc}','', &
-        &.false., 'prob_snhc', group="search", &
-        &choices=ui_choices([character(len=9) :: 'prob_snhc', 'prob', 'snhc_smpl']), &
+        &stage; snhc_smpl is prob_neigh with the last stage sparse too(prob_neigh|prob|snhc_smpl){prob_neigh}','', &
+        &.false., 'prob_neigh', group="search", &
+        &choices=ui_choices([character(len=10) :: 'prob_neigh', 'prob', 'snhc_smpl']), &
         &visibility=UI_VIS_ADVANCED)
         call program%add_input(UI_SRCH, cls_init, group="search", &
         &visibility=UI_VIS_ADVANCED)
+        call program%add_input(UI_SRCH, 'shift_sigma', 'num', 'Polar shift map prior width', &
+        &'Sigma (in A) of the Gaussian prior on each particle''s shift from its current origin (the picking error''s width); from stage 2 on '//&
+        &'the probability tables centre each particle as it needs: one not yet centred in this workflow, or whose shift '//&
+        &'posterior is wider than a third of the stage''s window, locates its likely classes over the disk of 3 sigma '//&
+        &'with a coarse polar shift map under the box''s mask and polishes from the map''s optimum, the others polish '//&
+        &'from the map over the window; mskdiam=0 takes the mask diameter of the later stages from stage 2''s class '//&
+        &'averages; 0 is the window search in every stage{10}', &
+        &'sigma in A{10}', .false., 10., group="search", visibility=UI_VIS_ADVANCED)
         call program%add_input(UI_SRCH, 'nsample', 'num', 'Number of particles to sample', 'Number of particles &
         &to sample each iteration; every active particle when there are fewer{200000}', '# particles to sample{200000}', &
         &.false., 200000., group="search", visibility=UI_VIS_STANDARD, preserve_default=.true.)
@@ -225,8 +232,8 @@ contains
         &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
         &visibility=UI_VIS_ADVANCED)
         call solve2D_chunks%add_input(UI_SRCH, 'refine', 'multi', 'Refinement mode',&
-        &'Refinement mode(prob_snhc|prob|snhc_smpl){prob_snhc}','', .false., 'prob_snhc', group="cluster 2D", &
-        &choices=ui_choices([character(len=9) :: 'prob_snhc', 'prob', 'snhc_smpl']), &
+        &'Refinement mode(prob_neigh|prob|snhc_smpl){prob_neigh}','', .false., 'prob_neigh', group="cluster 2D", &
+        &choices=ui_choices([character(len=10) :: 'prob_neigh', 'prob', 'snhc_smpl']), &
         &visibility=UI_VIS_ADVANCED)
         ! filter controls
         call solve2D_chunks%add_input(UI_FILT, hp, group="cluster 2D", &

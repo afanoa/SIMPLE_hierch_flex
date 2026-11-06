@@ -3,9 +3,10 @@ module simple_strategy3D_utils
 use simple_core_module_api
 use simple_strategy3D_alloc, only: s3D, ref_state_from_index, ref_proj_from_index
 use simple_strategy3D_srch, only: strategy3D_srch
+use simple_pftc_shsrch_grad, only: shift_ref2ptcl
 implicit none
 
-public :: extract_peak_ori, extract_peak_oris, assign_ori, resolve_inplane_e3
+public :: extract_peak_ori, extract_peak_oris, assign_ori, resolve_inplane_e3, candidate_pose
 private
 #include "simple_local_flags.inc"
 
@@ -26,6 +27,29 @@ contains
         endif
     end function resolve_inplane_e3
 
+    !> The pose of a table candidate of the particle s searches: reference ref (the multi-state index) at in-plane
+    !! index inpl with the shift increment sh_incr in the particle's own axes, as the Euler triplet (the
+    !! reference's direction, the grid angle as e3) and the stored shift (the particle's previous shift plus the
+    !! increment when shifts are searched; sub-microshift values zeroed). The one place the addition lives:
+    !! assign_ori commits the particle's own candidate through it with the increment its polish (or the map's
+    !! strategy) rotated into the particle's axes, and the weighted insertion's extra poses come through candidate_pose too,
+    !! which converts the table's increment the same way, so they can never drift from the committed pose's rule
+    subroutine candidate_pose( s, ref, inpl, sh_incr, euler, shvec )
+        class(strategy3D_srch), intent(in)  :: s
+        integer,                intent(in)  :: ref, inpl
+        real,                   intent(in)  :: sh_incr(2)
+        real,                   intent(out) :: euler(3), shvec(2)
+        integer :: proj
+        if( ref < 1 .or. ref > s%nrefs ) THROW_HARD('ref index: '//int2str(ref)//' out of bound; candidate_pose')
+        proj     = ref_proj_from_index(ref, s%nprojs)
+        euler    = s%b_ptr%eulspace%get_euler(proj)
+        euler(3) = 360. - s%b_ptr%pftc%get_rot(inpl)
+        shvec    = s%prev_shvec
+        if( s%doshift ) shvec = shvec + sh_incr
+        where( abs(shvec) < 1e-6 ) shvec = 0.
+    end subroutine candidate_pose
+
+
     subroutine assign_ori( s, ref, inpl, corr, sh, continuous_coord, continuous_valid )
         class(strategy3D_srch), intent(inout) :: s
         integer,                intent(in)    :: ref, inpl  ! ref here is multi-state ref index
@@ -40,37 +64,26 @@ contains
         logical   :: l_multistates, inpl_valid
         ! stash previous ori
         call s%b_ptr%spproj_field%get_ori(s%iptcl, o_prev)
-        ! reference (proj)
-        if( ref < 1 .or. ref > s%nrefs ) THROW_HARD('ref index: '//int2str(ref)//' out of bound; assign_ori')
+        ! the candidate's pose: direction, discrete in-plane angle and stored shift (candidate_pose)
+        call candidate_pose(s, ref, inpl, sh, euler, shvec)
         proj = ref_proj_from_index(ref, s%nprojs)
         call s%b_ptr%spproj_field%set(s%iptcl, 'proj', real(proj))
         ! in-plane (inpl)
         call s%b_ptr%spproj_field%set(s%iptcl, 'inpl', real(inpl))
-        ! Euler angle
+        ! Euler angle: the continuous route's fractional in-plane angle replaces the discrete one
         if( present(continuous_coord) .neqv. present(continuous_valid) )then
             THROW_HARD('continuous in-plane metadata requires coordinate and validity together')
         endif
         if( present(continuous_coord) )then
             inpl_coord = continuous_coord
             inpl_valid = continuous_valid
-            euler    = s%b_ptr%eulspace%get_euler(proj)
-            euler(3) = resolve_inplane_e3(inpl, inpl_coord, inpl_valid, &
+            euler(3)   = resolve_inplane_e3(inpl, inpl_coord, inpl_valid, &
                 &s%continuous_active, s%b_ptr%pftc%get_dang())
-        else
-            ! Preserve the original metadata assignment exactly when the
-            ! continuous route is absent or disabled.
-            euler    = s%b_ptr%eulspace%get_euler(proj)
-            euler(3) = 360. - s%b_ptr%pftc%get_rot(inpl)
         endif
         call s%b_ptr%spproj_field%set_euler(s%iptcl, euler)
         ! shift
-        shvec      = s%prev_shvec
         shvec_incr = 0.
-        if( s%doshift ) then
-            shvec_incr = sh
-            shvec      = shvec + shvec_incr
-        end if
-        where( abs(shvec) < 1e-6 ) shvec = 0.
+        if( s%doshift ) shvec_incr = sh
         call s%b_ptr%spproj_field%set_shift(s%iptcl, shvec)
         call s%b_ptr%spproj_field%set(s%iptcl, 'shincarg', arg(shvec_incr))
         ! state
@@ -158,6 +171,8 @@ contains
         else
             call assign_ori(s, ref, inpl, corr, sh)
         endif
+        ! the dynamic centring's state under the key (the classic modes)
+        call s%record_shift(ref, sh)
     end subroutine extract_peak_ori
 
     subroutine extract_peak_oris( s, npeaks )

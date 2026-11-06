@@ -29,7 +29,7 @@ subroutine new_solve3D_nano( prgtab )
         &'De novo 3D map determination for a nanoparticle data set',&    ! summary
         &'is a wrapper around solve3D that applies nanoparticle-oriented defaults while allowing overrides',& ! help
         &'single_exec',&                                                                                   ! executable
-        &.true., visibility=UI_VIS_STANDARD, display_name='De Novo Nanoparticle Map') ! requires sp_project
+        &.true., visibility=UI_VIS_STANDARD, display_name='Solve Nanoparticle Map') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
         ! search controls
         call solve3D_nano%add_input(UI_SRCH, nsample, required_override=.false., &
@@ -63,7 +63,9 @@ subroutine new_solve3D_nano( prgtab )
         call autorefine3D_nano%new(&
         &'autorefine3D_nano',&                                                            ! name
         &'Automatically refine a metallic nanoparticle structure from particle images',&  ! summary
-        &'is a distributed workflow for automated 3D refinement of metallic nanoparticles based on probabilistic projection matching',& ! help
+        &'automatically refines metallic nanoparticles by projection matching and atom detection. '//&
+        &'Each subsequent refinement stage uses the detected model''s _FIT.mrc, '//&
+        &'including the reconstruction transfer and background',& ! help
         &'single_exec',&                                                                  ! executable
         &.true., visibility=UI_VIS_STANDARD, display_name='Automated Nanoparticle Refinement') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
@@ -74,9 +76,11 @@ subroutine new_solve3D_nano( prgtab )
         ! parameter input/output
         call autorefine3D_nano%add_input(UI_PARM, smpd, &
         &visibility=UI_VIS_STANDARD)
-        call autorefine3D_nano%add_input(UI_PARM, element, &
-        &visibility=UI_VIS_STANDARD)
-        ! <no additional inputs>
+        ! no element: the loop builds species-agnostic models (atomic_density_model.md); species are called afterwards
+        call autorefine3D_nano%add_input(UI_PARM, 'rec_backend', 'multi', 'Reconstruction backend', &
+        &'Reconstruction backend for each refinement stage; the detected-model loop requires PCG(gridding|pcg){gridding}', &
+        &'', .false., 'gridding', choices=ui_choices([character(len=8) :: 'gridding', 'pcg']), &
+        &visibility=UI_VIS_ADVANCED)
         ! <empty>
         ! search controls
         call autorefine3D_nano%add_input(UI_SRCH, nspace, &
@@ -105,8 +109,27 @@ subroutine new_solve3D_nano( prgtab )
         &visibility=UI_VIS_ADVANCED)
         call autorefine3D_nano%add_input(UI_FILT, 'lp', 'num', 'Initial low-pass limit', 'Initial low-pass limit', 'low-pass limit in Angstroms{1.5}', .true., 1.5, &
         &visibility=UI_VIS_STANDARD)
-        call autorefine3D_nano%add_input(UI_FILT, icm, &
-        &visibility=UI_VIS_ADVANCED)
+        call autorefine3D_nano%add_input(UI_FILT, 'atm_prior', 'binary', 'Detected-atom reconstruction loop', &
+        &'Run the first stage without a model, detect atoms, then use each detected model as the atomicity prior of the next PCG reconstruction; '//&
+        &'atom detection and FSC continue to use the prior-free base half maps(yes|no){no}', '', .false., 'no', &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), visibility=UI_VIS_ADVANCED, &
+        &activation=ui_activation_equals_any('rec_backend', [character(len=3) :: 'pcg']))
+        call autorefine3D_nano%add_input(UI_FILT, 'lambda_atm', 'num', 'Atomicity prior strength', &
+        &'Strength relative to the data precision per voxel; 0 = the moment estimate of the base pair', 'coefficient{0}', &
+        &.false., 0., visibility=UI_VIS_ADVANCED, &
+        &activation=ui_activation_equals_any('atm_prior', [character(len=3) :: 'yes']))
+        call autorefine3D_nano%add_input(UI_FILT, 'bfac_data', 'num', 'Atomicity prior kernel B', &
+        &'B (A^2) added to the narrowest prior kernel; fitted on each base map when not given', 'B in A^2', &
+        &.false., 0., visibility=UI_VIS_ADVANCED, &
+        &activation=ui_activation_equals_any('atm_prior', [character(len=3) :: 'yes']))
+        call autorefine3D_nano%add_input(UI_FILT, 'maxits_atm', 'num', 'Atomicity prior PCG iterations', &
+        &'Cap of the PCG iterations of each atomicity-prior solve', 'iterations{30}', &
+        &.false., 30., visibility=UI_VIS_ADVANCED, &
+        &activation=ui_activation_equals_any('atm_prior', [character(len=3) :: 'yes']))
+        call autorefine3D_nano%add_input(UI_FILT, 'rtol_atm', 'num', 'Atomicity prior PCG tolerance', &
+        &'Stop each atomicity-prior solve at this true L2 relative residual; <=0 runs exactly maxits_atm', 'tolerance{0}', &
+        &.false., 0., visibility=UI_VIS_ADVANCED, &
+        &activation=ui_activation_equals_any('atm_prior', [character(len=3) :: 'yes']))
         ! mask controls
         call autorefine3D_nano%add_input(UI_MASK, mskdiam, &
         &visibility=UI_VIS_STANDARD)
@@ -177,11 +200,6 @@ subroutine new_solve3D_nano( prgtab )
         &visibility=UI_VIS_ADVANCED)
         call refine3D_nano%add_input(UI_FILT, 'lpstop', 'num', 'Low-pass limit for frequency limited refinement', &
         &'Low-pass limit used to limit the resolution during refinement', 'low-pass limit in Angstroms{0.5}', .false., 0.5, &
-        &visibility=UI_VIS_ADVANCED)
-        call refine3D_nano%add_input(UI_FILT, icm, &
-        &visibility=UI_VIS_ADVANCED)
-        call refine3D_nano%add_input(UI_FILT, 'lambda', 'num', 'ICM lambda regularization parameter', &
-        &'Strength of noise reduction', '(0.01-3.0){0.1}', .false., 0.1, &
         &visibility=UI_VIS_ADVANCED)
         ! mask controls
         call refine3D_nano%add_input(UI_MASK, mskdiam, &

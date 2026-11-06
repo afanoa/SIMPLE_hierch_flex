@@ -6,9 +6,7 @@ the first chunk, then one `solve3D_addon` run per later chunk, each frozen on
 the result before it. The contracts of the two runs are in
 [solve3D_policy.md](solve3D_policy.md) and
 [solve3D_addon_policy.md](solve3D_addon_policy.md). The design record is
-[emulate_solve3D_stream_completed.md](../../implementation_notes/completed/emulate_solve3D_stream_completed.md);
-the explicit-size emulator it also describes, `emulate_solve3D_stream`, was
-removed on 2026-10-14.
+[solve3D_chunks_completed.md](../../implementation_notes/completed/solve3D_chunks_completed.md).
 
 ## 1. Scope
 
@@ -129,7 +127,7 @@ The runs keep the order of arrival:
 
 - **The base is the start of the session.** Session drift, and views or
   classes that are rare early in the data, carry into the base map.
-- **View imbalance within a run** is left to the sampler: `balance=cavg`
+- **View imbalance within a run** is left to the sampler: `balance=class`
   evens out the views among the particles a run has. Views a cohort lacks come
   from the frozen term of its add-on.
 - **Each run reads its own block of stack files.**

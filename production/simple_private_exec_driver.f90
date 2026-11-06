@@ -220,12 +220,6 @@ contains
         type(commander_calc_pspec)              :: xcalc_pspec
         type(commander_calc_pspec_assemble)     :: xcalc_pspec_assemble
         type(commander_commit_sigma2)       :: xcommit_sigma2
-        type(commander_prob_tab)                :: xprob_tab
-        type(commander_prob_tab_neigh)          :: xprob_tab_neigh
-        type(commander_prob_align)              :: xprob_align
-        type(commander_prob_align_neigh)        :: xprob_align_neigh
-        type(commander_prob_tab2D)              :: xprob_tab2D
-        type(commander_prob_align2D)            :: xprob_align2D
         type(commander_flex_pca_worker)           :: xflex_pca
         ! RECONSTRUCTION PROGRAMS
         type(commander_volassemble)             :: xvolassemble
@@ -241,7 +235,6 @@ contains
         ! GENERAL IMAGE PROCESSING PROGRAMS
         type(commander_scale)                   :: xscale
         type(commander_binarize)                :: xbinarize
-        type(commander_ppca_denoise)            :: xppca_denoise
         ! MISCELLANOUS PROGRAMS
         type(commander_aggregate_chunks)        :: xaggregate_chunks
         type(commander_kstest)                  :: xkstst
@@ -253,7 +246,7 @@ contains
         type(commander_prune_project)           :: xprune_project
         type(commander_scale_project)           :: xscale_project
         ! TIME-SERIES ANALYSIS PROGRAMS
-        type(commander_track_particles)         :: xtrack_particles
+        type(commander_tseries_track_particles)         :: xtseries_track_particles
         type(commander_tseries_motion_correct)  :: xtseries_mcorr
         ! PARALLEL PROCESSING PROGRAMS
         type(commander_split)                   :: xsplit
@@ -320,18 +313,6 @@ contains
                 call xcalc_pspec_assemble%execute(cline)
             case( 'commit_sigma2' )
                 call xcommit_sigma2%execute(cline)
-            case( 'prob_tab' )
-                call xprob_tab%execute(cline)
-            case( 'prob_tab_neigh' )
-                call xprob_tab_neigh%execute(cline)
-            case( 'prob_align' )
-                call xprob_align%execute(cline)
-            case( 'prob_align_neigh' )
-                call xprob_align_neigh%execute(cline)
-            case( 'prob_tab2D' )
-                call xprob_tab2D%execute(cline)
-            case( 'prob_align2D' )
-                call xprob_align2D%execute(cline)
             case( 'flex_pca' )
                 call xflex_pca%execute(cline)
             ! RECONSTRUCTION PROGRAMS
@@ -358,8 +339,6 @@ contains
                 call xscale%execute(cline)
             case( 'binarize' )
                 call xbinarize%execute(cline)
-            case( 'ppca_denoise' )
-                call xppca_denoise%execute(cline)
             ! MISCELLANOUS PROGRAMS
             case( 'aggregate_chunks' )
                 call xaggregate_chunks%execute(cline)
@@ -381,8 +360,8 @@ contains
             ! TIME-SERIES ANALYSIS PROGRAMS
             case( 'tseries_motion_correct' )
                 call xtseries_mcorr%execute(cline)
-            case( 'track_particles' )
-                call xtrack_particles%execute(cline)
+            case( 'tseries_track_particles' )
+                call xtseries_track_particles%execute(cline)
             ! PARALLEL PROCESSING PROGRAMS
             case( 'split' )
                 call xsplit%execute(cline)

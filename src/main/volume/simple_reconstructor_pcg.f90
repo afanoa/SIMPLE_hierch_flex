@@ -7,17 +7,19 @@
 module simple_reconstructor_pcg
 use, intrinsic :: iso_fortran_env, only: int64
 use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+use, intrinsic :: iso_c_binding,   only: c_float, c_float_complex
 use simple_core_module_api
 use simple_image,             only: image
 use simple_ctf,               only: ctf
-use simple_cartesian_fourier, only: center_embed_real3d, center_crop_real3d, &
-    &extract_native_fourier_plane, gather_packed_window
+use simple_cartesian_fourier, only: extract_native_fourier_plane, gather_packed_window
 use simple_gridding,          only: kb_stencil_centered_crop_inv_envelope_1d
-use simple_pcg_lattice,       only: pcg_lattice
+use simple_pcg_lattice,       only: pcg_lattice, plane_loc, rim_free, win_wraps, win_below_fold, scatter_window, &
+    &scatter_window_real, scatter_window_pair, scatter_window_nowrap, scatter_window_pair_nowrap, &
+    &slab_count, slab_planes, slab_k_range, PCG_FFT_MEASURE_MIN_BOXPD
 use simple_pcg_atomic_prior,  only: pcg_atomic_prior
 use simple_pcg_solver,        only: pcg_operator, pcg_solver_options, pcg_solver_outcome, pcg_solve, &
     &PCG_STOP_INDEFINITE, PCG_XTOL, PCG_RESID_REPLACE, PCG_RHO_FLOOR_FRAC
-!$ use omp_lib, only: omp_get_max_threads, omp_get_thread_num
+!$ use omp_lib, only: omp_get_max_threads, omp_get_thread_num, omp_get_num_threads
 implicit none
 
 public :: reconstructor_pcg, pcg_solver_outcome
@@ -30,12 +32,13 @@ private
 
 integer, parameter :: PCG_OP_MATRIXFREE = 0 !< reference operator: exact, cost ~ nptcls per iteration
 integer, parameter :: PCG_OP_KERNEL     = 1 !< kernelized Toeplitz operator: cost independent of nptcls
-!> 2: the header carries the applied weight mass and the state weight set identity beside the count
-integer, parameter :: PCG_RAW_ACCUM_VERSION = 2
+!> 3: the payload is the h >= 0 half of every m-slice, the wrapped Nyquist mate (lims3(1,1)) as its
+!! last row; 2 added the applied weight mass and the state weight set identity to the header
+integer, parameter :: PCG_RAW_ACCUM_VERSION = 3
 integer, parameter :: PCG_RAW_PROV_LEN = 256
 real,    parameter :: PCG_SUPPORT_DIV_MIN = 0.1 !< window floor of the x/window warm-start conversion, see window_div
 real,    parameter :: PCG_RHO_SAMPLED_FRAC = 0.1 !< density below this fraction of its shell's measured mean is unmeasured, see finalize_density_accum
-character(len=16), parameter :: PCG_RAW_ACCUM_MAGIC = 'SIMPLE_PCG_RAW02'
+character(len=16), parameter :: PCG_RAW_ACCUM_MAGIC = 'SIMPLE_PCG_RAW03'
 
 real,             parameter, public :: PCG_LAMBDA = 1.0e-3 !< the Tikhonov coefficient of production reconstructions
 !> a particle is a PCG member of a state when its state weight exceeds this (the sig2/w conditioning floor)
@@ -45,12 +48,10 @@ public :: PCG_STOP_INDEFINITE, PCG_XTOL, PCG_RESID_REPLACE, PCG_RHO_FLOOR_FRAC
 !! for a zero start (which has exactly 1.0) before iterating
 real,             parameter         :: PCG_START_MAX_REL_RESID = 1.0
 
-!> the padded-lattice geometry, KB window, wrap table and solve support come from pcg_lattice
+!> the padded-lattice geometry, the plane disk (lims2, sqlp, padsc), KB window, wrap table, solve support
+!! and the plane gather and scatter come from pcg_lattice
 type, extends(pcg_lattice) :: reconstructor_pcg
     private
-    real             :: padsc      = 1.0 !< padf**3, undoes fwd_ft's 1/product(ldim)
-    integer          :: lims2(2,2) = 0  !< (h/k, lo/hi) plane bounds, full symmetric disk
-    integer          :: sqlp       = 0  !< squared Nyquist radius
     real             :: lambda     = 0.0 !< effective absolute coefficient used by apply_normal
     real             :: lambda_rel = 0.0 !< coefficient relative to the weighted data-operator scale
     real             :: data_scale = 0.0 !< deterministic scale derived from raw data-only D
@@ -81,8 +82,9 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     integer              :: fft_nthreads = 1         !< threads owned by each persistent FFTW plan
     ! ---- streaming accumulation over particle batches ----
     ! the only particle-dependent state the solve needs; precond, Khat and the RHS derive from them
-    real,    allocatable :: acc_work(:,:,:)          !< sum_i G_i^dagger |T_i|^2, full-range
-    complex, allocatable :: b_work(:,:,:)            !< RHS accumulator, full-range
+    ! full-range lattices; windows wholly below the h >= 0 fold are never deposited (win_below_fold)
+    real,    allocatable :: acc_work(:,:,:)          !< sum_i G_i^dagger |T_i|^2
+    complex, allocatable :: b_work(:,:,:)            !< RHS accumulator
     real,    allocatable :: b_rhs(:,:,:)             !< folded/deapodized/masked RHS, box^3
     real,    allocatable :: b_rhs_nosupp(:,:,:)      !< the RHS before the support, kept for regularize_finalized
     real,    allocatable :: xfix(:,:,:)
@@ -143,6 +145,7 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     ! SETUP
     procedure :: prep_particles
     procedure :: set_sym
+    procedure, private :: sym_rots
     procedure :: build_precond
     procedure :: build_kernel
     procedure :: build_operators
@@ -157,6 +160,8 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     procedure :: add_raw_accum_weighted
     procedure :: scale_raw_accum
     procedure :: compare_raw_accum
+    procedure, private :: pack_half_slice
+    procedure, private :: add_half_slice
     procedure, private :: accumulate_rhs_density
     procedure, private :: accumulate_absT2
     procedure, private :: finalize_density_accum
@@ -212,6 +217,10 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     procedure :: solve
     procedure :: solve_accum
     procedure :: shrink_by_ml_prior
+    procedure :: unshrink_by_ml_prior
+    procedure, private :: ml_shrink_factor
+    procedure :: apply_ml_prior
+    procedure :: apply_preconditioner
     procedure :: solve_with_cold_restart
     procedure :: solve_regularized
     procedure, private :: solve_core
@@ -227,6 +236,8 @@ type, extends(pcg_lattice) :: reconstructor_pcg
     procedure, private :: fold_and_ifft
     procedure, private :: apply_precond
     procedure, private :: ensure_wimg
+    procedure, private :: embed_fft
+    procedure, private :: ifft_crop
     procedure, private :: update_lambda_from_density
     procedure, private :: build_ml_prior_from_density
     procedure, private :: apply_fourier_diagonal
@@ -265,7 +276,6 @@ contains
         real,                               intent(in)    :: smpd
         real,                     optional, intent(in)    :: lambda
         integer,                  optional, intent(in)    :: fft_nthreads
-        integer :: R
         call self%kill
         self%lambda = 0.0
         if( present(lambda) ) self%lambda = lambda
@@ -274,15 +284,8 @@ contains
         ! the native box holds the unknown, the padf-times padded lattice every Fourier operation
         ! (centre-pad in, centre-crop out), as in Fourier gridding; native-lattice KB interpolation
         ! is only percent-accurate
-        call self%new_lattice(box, smpd, self%fft_nthreads)
-        ! fwd_ft divides by product(ldim): restores the native scale at coincident frequencies
-        self%padsc = real(self%padf)**3
-        ! full symmetric (both-sign h) NATIVE disk: forward_plane/adjoint_plane_add
-        ! are then an exact adjoint pair for any orientation; padded loc = padf*loc
-        R = self%Rnat
-        self%lims2(1,:) = [-R, R]
-        self%lims2(2,:) = [-R, R]
-        self%sqlp       = R*R
+        ! (the lattice also sets the full both-sign-h native disk lims2 and padsc)
+        call self%new_lattice(box, smpd)
         call self%build_hk_luts
         call self%build_env
         ! c1 default: a single identity operator, replaced by set_sym
@@ -498,8 +501,8 @@ contains
         call self%fold_ridges_into_precond
     end subroutine set_solvent_prior
 
-    !> Atomicity prior lambda_A (I - P_G) with lambda_A = lambda_rel * realspace_diag (the data precision per voxel).
-    !! The prior object must outlive the solves; lambda_rel = 0 detaches it and leaves the operator untouched.
+    !> Atomicity prior lambda_A (I - P) with lambda_A = lambda_rel * realspace_diag (the data precision per voxel).
+    !! P spans free atom amplitudes or the global scale of a fitted B/occupancy/intensity model.
     !! Deapodized mode only, no ML prior beside it; call after end_accum
     subroutine set_atomic_prior( self, prior, lambda_rel )
         class(reconstructor_pcg),        intent(inout) :: self
@@ -530,8 +533,8 @@ contains
         get_atomic_lambda = self%atm_lambda
     end function get_atomic_lambda
 
-    !> Per-atom amplitudes fitted to this half's data through its normal operator, c = argmin |A G c - b|^2
-    !! (pcg_atomic_prior%amplitudes); the prior term vanishes on span(G), so it may be attached or not
+    !> Per-atom amplitudes fitted to this half's data through its normal operator, c = argmin |A G c - b|^2.
+    !! With a fitted model these are diagnostics; the active prior spans that model's single global scale.
     subroutine fit_atom_amplitudes( self, prior, c, maxits, rtol, niters, rel_resid )
         class(reconstructor_pcg), target, intent(inout) :: self
         class(pcg_atomic_prior),          intent(in)    :: prior
@@ -636,7 +639,7 @@ contains
     end function get_solvent_lambda
 
     !> the ridge terms of the normal operator: the band precision lambda I and, when set, the position-dependent
-    !! solvent ridge lambda_s (1-w) and the atomicity prior lambda_A (I - P_G); both operator modes come here
+    !! solvent ridge lambda_s (1-w) and the atomicity prior lambda_A (I - P); both operator modes come here
     subroutine add_ridge( self, p, hp )
         class(reconstructor_pcg), intent(in)    :: self
         real,                     intent(in)    :: p(self%box,self%box,self%box)
@@ -698,13 +701,69 @@ contains
         end where
     end subroutine window_div
 
+    !> the boxpd^3 work image, made on first use by the routines that transform (a worker that only
+    !! accumulates never makes it); large lattices get measured FFTW plans, whose wisdom then serves
+    !! every later operator of the same size in the process, except under a fixed seed (exact replay)
     subroutine ensure_wimg( self )
+        use simple_rnd, only: has_global_seed
         class(reconstructor_pcg), intent(inout) :: self
         if( self%wimg_exists ) return
         call self%wimg%new([self%boxpd,self%boxpd,self%boxpd], self%smpd, &
-            &wthreads=self%fft_nthreads > 1, fft_nthreads=self%fft_nthreads)
+            &wthreads=self%fft_nthreads > 1, fft_nthreads=self%fft_nthreads, &
+            &fft_measure=self%boxpd >= PCG_FFT_MEASURE_MIN_BOXPD .and. .not. has_global_seed())
         self%wimg_exists = .true.
     end subroutine ensure_wimg
+
+    !> loads the native volume v centre-padded into wimg's real-space box (zero outside) and
+    !! transforms it: wimg's packed transform is then the padded lattice's. In place through the
+    !! image's rmat/cmat pointers (get_cmat_ptr states the contract): the copies in and out of
+    !! set_rmat/get_cmat/set_cmat/get_rmat, four transforms per PCG iteration, cost more than the
+    !! transforms; this routine and ifft_crop are the only places the operator touches the buffers
+    subroutine embed_fft( self, v )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(in)    :: v(self%box,self%box,self%box)
+        real(c_float), pointer :: rptr(:,:,:)
+        integer :: j, k, o, box, boxpd
+        call self%ensure_wimg
+        call self%wimg%get_rmat_ptr(rptr)
+        o     = self%pad_off
+        box   = self%box
+        boxpd = self%boxpd
+        !$omp parallel do collapse(2) default(shared) private(j,k) schedule(static) proc_bind(close)
+        do k = 1, boxpd
+            do j = 1, boxpd
+                if( k > o .and. k <= o+box .and. j > o .and. j <= o+box )then
+                    rptr(1:o,j,k)         = 0.0
+                    rptr(o+1:o+box,j,k)   = v(:,j-o,k-o)
+                    rptr(o+box+1:boxpd,j,k) = 0.0
+                else
+                    rptr(:,j,k) = 0.0
+                endif
+            end do
+        end do
+        !$omp end parallel do
+        call self%wimg%set_ft(.false.)
+        call self%wimg%fft()
+    end subroutine embed_fft
+
+    !> inverse transforms wimg and crops its real-space box to the native volume v
+    subroutine ifft_crop( self, v )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(out)   :: v(self%box,self%box,self%box)
+        real(c_float), pointer :: rptr(:,:,:)
+        integer :: j, k, o, box
+        call self%wimg%ifft()
+        call self%wimg%get_rmat_ptr(rptr)
+        o   = self%pad_off
+        box = self%box
+        !$omp parallel do collapse(2) default(shared) private(j,k) schedule(static) proc_bind(close)
+        do k = 1, box
+            do j = 1, box
+                v(:,j,k) = rptr(o+1:o+box,o+j,o+k)
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine ifft_crop
 
     ! DESTRUCTOR
 
@@ -738,8 +797,6 @@ contains
         self%l_accum = .false.
         self%l_rhs   = .false.
         call self%kill_lattice
-        self%lims2  = 0
-        self%sqlp   = 0
         self%lambda = 0.0
         self%lambda_rel = 0.0
         self%data_scale = 0.0
@@ -835,6 +892,17 @@ contains
         end do
     end subroutine set_sym
 
+    !> the rotations R S_g of the point-group replication of rotation rot, symmats(:,:,1) = I first
+    pure function sym_rots( self, rot ) result( rots )
+        class(reconstructor_pcg), intent(in) :: self
+        real,                     intent(in) :: rot(3,3)
+        real    :: rots(3,3,self%nsym)
+        integer :: g
+        do g = 1, self%nsym
+            rots(:,:,g) = matmul(rot, self%symmats(:,:,g))
+        end do
+    end function sym_rots
+
     subroutine set_op_mode( self, op_mode )
         class(reconstructor_pcg), intent(inout) :: self
         integer,                  intent(in)    :: op_mode
@@ -851,9 +919,7 @@ contains
     subroutine set_volume( self, v )
         class(reconstructor_pcg), intent(inout) :: self
         real,                     intent(in)    :: v(self%box,self%box,self%box)
-        call self%ensure_wimg
-        call self%wimg%set_rmat(center_embed_real3d(v,self%boxpd), .false.)
-        call self%wimg%fft()
+        call self%embed_fft(v)
     end subroutine set_volume
 
     !> G_i F: gathers a full (unpacked) Fourier plane at orientation e from the
@@ -865,24 +931,9 @@ contains
         complex,                  intent(out)   :: plane(self%lims2(1,1):self%lims2(1,2),&
                                                         &self%lims2(2,1):self%lims2(2,2))
         complex, allocatable :: cmat(:,:,:)
-        real    :: e_rotmat(3,3), loc(3), w(self%wdim,self%wdim,self%wdim)
-        integer :: h, k, i0(3)
         call self%ensure_wimg
-        cmat     = self%wimg%get_cmat()
-        e_rotmat = e%get_mat()
-        plane    = cmplx(0.,0.)
-        !$omp parallel do collapse(2) default(shared) private(h,k,loc,i0,w) &
-        !$omp schedule(static) proc_bind(close)
-        do k = self%lims2(2,1), self%lims2(2,2)
-            do h = self%lims2(1,1), self%lims2(1,2)
-                if( h*h + k*k > self%sqlp ) cycle
-                loc = real(self%padf) * matmul(real([h,k,0]), e_rotmat)
-                i0  = nint(loc) - self%iwinsz
-                call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
-                plane(h,k) = self%padsc*gather_packed_window(cmat,lbound(self%wrap,1),self%wrap,i0,w)
-            end do
-        end do
-        !$omp end parallel do
+        cmat = self%wimg%get_cmat()
+        call self%gather_plane(cmat, e%get_mat(), 0., plane)
     end subroutine forward_plane
 
     !> <x_hat, accum> over the oversampled lattice for the volume held by
@@ -931,9 +982,7 @@ contains
         complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
                                                             &self%lims3(2,1):self%lims3(2,2),&
                                                             &self%lims3(3,1):self%lims3(3,2))
-        real :: e_rotmat(3,3)
-        e_rotmat = e%get_mat()
-        call scatter_plane(self, plane, e_rotmat, vol_accum)
+        call self%scatter_plane(plane, self%sym_rots(e%get_mat()), 0., vol_accum)
     end subroutine adjoint_plane_add
 
     !> T_i(h,k) = C_i(h,k) S_i(h,k) / sqrt(sigma2_i(shell)), the full complex transfer, with
@@ -1088,7 +1137,7 @@ contains
                     do h = self%lims2(1,1)+l, self%lims2(1,2), self%stride
                         do k = self%lims2(2,1), self%lims2(2,2)
                             if( h*h + k*k > self%sqlp ) cycle
-                            loc  = real(self%padf) * matmul(real([h,k,0]), rot)
+                            loc  = plane_loc(self, h, k, rot, 0.)
                             i0   = nint(loc) - self%iwinsz
                             if( win_wraps(self, i0) ) cycle  ! rim: serial pass below
                             call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
@@ -1104,8 +1153,8 @@ contains
                 do h = self%lims2(1,1), self%lims2(1,2)
                     do k = self%lims2(2,1), self%lims2(2,2)
                         if( h*h + k*k > self%sqlp   ) cycle
-                        if( h*h + k*k <= self%sq_rim ) cycle   ! provably cannot wrap
-                        loc  = real(self%padf) * matmul(real([h,k,0]), rot)
+                        if( rim_free(self, h, k, 0.) ) cycle   ! provably cannot wrap
+                        loc  = plane_loc(self, h, k, rot, 0.)
                         i0   = nint(loc) - self%iwinsz
                         if( .not. win_wraps(self, i0) ) cycle
                         call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
@@ -1132,7 +1181,7 @@ contains
         real,                     intent(in)    :: p(self%box,self%box,self%box)
         logical,        optional, intent(in)    :: data_only
         real,    allocatable :: hp(:,:,:), work(:,:,:)
-        complex, allocatable :: cmat(:,:,:)
+        complex(c_float_complex), pointer :: cptr(:,:,:)
         real                    :: kv
         integer                 :: cdim(3), i, j, k
         integer(timer_int_kind) :: tp
@@ -1141,17 +1190,19 @@ contains
         l_prior = self%l_ml_prior
         if( present(data_only) ) l_prior = l_prior .and. .not. data_only
         call self%ensure_wimg
-        allocate(work(self%box,self%box,self%box), source=p)
-        ! Khat is the bare Toeplitz T; with deapodization off the matrix-free
-        ! operator is E T E, so the envelope is reinstated on both sides
-        if( .not. self%l_deapod ) work = work * self%env
         if( self%l_profile ) tp = pcg_tic()
-        call self%wimg%set_rmat(center_embed_real3d(work,self%boxpd), .false.)
-        call self%wimg%fft()
+        if( self%l_deapod )then
+            call self%embed_fft(p)
+        else
+            ! Khat is the bare Toeplitz T; with deapodization off the matrix-free
+            ! operator is E T E, so the envelope is reinstated on both sides
+            allocate(work(self%box,self%box,self%box), source=p)
+            work = work * self%env
+            call self%embed_fft(work)
+            deallocate(work)
+        endif
         if( self%l_profile ) self%t_setvol = self%t_setvol + pcg_toc(tp)
-        if( self%l_profile ) tp = pcg_tic()
-        cmat = self%wimg%get_cmat()
-        if( self%l_profile ) self%t_cmatcp = self%t_cmatcp + pcg_toc(tp)
+        call self%wimg%get_cmat_ptr(cptr)
         cdim = self%wimg%get_array_shape()
         if( self%l_profile ) tp = pcg_tic()
         !$omp parallel do collapse(3) default(shared) private(i,j,k,kv) &
@@ -1161,16 +1212,15 @@ contains
                 do i = 1, cdim(1)
                     kv = self%Khat(i,j,k)
                     if( l_prior .and. self%l_deapod ) kv = kv + self%ml_prior(i,j,k)
-                    cmat(i,j,k) = cmat(i,j,k) * kv
+                    cptr(i,j,k) = cptr(i,j,k) * kv
                 end do
             end do
         end do
         !$omp end parallel do
         if( self%l_profile ) self%t_khat = self%t_khat + pcg_toc(tp)
         if( self%l_profile ) tp = pcg_tic()
-        call self%wimg%set_cmat(cmat)
-        call self%wimg%ifft()
-        hp = center_crop_real3d(self%wimg%get_rmat(),self%box)
+        allocate(hp(self%box,self%box,self%box))
+        call self%ifft_crop(hp)
         if( self%l_profile ) self%t_fold = self%t_fold + pcg_toc(tp)
         if( .not. self%l_deapod ) hp = hp * self%env
         if( l_prior .and. .not. self%l_deapod )then
@@ -1191,26 +1241,24 @@ contains
         real,                     intent(in)    :: p(self%box,self%box,self%box)
         real,                     intent(in)    :: diag(:,:,:)
         real,    allocatable :: q(:,:,:)
-        complex, allocatable :: cmat(:,:,:)
+        complex(c_float_complex), pointer :: cptr(:,:,:)
         integer :: cdim(3), i, j, k
         call self%ensure_wimg
         cdim = self%wimg%get_array_shape()
         if( any(shape(diag) /= cdim) ) THROW_HARD('PCG Fourier diagonal shape mismatch')
-        call self%wimg%set_rmat(center_embed_real3d(p,self%boxpd), .false.)
-        call self%wimg%fft()
-        cmat = self%wimg%get_cmat()
+        call self%embed_fft(p)
+        call self%wimg%get_cmat_ptr(cptr)
         !$omp parallel do collapse(3) default(shared) private(i,j,k) schedule(static)
         do k = 1, cdim(3)
             do j = 1, cdim(2)
                 do i = 1, cdim(1)
-                    cmat(i,j,k) = cmat(i,j,k) * diag(i,j,k)
+                    cptr(i,j,k) = cptr(i,j,k) * diag(i,j,k)
                 end do
             end do
         end do
         !$omp end parallel do
-        call self%wimg%set_cmat(cmat)
-        call self%wimg%ifft()
-        q = center_crop_real3d(self%wimg%get_rmat(),self%box)
+        allocate(q(self%box,self%box,self%box))
+        call self%ifft_crop(q)
     end function apply_fourier_diagonal
 
     !> b = sum_i G_i^dagger(conjg(T_i) y_i / sqrt(sigma2_i)), the data RHS; unlike
@@ -1248,7 +1296,7 @@ contains
             else
                 weighted = y_planes(:,:,i)
             endif
-            call scatter_plane(self, weighted, self%rotmats(:,:,i), vol_accum)
+            call self%scatter_plane(weighted, self%sym_rots(self%rotmats(:,:,i)), 0., vol_accum)
         end do
         b = self%fold_and_ifft(vol_accum)
         ! A^dagger = E^-1 A~^dagger: the RHS gets the correction once, H twice
@@ -1270,7 +1318,6 @@ contains
     !! adding worker artifacts, workers use begin_accum after prep_particles
     subroutine begin_reduction( self )
         class(reconstructor_pcg), intent(inout) :: self
-        call self%ensure_wimg
         if( allocated(self%acc_work) ) deallocate(self%acc_work)
         if( allocated(self%b_work)   ) deallocate(self%b_work)
         if( allocated(self%b_rhs)    ) deallocate(self%b_rhs)
@@ -1311,10 +1358,11 @@ contains
         call move_alloc(dacc, self%acc_work)
     end subroutine accumulate_batch
 
-    !> atomically publishes one worker's raw full-range B and D (no folding,
-    !! deapodization, flooring or solve before this); header = manifest, .tmp promoted after close.
-    !! nptcls counts the contributors; mass is their applied weight mass (nptcls under hard labels)
-    !! and wset_id the generation and layout digest of the state weight set (zero under hard labels)
+    !> atomically publishes one worker's raw B and D (no folding, deapodization, flooring or solve
+    !! before this); header = manifest, .tmp promoted after close. The payload is the half the fold
+    !! reads (pack_half_slice); nptcls counts the contributors, mass is their applied weight mass
+    !! (nptcls under hard labels) and wset_id the generation and layout digest of the state weight
+    !! set (zero under hard labels)
     subroutine write_raw_accum( self, fname, state, eo, part, nparts, nptcls, provenance, mass, wset_id )
         class(reconstructor_pcg),  intent(in) :: self
         class(string),             intent(in) :: fname
@@ -1324,6 +1372,8 @@ contains
         integer(int64),  optional, intent(in) :: wset_id(2)
         type(string)                    :: tmpfname
         character(len=PCG_RAW_PROV_LEN) :: prov_fixed
+        complex, allocatable            :: bhalf(:,:)
+        real,    allocatable            :: dhalf(:,:)
         integer                         :: funit, ierr, m
         integer(int64)                  :: file_size, id(2)
         real(dp)                        :: mass_here
@@ -1357,22 +1407,27 @@ contains
         write(funit, iostat=ierr) prov_fixed
         call fileiochk('write_raw_accum writing provenance', ierr)
         if( nptcls > 0 )then
+            allocate(bhalf(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
+            allocate(dhalf(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
             do m = self%lims3(3,1), self%lims3(3,2)
-                write(funit, iostat=ierr) self%b_work(:,:,m)
+                call self%pack_half_slice(m, bhalf=bhalf)
+                write(funit, iostat=ierr) bhalf
                 if( ierr /= 0 ) exit
             end do
             call fileiochk('write_raw_accum writing B', ierr)
             do m = self%lims3(3,1), self%lims3(3,2)
-                write(funit, iostat=ierr) self%acc_work(:,:,m)
+                call self%pack_half_slice(m, dhalf=dhalf)
+                write(funit, iostat=ierr) dhalf
                 if( ierr /= 0 ) exit
             end do
             call fileiochk('write_raw_accum writing D', ierr)
+            deallocate(bhalf, dhalf)
         endif
         call fclose(funit)
         file_size = -1_int64
         inquire(file=tmpfname%to_char(), size=file_size)
         if( file_size <= 0_int64 ) THROW_HARD('raw PCG artifact write produced an empty file')
-        call simple_rename(tmpfname, fname, overwrite=.true.)
+        call simple_rename(tmpfname, fname)
         call tmpfname%kill
     end subroutine write_raw_accum
 
@@ -1442,13 +1497,13 @@ contains
         endif
         rt_here = 0._dp
         if( nptcls > 0 )then
-            allocate(bslice(self%lims3(1,1):self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
-            allocate(dslice(self%lims3(1,1):self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
+            allocate(bslice(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
+            allocate(dslice(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2)))
             do m = self%lims3(3,1), self%lims3(3,2)
                 read(funit, iostat=ierr) bslice
                 if( ierr /= 0 ) exit
                 if( present(rt_sum) ) tp = pcg_tic()
-                self%b_work(:,:,m) = self%b_work(:,:,m) + bslice
+                call self%add_half_slice(m, 1.0, self%lims3, bslice=bslice)
                 if( present(rt_sum) ) rt_here = rt_here + pcg_toc(tp)
             end do
             call fileiochk('add_raw_accum reading B', ierr)
@@ -1456,7 +1511,7 @@ contains
                 read(funit, iostat=ierr) dslice
                 if( ierr /= 0 ) exit
                 if( present(rt_sum) ) tp = pcg_tic()
-                self%acc_work(:,:,m) = self%acc_work(:,:,m) + dslice
+                call self%add_half_slice(m, 1.0, self%lims3, dslice=dslice)
                 if( present(rt_sum) ) rt_here = rt_here + pcg_toc(tp)
             end do
             call fileiochk('add_raw_accum reading D', ierr)
@@ -1474,6 +1529,50 @@ contains
         self%reduction_next_part = part + 1
     end subroutine add_raw_accum
 
+    !> the raw-artifact payload rows of m-slice m: the h >= 0 half the fold reads, the wrapped
+    !! Nyquist mate (stored at lims3(1,1), see fold_lattice_accum) as the last row. The row
+    !! lims3(1,2) of the accumulators is never scattered into, so nothing is lost
+    subroutine pack_half_slice( self, m, bhalf, dhalf )
+        class(reconstructor_pcg), intent(in)  :: self
+        integer,                  intent(in)  :: m
+        complex,        optional, intent(out) :: bhalf(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2))
+        real,           optional, intent(out) :: dhalf(0:self%lims3(1,2), self%lims3(2,1):self%lims3(2,2))
+        integer :: hlo, hhi
+        hlo = self%lims3(1,1)
+        hhi = self%lims3(1,2)
+        if( present(bhalf) )then
+            bhalf(0:hhi-1,:) = self%b_work(0:hhi-1,:,m)
+            bhalf(hhi,:)     = self%b_work(hlo,:,m)
+        endif
+        if( present(dhalf) )then
+            dhalf(0:hhi-1,:) = self%acc_work(0:hhi-1,:,m)
+            dhalf(hhi,:)     = self%acc_work(hlo,:,m)
+        endif
+    end subroutine pack_half_slice
+
+    !> adds weight times the payload rows of one m-slice (pack_half_slice's layout, on the lattice
+    !! lims of the artifact, nested in the current one) back into the open accumulators
+    subroutine add_half_slice( self, m, weight, lims, bslice, dslice )
+        class(reconstructor_pcg), intent(inout) :: self
+        integer,                  intent(in)    :: m, lims(3,2)
+        real,                     intent(in)    :: weight
+        complex,        optional, intent(in)    :: bslice(0:lims(1,2), lims(2,1):lims(2,2))
+        real,           optional, intent(in)    :: dslice(0:lims(1,2), lims(2,1):lims(2,2))
+        integer :: hlo, hhi, klo, khi
+        hlo = lims(1,1)
+        hhi = lims(1,2)
+        klo = lims(2,1)
+        khi = lims(2,2)
+        if( present(bslice) )then
+            self%b_work(0:hhi-1,klo:khi,m) = self%b_work(0:hhi-1,klo:khi,m) + weight * bslice(0:hhi-1,:)
+            self%b_work(hlo,    klo:khi,m) = self%b_work(hlo,    klo:khi,m) + weight * bslice(hhi,:)
+        endif
+        if( present(dslice) )then
+            self%acc_work(0:hhi-1,klo:khi,m) = self%acc_work(0:hhi-1,klo:khi,m) + weight * dslice(0:hhi-1,:)
+            self%acc_work(hlo,    klo:khi,m) = self%acc_work(hlo,    klo:khi,m) + weight * dslice(hhi,:)
+        endif
+    end subroutine add_half_slice
+
     !> scales an open raw accumulator: the only valid place for the u/f and (1-u)
     !! continuation weights (finalized kernels and maps are not additive)
     subroutine scale_raw_accum( self, weight )
@@ -1485,12 +1584,14 @@ contains
         self%acc_work = weight * self%acc_work
     end subroutine scale_raw_accum
 
-    !> relative L2 differences between two open raw accumulators, without copies
+    !> relative L2 differences between two open raw accumulators over the rows the fold reads
+    !! (pack_half_slice's: h >= 0 and the wrapped Nyquist mate), without copies; a persisted
+    !! accumulator carries no other rows
     subroutine compare_raw_accum( self, other, b_relerr, d_relerr )
         class(reconstructor_pcg), intent(in)  :: self, other
         real,                     intent(out) :: b_relerr, d_relerr
         real(dp) :: bnum, bden, dnum, dden
-        integer  :: h, k, m
+        integer  :: h, k, m, hlo
         if( .not. self%l_accum .or. .not. other%l_accum ) THROW_HARD('raw PCG comparison requires open accumulators')
         if( self%box /= other%box .or. self%boxpd /= other%boxpd .or. any(self%lims3 /= other%lims3) )then
             THROW_HARD('raw PCG comparison geometry mismatch')
@@ -1499,9 +1600,14 @@ contains
         bden = 0.0_dp
         dnum = 0.0_dp
         dden = 0.0_dp
+        hlo  = self%lims3(1,1)
         do m = self%lims3(3,1), self%lims3(3,2)
             do k = self%lims3(2,1), self%lims3(2,2)
-                do h = self%lims3(1,1), self%lims3(1,2)
+                bnum = bnum + real(abs(self%b_work(hlo,k,m)-other%b_work(hlo,k,m))**2,dp)
+                bden = bden + real(abs(other%b_work(hlo,k,m))**2,dp)
+                dnum = dnum + real((self%acc_work(hlo,k,m)-other%acc_work(hlo,k,m))**2,dp)
+                dden = dden + real(other%acc_work(hlo,k,m)**2,dp)
+                do h = 0, self%lims3(1,2)
                     bnum = bnum + real(abs(self%b_work(h,k,m)-other%b_work(h,k,m))**2,dp)
                     bden = bden + real(abs(other%b_work(h,k,m))**2,dp)
                     dnum = dnum + real((self%acc_work(h,k,m)-other%acc_work(h,k,m))**2,dp)
@@ -1667,14 +1773,13 @@ contains
         endif
         rt_here = 0._dp
         if( nptcls > 0 .and. weight > 0.0 )then
-            allocate(bslice(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2)))
-            allocate(dslice(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2)))
+            allocate(bslice(0:lims_file(1,2), lims_file(2,1):lims_file(2,2)))
+            allocate(dslice(0:lims_file(1,2), lims_file(2,1):lims_file(2,2)))
             do m = lims_file(3,1), lims_file(3,2)
                 read(funit, iostat=ierr) bslice
                 if( ierr /= 0 ) exit
                 if( present(rt_sum) ) tp = pcg_tic()
-                self%b_work(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2), m) = &
-                    &self%b_work(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2), m) + weight * bslice
+                call self%add_half_slice(m, weight, lims_file, bslice=bslice)
                 if( present(rt_sum) ) rt_here = rt_here + pcg_toc(tp)
             end do
             call fileiochk('add_raw_accum_weighted reading B', ierr)
@@ -1682,15 +1787,14 @@ contains
                 read(funit, iostat=ierr) dslice
                 if( ierr /= 0 ) exit
                 if( present(rt_sum) ) tp = pcg_tic()
-                self%acc_work(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2), m) = &
-                    &self%acc_work(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2), m) + weight * dslice
+                call self%add_half_slice(m, weight, lims_file, dslice=dslice)
                 if( present(rt_sum) ) rt_here = rt_here + pcg_toc(tp)
             end do
             call fileiochk('add_raw_accum_weighted reading D', ierr)
             deallocate(bslice, dslice)
         else if( nptcls > 0 )then
-            allocate(bslice(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2)))
-            allocate(dslice(lims_file(1,1):lims_file(1,2), lims_file(2,1):lims_file(2,2)))
+            allocate(bslice(0:lims_file(1,2), lims_file(2,1):lims_file(2,2)))
+            allocate(dslice(0:lims_file(1,2), lims_file(2,1):lims_file(2,2)))
             do m = lims_file(3,1), lims_file(3,2)
                 read(funit, iostat=ierr) bslice
                 if( ierr /= 0 ) exit
@@ -1712,7 +1816,10 @@ contains
     end subroutine add_raw_accum_weighted
 
     !> accumulates the weighted RHS B and the density D in one traversal: same
-    !! orientation, coordinate and KB window for both scatters
+    !! orientation, coordinate and KB window for both scatters, the threads owning plane
+    !! slabs of the accumulators (pcg_lattice, SLAB OWNERSHIP). The planes are Hermitian
+    !! and the accumulators are read as their h >= 0 half, so windows wholly below it are
+    !! skipped (win_below_fold): half the scatter, the same sums
     subroutine accumulate_rhs_density( self, y_batch, nb, ifrom, bacc, dacc )
         class(reconstructor_pcg), intent(inout) :: self
         integer,                  intent(in)    :: nb, ifrom
@@ -1727,41 +1834,55 @@ contains
         complex, allocatable :: weighted(:,:)
         real,    allocatable :: absT2(:,:)
         real    :: loc(3), w(self%wdim,self%wdim,self%wdim), rot(3,3)
-        integer :: ib, i, g, h, k, l, i0(3)
+        integer :: ib, i, g, h, k, i0(3), nslab, nthr, ithr, iphase, islab, slo, shi, klo, khi
         if( nb < 1 ) return
         allocate(weighted(self%lims2(1,1):self%lims2(1,2), self%lims2(2,1):self%lims2(2,2)))
         allocate(absT2(self%lims2(1,1):self%lims2(1,2), self%lims2(2,1):self%lims2(2,2)))
-        !$omp parallel default(shared) private(ib,i,g,h,k,l,loc,i0,w,rot) proc_bind(close)
+        nslab = slab_count(self)
+        !$omp parallel default(shared) private(ib,i,g,h,k,loc,i0,w,rot,nthr,ithr,iphase,islab,slo,shi,klo,khi) &
+        !$omp proc_bind(close)
+        nthr = 1
+        ithr = 0
+        !$ nthr = omp_get_num_threads()
+        !$ ithr = omp_get_thread_num()
         do ib = 1, nb
             i = ifrom + ib - 1
             call self%prepare_fused_planes(i, y_batch(:,:,ib), weighted, absT2)
             do g = 1, self%nsym
                 rot = matmul(self%rotmats(:,:,i), self%symmats(:,:,g))
-                do l = 0, self%stride-1
-                    !$omp do schedule(static,1)
-                    do h = self%lims2(1,1)+l, self%lims2(1,2), self%stride
-                        do k = self%lims2(2,1), self%lims2(2,2)
-                            if( h*h + k*k > self%sqlp ) cycle
-                            if( absT2(h,k) == 0. .and. weighted(h,k) == cmplx(0.,0.) ) cycle
-                            loc = real(self%padf) * matmul(real([h,k,0]), rot)
-                            i0  = nint(loc) - self%iwinsz
-                            if( win_wraps(self, i0) ) cycle
-                            call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
-                            call scatter_window_pair_nowrap(self, i0, w, self%padsc * weighted(h,k), &
-                                &absT2(h,k), bacc, dacc)
+                do iphase = 0, 1
+                    do islab = iphase, nslab-1, 2
+                        if( mod(islab/2, nthr) /= ithr ) cycle   ! another thread's slab
+                        call slab_planes(self, islab, slo, shi)
+                        do h = self%lims2(1,1), self%lims2(1,2)
+                            call slab_k_range(self, h, rot, slo, shi, klo, khi)
+                            do k = klo, khi
+                                if( h*h + k*k > self%sqlp ) cycle
+                                if( absT2(h,k) == 0. .and. weighted(h,k) == cmplx(0.,0.) ) cycle
+                                loc = plane_loc(self, h, k, rot, 0.)
+                                i0  = nint(loc) - self%iwinsz
+                                if( i0(3) < slo .or. i0(3) > shi ) cycle   ! the exact ownership test
+                                if( win_wraps(self, i0) ) cycle
+                                ! Hermitian planes: only the h >= 0 half of the accumulator is ever read
+                                if( win_below_fold(self, i0) ) cycle
+                                call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                                call scatter_window_pair_nowrap(self, i0, w, self%padsc * weighted(h,k), &
+                                    &absT2(h,k), bacc, dacc)
+                            end do
                         end do
                     end do
-                    !$omp end do
+                    !$omp barrier
                 end do
                 !$omp single
                 do h = self%lims2(1,1), self%lims2(1,2)
                     do k = self%lims2(2,1), self%lims2(2,2)
                         if( h*h + k*k > self%sqlp   ) cycle
-                        if( h*h + k*k <= self%sq_rim ) cycle
+                        if( rim_free(self, h, k, 0.) ) cycle
                         if( absT2(h,k) == 0. .and. weighted(h,k) == cmplx(0.,0.) ) cycle
-                        loc = real(self%padf) * matmul(real([h,k,0]), rot)
+                        loc = plane_loc(self, h, k, rot, 0.)
                         i0  = nint(loc) - self%iwinsz
                         if( .not. win_wraps(self, i0) ) cycle
+                        if( win_below_fold(self, i0) ) cycle
                         call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
                         call scatter_window_pair(self, i0, w, self%padsc * weighted(h,k), &
                             &absT2(h,k), bacc, dacc)
@@ -1878,44 +1999,57 @@ contains
         integer,                  optional, intent(in)    :: ifrom, ito
         real, allocatable :: absT2(:,:)
         real    :: loc(3), w(self%wdim,self%wdim,self%wdim), rot(3,3)
-        integer :: i, g, h, k, l, i0(3), ii_from, ii_to
+        integer :: i, g, h, k, i0(3), ii_from, ii_to, nslab, nthr, ithr, iphase, islab, slo, shi, klo, khi
         ii_from = 1
         ii_to   = self%nptcls
         if( present(ifrom) ) ii_from = ifrom
         if( present(ito)   ) ii_to   = ito
         if( ii_to < ii_from ) return
         allocate(absT2(self%lims2(1,1):self%lims2(1,2), self%lims2(2,1):self%lims2(2,2)))
-        !$omp parallel default(shared) private(i,g,h,k,l,loc,i0,w,rot) proc_bind(close)
+        nslab = slab_count(self)
+        !$omp parallel default(shared) private(i,g,h,k,loc,i0,w,rot,nthr,ithr,iphase,islab,slo,shi,klo,khi) &
+        !$omp proc_bind(close)
+        nthr = 1
+        ithr = 0
+        !$ nthr = omp_get_num_threads()
+        !$ ithr = omp_get_thread_num()
         do i = ii_from, ii_to
             call self%absT2_plane(i, absT2)
-            ! replication at every R_i.S_g, g outside the colour sweep; symmats(:,:,1)=I gives c1
+            ! replication at every R_i.S_g, g outside the slab phases; symmats(:,:,1)=I gives c1
             do g = 1, self%nsym
                 rot = matmul(self%rotmats(:,:,i), self%symmats(:,:,g))
-                do l = 0, self%stride-1
-                    !$omp do schedule(static,1)
-                    do h = self%lims2(1,1)+l, self%lims2(1,2), self%stride
-                        do k = self%lims2(2,1), self%lims2(2,2)
-                            if( h*h + k*k > self%sqlp ) cycle
-                            if( absT2(h,k) == 0. ) cycle
-                            loc = real(self%padf) * matmul(real([h,k,0]), rot)
-                            i0  = nint(loc) - self%iwinsz
-                            if( win_wraps(self, i0) ) cycle  ! rim: serial pass below
-                            call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
-                            call scatter_window_nowrap(self, i0, w, absT2(h,k), acc)
+                do iphase = 0, 1
+                    do islab = iphase, nslab-1, 2
+                        if( mod(islab/2, nthr) /= ithr ) cycle
+                        call slab_planes(self, islab, slo, shi)
+                        do h = self%lims2(1,1), self%lims2(1,2)
+                            call slab_k_range(self, h, rot, slo, shi, klo, khi)
+                            do k = klo, khi
+                                if( h*h + k*k > self%sqlp ) cycle
+                                if( absT2(h,k) == 0. ) cycle
+                                loc = plane_loc(self, h, k, rot, 0.)
+                                i0  = nint(loc) - self%iwinsz
+                                if( i0(3) < slo .or. i0(3) > shi ) cycle
+                                if( win_wraps(self, i0) ) cycle  ! rim: serial pass below
+                                if( win_below_fold(self, i0) ) cycle
+                                call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                                call scatter_window_nowrap(self, i0, w, absT2(h,k), acc)
+                            end do
                         end do
                     end do
-                    !$omp end do
+                    !$omp barrier
                 end do
                 ! wrapping rim, serialized: see win_wraps
                 !$omp single
                 do h = self%lims2(1,1), self%lims2(1,2)
                     do k = self%lims2(2,1), self%lims2(2,2)
                         if( h*h + k*k > self%sqlp   ) cycle
-                        if( h*h + k*k <= self%sq_rim ) cycle   ! provably cannot wrap
+                        if( rim_free(self, h, k, 0.) ) cycle   ! provably cannot wrap
                         if( absT2(h,k) == 0. ) cycle
-                        loc = real(self%padf) * matmul(real([h,k,0]), rot)
+                        loc = plane_loc(self, h, k, rot, 0.)
                         i0  = nint(loc) - self%iwinsz
                         if( .not. win_wraps(self, i0) ) cycle
+                        if( win_below_fold(self, i0) ) cycle
                         call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
                         call scatter_window_real(self, i0, w, absT2(h,k), acc)
                     end do
@@ -1937,30 +2071,53 @@ contains
                                                             &self%lims3(2,1):self%lims3(2,2),&
                                                             &self%lims3(3,1):self%lims3(3,2))
         integer, parameter :: DATA_SCALE_NATIVE_SHELLS = 6
-        real(dp), allocatable :: shell_sum(:)
-        integer,  allocatable :: shell_count(:)
+        real(dp), allocatable :: shell_sum(:), shell_sum_thr(:,:)
+        integer,  allocatable :: shell_count(:), shell_count_thr(:,:)
         real(dp) :: dsum
         real     :: dval
-        integer  :: h, k, m, hh, nscale, base_shell, scale_shell, shell, rsq
+        integer  :: h, k, m, hh, nscale, base_shell, scale_shell, shell, rsq, rsq_lim, nthr, ithr
+        logical  :: l_invalid
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
         allocate(shell_sum(0:self%Rnat), source=0.0_dp)
         allocate(shell_count(0:self%Rnat), source=0)
+        allocate(shell_sum_thr(0:self%Rnat,nthr), source=0.0_dp)
+        allocate(shell_count_thr(0:self%Rnat,nthr), source=0)
+        rsq_lim   = (self%padf*self%Rnat)**2
+        l_invalid = .false.
+        ! per-thread shell sums, reduced in thread order; a bad value is raised after the region
+        !$omp parallel default(shared) private(h,k,m,hh,rsq,shell,dval,ithr) reduction(.or.:l_invalid)
+        ithr = 1
+        !$ ithr = omp_get_thread_num() + 1
+        !$omp do collapse(2) schedule(static)
         do m = self%lims3(3,1), self%lims3(3,2)
             do k = self%lims3(2,1), self%lims3(2,2)
                 do h = 0, self%lims3(1,2)
                     rsq = h*h + k*k + m*m
-                    if( rsq > (self%padf*self%Rnat)**2 ) cycle
+                    if( rsq > rsq_lim ) cycle
                     shell = ceiling(sqrt(real(rsq)) / real(self%padf))
                     shell = min(shell, self%Rnat)
                     hh   = self%wrap(h)
                     dval = rho_accum(hh,k,m)
                     if( .not. ieee_is_finite(dval) .or. dval < 0.0 )then
-                        THROW_HARD('invalid value in raw PCG density accumulator')
+                        l_invalid = .true.
+                        cycle
                     endif
-                    shell_sum(shell)   = shell_sum(shell) + real(dval,dp)
-                    shell_count(shell) = shell_count(shell) + 1
+                    shell_sum_thr(shell,ithr)   = shell_sum_thr(shell,ithr) + real(dval,dp)
+                    shell_count_thr(shell,ithr) = shell_count_thr(shell,ithr) + 1
                 end do
             end do
         end do
+        !$omp end do
+        !$omp end parallel
+        if( l_invalid ) THROW_HARD('invalid value in raw PCG density accumulator')
+        do ithr = 1, nthr
+            do shell = 0, self%Rnat
+                shell_sum(shell)   = shell_sum(shell)   + shell_sum_thr(shell,ithr)
+                shell_count(shell) = shell_count(shell) + shell_count_thr(shell,ithr)
+            end do
+        end do
+        deallocate(shell_sum_thr, shell_count_thr)
         base_shell  = min(DATA_SCALE_NATIVE_SHELLS, self%Rnat)
         scale_shell = base_shell
         dsum        = sum(shell_sum(0:scale_shell))
@@ -2045,10 +2202,13 @@ contains
         if( allocated(self%ml_prior) ) deallocate(self%ml_prior)
         allocate(self%ml_prior(cdim(1),cdim(2),cdim(3)), source=0.0)
         reslim_ind = max(6, calc_fourier_index(self%ml_hp, self%box, self%smpd))
+        ! physical addresses as comp_addr_phys, hoisted per (k,m) row
         !$omp parallel do collapse(2) default(shared) &
         !$omp private(h,k,m,phys,shpd,sh,cc,ssnr,prior_raw) schedule(static)
         do m = self%lims3(3,1), self%lims3(3,2)
             do k = self%lims3(2,1), self%lims3(2,2)
+                phys(3) = m + 1; if( m < 0 ) phys(3) = phys(3) + cdim(3)
+                phys(2) = k + 1; if( k < 0 ) phys(2) = phys(2) + cdim(2)
                 do h = 0, self%lims3(1,2)
                     shpd = nint(sqrt(real(h*h + k*k + m*m)))
                     sh   = nint(real(shpd) / real(self%padf))
@@ -2057,8 +2217,7 @@ contains
                     cc        = min(0.999, max(0.001, self%ml_fsc(sh)))
                     ssnr      = cc / (1.0 - cc)
                     prior_raw = real(shsum(sh) / real(shcnt(sh),dp)) / (self%ml_tau * ssnr)
-                    phys = self%wimg%comp_addr_phys(h,k,m)
-                    self%ml_prior(phys(1),phys(2),phys(3)) = prior_raw * self%padsc**2
+                    self%ml_prior(h+1,phys(2),phys(3)) = prior_raw * self%padsc**2
                 end do
             end do
         end do
@@ -2085,6 +2244,7 @@ contains
         real                    :: denom, rval
         integer(timer_int_kind) :: tp
         if( .not. l_precond .and. .not. l_kernel ) return
+        call self%ensure_wimg
         call self%update_lambda_from_density(rho_accum)
         cdim = self%wimg%get_array_shape()
         call self%build_ml_prior_from_density(rho_accum)
@@ -2152,14 +2312,17 @@ contains
         ! A voxel below shthr is unmeasured: the support cut spreads b into it, and dividing by the
         ! floor alone would amplify that ~1/PCG_RHO_FLOOR_FRAC times (centre spike, Nyquist layer)
         tp = pcg_tic()
+        ! physical addresses as comp_addr_phys, hoisted per (k,m) row
         !$omp parallel do collapse(2) default(shared) private(h,k,m,hh,phys,sh,denom,rval) schedule(static)
         do m = self%lims3(3,1), self%lims3(3,2)
             do k = self%lims3(2,1), self%lims3(2,2)
+                phys(3) = m + 1; if( m < 0 ) phys(3) = phys(3) + cdim(3)
+                phys(2) = k + 1; if( k < 0 ) phys(2) = phys(2) + cdim(2)
                 do h = 0, self%lims3(1,2)
                     sh = nint(sqrt(real(h*h + k*k + m*m)))
                     if( sh > work_lim ) cycle
-                    hh    = self%wrap(h)
-                    phys  = self%wimg%comp_addr_phys(h,k,m)
+                    hh      = self%wrap(h)
+                    phys(1) = h + 1
                     if( l_kernel .and. sh <= khat_lim )then
                         self%Khat(phys(1),phys(2),phys(3)) = rho_accum(hh,k,m)
                     endif
@@ -2232,28 +2395,44 @@ contains
 
     subroutine finalize_khat( self )
         class(reconstructor_pcg), intent(inout) :: self
-        complex, allocatable :: ctmp(:,:,:)
-        real,    allocatable :: tker(:,:,:)
-        integer                 :: k
+        complex(c_float_complex), pointer :: cptr(:,:,:)
+        real(c_float),            pointer :: rptr(:,:,:)
+        integer                 :: i, j, k, cdim(3)
         integer(timer_int_kind) :: tp
         ! divide out the DEPOSITION envelope: scattering |T|^2 through the KB window
         ! multiplies the real-space kernel by the window's transform, a second
-        ! envelope distinct from the gather's; separable exact stencil transform
+        ! envelope distinct from the gather's; separable exact stencil transform.
+        ! In place through wimg's pointers: the kernel is real, so its packed transform is Khat
         tp = pcg_tic()
-        ctmp = cmplx(self%Khat, 0.)
-        call self%wimg%set_cmat(ctmp)
-        call self%wimg%ifft()
-        tker = self%wimg%get_rmat()
-        !$omp parallel do default(shared) private(k) schedule(static)
-        do k = 1, self%boxpd
-            call self%divide_deposition_plane(tker, k)
+        call self%wimg%get_cmat_ptr(cptr)
+        cdim = self%wimg%get_array_shape()
+        !$omp parallel do collapse(3) default(shared) private(i,j,k) schedule(static) proc_bind(close)
+        do k = 1, cdim(3)
+            do j = 1, cdim(2)
+                do i = 1, cdim(1)
+                    cptr(i,j,k) = cmplx(self%Khat(i,j,k), 0.)
+                end do
+            end do
         end do
         !$omp end parallel do
-        call self%wimg%set_rmat(tker, .false.)
+        call self%wimg%set_ft(.true.)
+        call self%wimg%ifft()
+        call self%wimg%get_rmat_ptr(rptr)
+        !$omp parallel do default(shared) private(k) schedule(static)
+        do k = 1, self%boxpd
+            call self%divide_deposition_plane(rptr, k)
+        end do
+        !$omp end parallel do
         call self%wimg%fft()
-        ctmp      = self%wimg%get_cmat()
-        self%Khat = real(ctmp)
-        deallocate(ctmp, tker)
+        !$omp parallel do collapse(3) default(shared) private(i,j,k) schedule(static) proc_bind(close)
+        do k = 1, cdim(3)
+            do j = 1, cdim(2)
+                do i = 1, cdim(1)
+                    self%Khat(i,j,k) = real(cptr(i,j,k))
+                end do
+            end do
+        end do
+        !$omp end parallel do
         self%l_kernel = .true.
         call self%calibrate_kernel
         self%t_fin_kernel = pcg_toc(tp)
@@ -2463,26 +2642,11 @@ contains
                                                             &self%lims3(2,1):self%lims3(2,2),&
                                                             &self%lims3(3,1):self%lims3(3,2))
         real, allocatable :: z(:,:,:)
-        integer                 :: h, hh, k, m, phys(3)
         integer(timer_int_kind) :: tp
         call self%ensure_wimg
         if( self%l_profile ) tp = pcg_tic()
-        call self%wimg%zero_and_flag_ft()
-        !$omp parallel do collapse(2) default(shared) private(h,hh,k,m,phys) &
-        !$omp schedule(static) proc_bind(close)
-        do m = self%lims3(3,1), self%lims3(3,2)
-            do k = self%lims3(2,1), self%lims3(2,2)
-                do h = 0, self%lims3(1,2)
-                    hh   = self%wrap(h)
-                    phys = self%wimg%comp_addr_phys(h,k,m)
-                    call self%wimg%set_cmat_at(phys(1),phys(2),phys(3), vol_accum(hh,k,m))
-                end do
-            end do
-        end do
-        !$omp end parallel do
-        call self%wimg%ifft()
-        ! back to the native lattice: the unknown never leaves box^3
-        z = center_crop_real3d(self%wimg%get_rmat(),self%box)
+        ! the accumulator of Hermitian planes: its h >= 0 half as it is
+        z = self%pcg_lattice%fold_lattice_accum(vol_accum, self%wimg, .false.)
         if( self%l_profile ) self%t_fold = self%t_fold + pcg_toc(tp)
     end function fold_and_ifft
 
@@ -2494,7 +2658,7 @@ contains
         class(reconstructor_pcg), intent(inout) :: self
         real,                     intent(in)    :: r(self%box,self%box,self%box)
         real,    allocatable :: z(:,:,:), rw(:,:,:)
-        complex, allocatable :: cmat(:,:,:)
+        complex(c_float_complex), pointer :: cptr(:,:,:)
         integer                 :: cdim(3), i, j, k
         integer(timer_int_kind) :: tp
         if( .not. self%l_precond )then
@@ -2504,234 +2668,34 @@ contains
         endif
         call self%ensure_wimg
         if( self%l_profile ) tp = pcg_tic()
-        allocate(rw(self%box,self%box,self%box), source=r)
-        if( self%l_deapod ) rw = rw * self%env
-        call self%wimg%set_rmat(center_embed_real3d(rw,self%boxpd), .false.)
-        call self%wimg%fft()
-        cmat = self%wimg%get_cmat()
+        if( self%l_deapod )then
+            allocate(rw(self%box,self%box,self%box), source=r)
+            rw = rw * self%env
+            call self%embed_fft(rw)
+            deallocate(rw)
+        else
+            call self%embed_fft(r)
+        endif
+        call self%wimg%get_cmat_ptr(cptr)
         cdim = self%wimg%get_array_shape()
         !$omp parallel do collapse(3) default(shared) private(i,j,k) &
         !$omp schedule(static) proc_bind(close)
         do k = 1, cdim(3)
             do j = 1, cdim(2)
                 do i = 1, cdim(1)
-                    cmat(i,j,k) = cmat(i,j,k) * self%precond(i,j,k)
+                    cptr(i,j,k) = cptr(i,j,k) * self%precond(i,j,k)
                 end do
             end do
         end do
         !$omp end parallel do
-        call self%wimg%set_cmat(cmat)
-        call self%wimg%ifft()
-        z = center_crop_real3d(self%wimg%get_rmat(),self%box)
+        allocate(z(self%box,self%box,self%box))
+        call self%ifft_crop(z)
         if( self%l_deapod ) z = z * self%env
         ! z inside the support keeps the whole Krylov space there (M^-1 is a Fourier diagonal)
         call self%mask_mul(z)
         if( self%l_profile ) self%t_prec = self%t_prec + pcg_toc(tp)
     end function apply_precond
 
-    !> does the window straddle the periodic wrap boundary? The h-strided colouring
-    !! separates same-colour h-lines by more than a window only in unwrapped
-    !! coordinates; after folding two such windows can overlap at the Nyquist rim
-    !! and the sum becomes thread-order dependent. Callers scatter the interior in
-    !! the coloured parallel pass and the wrapping rim serially. Module-level, not
-    !! type-bound, so it inlines (~1e8 calls per accumulation), like the scatters
-    pure logical function win_wraps( self, i0 )
-        class(reconstructor_pcg), intent(in) :: self
-        integer,                  intent(in) :: i0(3)
-        win_wraps = any(i0 < self%wlims(1)) .or. any(i0 + self%wdim - 1 > self%wlims(2))
-    end function win_wraps
-
-    !> KB-weighted scatter of one complex value into the full-range accumulator
-    pure subroutine scatter_window( self, i0, w, val, vol_accum )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
-        complex,                  intent(in)    :: val
-        complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
-                                                            &self%lims3(2,1):self%lims3(2,2),&
-                                                            &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, hh, kk, mm
-        do dk = 1, self%wdim
-            mm = self%wrap(i0(3)+dk-1)
-            do dj = 1, self%wdim
-                kk = self%wrap(i0(2)+dj-1)
-                do di = 1, self%wdim
-                    hh = self%wrap(i0(1)+di-1)
-                    vol_accum(hh,kk,mm) = vol_accum(hh,kk,mm) + w(di,dj,dk) * val
-                end do
-            end do
-        end do
-    end subroutine scatter_window
-
-    !> real-valued counterpart for the density accumulator
-    pure subroutine scatter_window_real( self, i0, w, val, vol_accum )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), val
-        real,                     intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
-                                                            &self%lims3(2,1):self%lims3(2,2),&
-                                                            &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, hh, kk, mm
-        do dk = 1, self%wdim
-            mm = self%wrap(i0(3)+dk-1)
-            do dj = 1, self%wdim
-                kk = self%wrap(i0(2)+dj-1)
-                do di = 1, self%wdim
-                    hh = self%wrap(i0(1)+di-1)
-                    vol_accum(hh,kk,mm) = vol_accum(hh,kk,mm) + w(di,dj,dk) * val
-                end do
-            end do
-        end do
-    end subroutine scatter_window_real
-
-    !> B and D through one wrapped KB-window traversal
-    pure subroutine scatter_window_pair( self, i0, w, bval, dval, bacc, dacc )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), dval
-        complex,                  intent(in)    :: bval
-        complex,                  intent(inout) :: bacc(self%lims3(1,1):self%lims3(1,2),&
-                                                       &self%lims3(2,1):self%lims3(2,2),&
-                                                       &self%lims3(3,1):self%lims3(3,2))
-        real,                     intent(inout) :: dacc(self%lims3(1,1):self%lims3(1,2),&
-                                                       &self%lims3(2,1):self%lims3(2,2),&
-                                                       &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, hh, kk, mm
-        do dk = 1, self%wdim
-            mm = self%wrap(i0(3)+dk-1)
-            do dj = 1, self%wdim
-                kk = self%wrap(i0(2)+dj-1)
-                do di = 1, self%wdim
-                    hh = self%wrap(i0(1)+di-1)
-                    bacc(hh,kk,mm) = bacc(hh,kk,mm) + w(di,dj,dk) * bval
-                    dacc(hh,kk,mm) = dacc(hh,kk,mm) + w(di,dj,dk) * dval
-                end do
-            end do
-        end do
-    end subroutine scatter_window_pair
-
-    !> interior-only scatter for windows proven not to wrap: self%wrap is the
-    !! identity there, so direct indexing is bit-identical and the inner run contiguous
-    pure subroutine scatter_window_nowrap( self, i0, w, val, vol_accum )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
-        real,                     intent(in)    :: val
-        real,                     intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
-                                                            &self%lims3(2,1):self%lims3(2,2),&
-                                                            &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, h0, kk, mm
-        h0 = i0(1)
-        do dk = 1, self%wdim
-            mm = i0(3) + dk - 1
-            do dj = 1, self%wdim
-                kk = i0(2) + dj - 1
-                do di = 1, self%wdim
-                    vol_accum(h0+di-1,kk,mm) = vol_accum(h0+di-1,kk,mm) + w(di,dj,dk) * val
-                end do
-            end do
-        end do
-    end subroutine scatter_window_nowrap
-
-    !> B and D through one non-wrapping, contiguous KB-window traversal
-    pure subroutine scatter_window_pair_nowrap( self, i0, w, bval, dval, bacc, dacc )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), dval
-        complex,                  intent(in)    :: bval
-        complex,                  intent(inout) :: bacc(self%lims3(1,1):self%lims3(1,2),&
-                                                       &self%lims3(2,1):self%lims3(2,2),&
-                                                       &self%lims3(3,1):self%lims3(3,2))
-        real,                     intent(inout) :: dacc(self%lims3(1,1):self%lims3(1,2),&
-                                                       &self%lims3(2,1):self%lims3(2,2),&
-                                                       &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, h0, kk, mm
-        h0 = i0(1)
-        do dk = 1, self%wdim
-            mm = i0(3) + dk - 1
-            do dj = 1, self%wdim
-                kk = i0(2) + dj - 1
-                do di = 1, self%wdim
-                    bacc(h0+di-1,kk,mm) = bacc(h0+di-1,kk,mm) + w(di,dj,dk) * bval
-                    dacc(h0+di-1,kk,mm) = dacc(h0+di-1,kk,mm) + w(di,dj,dk) * dval
-                end do
-            end do
-        end do
-    end subroutine scatter_window_pair_nowrap
-
-    !> complex counterpart of scatter_window_nowrap, for the RHS scatter
-    pure subroutine scatter_window_cmplx_nowrap( self, i0, w, val, vol_accum )
-        class(reconstructor_pcg), intent(in)    :: self
-        integer,                  intent(in)    :: i0(3)
-        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
-        complex,                  intent(in)    :: val
-        complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
-                                                            &self%lims3(2,1):self%lims3(2,2),&
-                                                            &self%lims3(3,1):self%lims3(3,2))
-        integer :: di, dj, dk, h0, kk, mm
-        h0 = i0(1)
-        do dk = 1, self%wdim
-            mm = i0(3) + dk - 1
-            do dj = 1, self%wdim
-                kk = i0(2) + dj - 1
-                do di = 1, self%wdim
-                    vol_accum(h0+di-1,kk,mm) = vol_accum(h0+di-1,kk,mm) + w(di,dj,dk) * val
-                end do
-            end do
-        end do
-    end subroutine scatter_window_cmplx_nowrap
-
-    !> scatters a whole plane, h-strided so it is safe inside a parallel region
-    !! (non-fused paths: adjoint_plane_add, apply_adjoint_all)
-    subroutine scatter_plane( self, plane, rot, vol_accum )
-        class(reconstructor_pcg), intent(in)    :: self
-        complex,                  intent(in)    :: plane(self%lims2(1,1):self%lims2(1,2),&
-                                                        &self%lims2(2,1):self%lims2(2,2))
-        real,                     intent(in)    :: rot(3,3)
-        complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
-                                                            &self%lims3(2,1):self%lims3(2,2),&
-                                                            &self%lims3(3,1):self%lims3(3,2))
-        real    :: loc(3), w(self%wdim,self%wdim,self%wdim), rot_g(3,3)
-        integer :: h, k, l, g, i0(3)
-        ! replication at every R_i.S_g, g outside the colour sweep; symmats(:,:,1)=I gives c1
-        !$omp parallel default(shared) private(h,k,l,g,loc,i0,w,rot_g) proc_bind(close)
-        do g = 1, self%nsym
-            rot_g = matmul(rot, self%symmats(:,:,g))
-            do l = 0, self%stride-1
-                !$omp do schedule(static,1)
-                do h = self%lims2(1,1)+l, self%lims2(1,2), self%stride
-                    do k = self%lims2(2,1), self%lims2(2,2)
-                        if( h*h + k*k > self%sqlp ) cycle
-                        if( plane(h,k) == cmplx(0.,0.) ) cycle
-                        loc = real(self%padf) * matmul(real([h,k,0]), rot_g)
-                        i0  = nint(loc) - self%iwinsz
-                        if( win_wraps(self, i0) ) cycle   ! rim: deferred to the serial pass
-                        call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
-                        call scatter_window_cmplx_nowrap(self, i0, w, self%padsc * plane(h,k), vol_accum)
-                    end do
-                end do
-                !$omp end do
-            end do
-        end do
-        !$omp end parallel
-        ! serial pass over the wrapping rim (see win_wraps): confined to the outermost
-        ! shell, so cheap, and reproducible unlike an atomic
-        do g = 1, self%nsym
-            rot_g = matmul(rot, self%symmats(:,:,g))
-            do h = self%lims2(1,1), self%lims2(1,2)
-                do k = self%lims2(2,1), self%lims2(2,2)
-                    if( h*h + k*k > self%sqlp   ) cycle
-                    if( h*h + k*k <= self%sq_rim ) cycle       ! provably cannot wrap
-                    if( plane(h,k) == cmplx(0.,0.) ) cycle
-                    loc = real(self%padf) * matmul(real([h,k,0]), rot_g)
-                    i0  = nint(loc) - self%iwinsz
-                    if( .not. win_wraps(self, i0) ) cycle
-                    call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
-                    call scatter_window(self, i0, w, self%padsc * plane(h,k), vol_accum)
-                end do
-            end do
-        end do
-    end subroutine scatter_plane
 
     ! GETTERS
 
@@ -2898,34 +2862,8 @@ contains
         real,                     intent(out)   :: rel_resid_l2, rel_resid_m
         real, allocatable :: diag(:,:,:), u(:,:,:), r(:,:,:), z(:,:,:), bz(:,:,:)
         real(dp) :: bnorm, rnorm, bm, rm
-        integer  :: cdim(3), i, j, k, logi(3), rho_lim
-        if( .not. self%l_ml_prior ) THROW_HARD('PCG ML prior has not been built; shrink_by_ml_prior')
-        if( .not. self%l_precond  ) THROW_HARD('PCG preconditioner has not been built; shrink_by_ml_prior')
         if( .not. self%l_rhs      ) THROW_HARD('end_accum has not been called; shrink_by_ml_prior')
-        call self%ensure_wimg
-        cdim = self%wimg%get_array_shape()
-        if( any(shape(self%precond) /= cdim) .or. any(shape(self%ml_prior) /= cdim) ) &
-            &THROW_HARD('PCG preconditioner/prior shape mismatch; shrink_by_ml_prior')
-        allocate(diag(cdim(1),cdim(2),cdim(3)), source=1.0)
-        ! precond = 1/(rho+floor+P_raw) here (the prior was attached before end_accum or regularize_finalized),
-        ! 1/P_raw at unmeasured voxels (factor 0), ml_prior = P_raw*padsc**2; below the prior's high-pass (ml_prior 0)
-        ! the factor is 1. Beyond the data sphere it is 0: the base map holds only support-leaked noise there
-        rho_lim = self%padf * self%Rnat
-        !$omp parallel do collapse(3) default(shared) private(i,j,k,logi) schedule(static)
-        do k = 1, cdim(3)
-            do j = 1, cdim(2)
-                do i = 1, cdim(1)
-                    logi = self%wimg%comp_addr_logi(i,j,k)
-                    if( nint(sqrt(real(sum(logi**2)))) > rho_lim )then
-                        diag(i,j,k) = 0.0
-                    else
-                        diag(i,j,k) = min(1.0, max(0.0, 1.0 - &
-                            &(self%ml_prior(i,j,k) / self%padsc**2) * self%precond(i,j,k)))
-                    endif
-                end do
-            end do
-        end do
-        !$omp end parallel do
+        diag = self%ml_shrink_factor()
         ! output space -> solve domain, shrink, and back (see window_div)
         allocate(u(self%box,self%box,self%box), source=x)
         call self%window_div(u)
@@ -2948,6 +2886,108 @@ contains
         call self%window_mul(x)
         deallocate(u, r, z, bz)
     end subroutine shrink_by_ml_prior
+
+    !> The diagonal model's Wiener factor on wimg's cmat layout, (rho+floor)/(rho+floor+P_raw) =
+    !! 1 - P_raw*precond, which shrink_by_ml_prior applies and unshrink_by_ml_prior inverts
+    function ml_shrink_factor( self ) result( diag )
+        class(reconstructor_pcg), intent(inout) :: self
+        real, allocatable :: diag(:,:,:)
+        integer :: cdim(3), i, j, k, logi(3), rho_lim
+        if( .not. self%l_ml_prior ) THROW_HARD('PCG ML prior has not been built; ml_shrink_factor')
+        if( .not. self%l_precond  ) THROW_HARD('PCG preconditioner has not been built; ml_shrink_factor')
+        call self%ensure_wimg
+        cdim = self%wimg%get_array_shape()
+        if( any(shape(self%precond) /= cdim) .or. any(shape(self%ml_prior) /= cdim) ) &
+            &THROW_HARD('PCG preconditioner/prior shape mismatch; ml_shrink_factor')
+        allocate(diag(cdim(1),cdim(2),cdim(3)), source=1.0)
+        ! precond = 1/(rho+floor+P_raw) here (the prior was attached before end_accum or regularize_finalized),
+        ! 1/P_raw at unmeasured voxels (factor 0), ml_prior = P_raw*padsc**2; below the prior's high-pass (ml_prior 0)
+        ! the factor is 1. Beyond the data sphere it is 0: the base map holds only support-leaked noise there
+        rho_lim = self%padf * self%Rnat
+        !$omp parallel do collapse(3) default(shared) private(i,j,k,logi) schedule(static)
+        do k = 1, cdim(3)
+            do j = 1, cdim(2)
+                do i = 1, cdim(1)
+                    logi = self%wimg%comp_addr_logi(i,j,k)
+                    if( nint(sqrt(real(sum(logi**2)))) > rho_lim )then
+                        diag(i,j,k) = 0.0
+                    else
+                        diag(i,j,k) = min(1.0, max(0.0, 1.0 - &
+                            &(self%ml_prior(i,j,k) / self%padsc**2) * self%precond(i,j,k)))
+                    endif
+                end do
+            end do
+        end do
+        !$omp end parallel do
+    end function ml_shrink_factor
+
+    !> The Wiener filter of a regularized solve undone, isotropically: v's padded coefficients divided by the
+    !! shrink factor averaged over the measured voxels of their shell, 1 + 1/SSNR of the shell for the diagonal
+    !! model (a voxelwise inverse would amplify the least-sampled voxels by up to P/rho, and the crop to the
+    !! native box would spread them over every shell), and zeroed in shells without a measured voxel and beyond
+    !! the data sphere. v is a native-box volume without the window (a caller's own solution on its support)
+    subroutine unshrink_by_ml_prior( self, v )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(inout) :: v(self%box,self%box,self%box)
+        real,     allocatable :: diag(:,:,:)
+        real(dp), allocatable :: fsum(:)
+        integer,  allocatable :: fcnt(:)
+        integer :: cdim(3), i, j, k, logi(3), sh, nsh
+        diag = self%ml_shrink_factor()
+        cdim = shape(diag)
+        nsh  = nint(sqrt(3.) * real(self%boxpd)) + 1
+        allocate(fsum(0:nsh), source=0.0_dp)
+        allocate(fcnt(0:nsh), source=0)
+        ! serial: the shell sums in a fixed order
+        do k = 1, cdim(3)
+            do j = 1, cdim(2)
+                do i = 1, cdim(1)
+                    if( diag(i,j,k) <= 0.0 ) cycle
+                    logi = self%wimg%comp_addr_logi(i,j,k)
+                    sh   = nint(sqrt(real(sum(logi**2))))
+                    fsum(sh) = fsum(sh) + real(diag(i,j,k),dp)
+                    fcnt(sh) = fcnt(sh) + 1
+                end do
+            end do
+        end do
+        !$omp parallel do collapse(3) default(shared) private(i,j,k,logi,sh) schedule(static)
+        do k = 1, cdim(3)
+            do j = 1, cdim(2)
+                do i = 1, cdim(1)
+                    logi = self%wimg%comp_addr_logi(i,j,k)
+                    sh   = nint(sqrt(real(sum(logi**2))))
+                    if( fcnt(sh) > 0 .and. diag(i,j,k) > 0.0 )then
+                        diag(i,j,k) = real(real(fcnt(sh),dp) / fsum(sh))
+                    else
+                        diag(i,j,k) = 0.0
+                    endif
+                end do
+            end do
+        end do
+        !$omp end parallel do
+        v = self%apply_fourier_diagonal(v, diag)
+        deallocate(diag, fsum, fcnt)
+    end subroutine unshrink_by_ml_prior
+
+    !> P p, the ML prior's padded Fourier diagonal on a native-box volume (the prior's term of
+    !! apply_normal), for a caller that minimises its own objective under this prior
+    function apply_ml_prior( self, p ) result( q )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(in)    :: p(self%box,self%box,self%box)
+        real, allocatable :: q(:,:,:)
+        if( .not. self%l_ml_prior ) THROW_HARD('PCG ML prior has not been built; apply_ml_prior')
+        q = self%apply_fourier_diagonal(p, self%ml_prior)
+    end function apply_ml_prior
+
+    !> z = M r, the solve's density preconditioner (with the prior once attached), for a caller that
+    !! minimises its own objective with it
+    function apply_preconditioner( self, r ) result( z )
+        class(reconstructor_pcg), intent(inout) :: self
+        real,                     intent(in)    :: r(self%box,self%box,self%box)
+        real, allocatable :: z(:,:,:)
+        if( .not. self%l_precond ) THROW_HARD('PCG preconditioner has not been built; apply_preconditioner')
+        z = self%apply_precond(r)
+    end function apply_preconditioner
 
     !> Solve, retrying once from zero when a nonzero start loses positive-
     !! definiteness (the solver itself discards a start worse than zero).
@@ -3237,7 +3277,7 @@ contains
         write(out_unit,'(a,f9.3)') '    particle loop                : ', self%t_ploop  / rn
         write(out_unit,'(a,f9.3)') '    kernel pointwise multiply    : ', self%t_khat   / rn
         write(out_unit,'(a,f9.3)') '    fold + inv FFT + crop        : ', self%t_fold   / rn
-        write(out_unit,'(a,f9.3)') '    apply_precond (2 FFT + copy) : ', self%t_prec   / rn
+        write(out_unit,'(a,f9.3)') '    apply_precond (2 FFT)        : ', self%t_prec   / rn
         write(out_unit,'(a,f9.3)') '    ---- accounted subtotal      : ', tot / rn
         if( tot > 0.0_dp )then
             write(out_unit,'(a,f7.1,a)') '    particle loop is ', &

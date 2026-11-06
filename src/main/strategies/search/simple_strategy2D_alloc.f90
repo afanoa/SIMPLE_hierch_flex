@@ -16,6 +16,7 @@ type strategy2D_alloc
     integer              :: snhc_smpl_ninpl  = 0        !       =snhc_smpl
     integer              :: smpl_ninpl       = 0        !       =greedy_smpl
     integer              :: smpl_ncls        = 0        !       =greedy_smpl
+    real                 :: shift_prior_sigma2 = 0.     ! the shift prior's variance per axis (shift_prior=yes, the prob modes' polish)
     ! per class
     integer, allocatable :: cls_pops(:)
     ! per particle
@@ -30,11 +31,19 @@ type(strategy2D_alloc) :: s2D
 
 contains
 
-    logical function is_fresh_2D_start( params, which_iter )
+    !> a fresh 2D start discards any previous class assignment (random previous class, all classes populated,
+    !! shifts zeroed). A time series (tseries=yes) with a class assignment is not one: its assignment is the
+    !! time chunks of init_tseries_refs or the classes refine=inpl centres, and the search starts from it, so that
+    !! strategy2D_tseries keeps a frame among its neighbours in time; l_has_class says whether the assignment exists
+    logical function is_fresh_2D_start( params, which_iter, l_has_class )
         class(parameters), intent(in) :: params
         integer,           intent(in) :: which_iter
+        logical, optional, intent(in) :: l_has_class
         is_fresh_2D_start = params%startit <= 1 .and. which_iter <= params%startit &
-            &.and. trim(params%continue) /= 'yes' .and. .not. params%l_fillin
+            &.and. trim(params%continue) /= 'yes' .and. .not. params%l_assign_all
+        if( is_fresh_2D_start .and. trim(params%tseries) == 'yes' .and. present(l_has_class) )then
+            if( l_has_class ) is_fresh_2D_start = .false.
+        endif
     end function is_fresh_2D_start
 
     subroutine clean_strategy2D
@@ -58,15 +67,21 @@ contains
 
     !>  prep class & global parameters
     subroutine prep_strategy2D_glob( params, spproj, nrots, neigh_frac )
-        use simple_eul_prob_tab_utils, only: calc_athres
+        use simple_eul_prob_tab_utils, only: calc_athres, shift_prior_sigma2
+        !$ use omp_lib,                only: omp_get_max_threads
         class(parameters), intent(in)    :: params
         type(sp_project),  intent(inout) :: spproj
         integer,           intent(in)    :: nrots
         real,              intent(in)    :: neigh_frac
         real    :: overlap, avg_dist_inpl
+        integer :: nteam
         logical :: l_fresh_start
+        ! the shift prior's width for the committed class's polish, as the 2D tables' (shift_prior_sigma2)
+        s2D%shift_prior_sigma2 = 0.
+        if( params%l_shift_prior .and. str_has_substr(params%refine, 'prob') ) &
+            &s2D%shift_prior_sigma2 = shift_prior_sigma2(spproj%os_ptcl2D, params%lp / params%smpd)
         ! gather class populations
-        l_fresh_start = is_fresh_2D_start(params, params%which_iter)
+        l_fresh_start = is_fresh_2D_start(params, params%which_iter, spproj%os_ptcl2D%isthere('class'))
         if( l_fresh_start )then
             ! A fresh run with freshly generated references must not inherit
             ! class populations from a previous/streamed 2D assignment.
@@ -112,27 +127,30 @@ contains
                 endif
             endif
         endif
-        ! per-thread class-space arrays
+        ! per-thread class-space arrays, sized by the team the pass's regions run
+        nteam = nthr_glob
+        !$ nteam = omp_get_max_threads()
         if( allocated(s2D%class_space_corrs)    ) deallocate(s2D%class_space_corrs)
         if( allocated(s2D%class_space_inplinds) ) deallocate(s2D%class_space_inplinds)
-        allocate(s2D%class_space_corrs(   params%ncls, nthr_glob),&
-                &s2D%class_space_inplinds(params%ncls, nthr_glob))
+        allocate(s2D%class_space_corrs(   params%ncls, nteam),&
+                &s2D%class_space_inplinds(params%ncls, nteam))
         s2D%class_space_corrs    = -huge(1.0)
         s2D%class_space_inplinds = 0
     end subroutine prep_strategy2D_glob
 
     !>  prep batch related parameters (particles level)
-    subroutine prep_strategy2D_batch( params, spproj, which_iter, nptcls, pinds )
+    subroutine prep_strategy2D_batch( params, spproj, which_iter, nptcls, pinds, l_order )
         class(parameters),  intent(in) :: params  
         type(sp_project),   intent(in) :: spproj
         integer,            intent(in) :: which_iter
         integer,            intent(in) :: nptcls        ! # of particles in batch
         integer,            intent(in) :: pinds(nptcls)
+        logical, optional,  intent(in) :: l_order       !< draw the stochastic search order (default); the probabilistic
+                                                        !! routes never read it and pass .false., so it is not drawn
         type(ran_tabu) :: rt
-        integer        :: i,iptcl,prev_class
-        logical        :: l_alloc, l_fresh_start
+        integer        :: i,iptcl,prev_class,k
+        logical        :: l_alloc, l_fresh_start, l_draw
         l_alloc = .true.
-        l_fresh_start = is_fresh_2D_start(params, which_iter)
         if( allocated(s2D%do_inplsrch) )then
             l_alloc = size(s2D%do_inplsrch) /= nptcls
             if( l_alloc ) deallocate(s2D%do_inplsrch,s2D%srch_order)
@@ -140,12 +158,22 @@ contains
         if( l_alloc ) allocate(s2D%do_inplsrch(1:nptcls), s2D%srch_order(params%ncls, 1:nptcls))
         ! in plane search
         s2D%do_inplsrch = params%l_doshift .and. which_iter>2
+        l_draw = .true.
+        if( present(l_order) ) l_draw = l_order
+        if( .not. l_draw )then
+            ! the order in class order, unread: the probabilistic routes draw nothing here
+            do i = 1,nptcls
+                s2D%srch_order(:,i) = [(k, k=1,params%ncls)]
+            enddo
+            return
+        endif
         ! stochastic search order
         s2D%srch_order = 0
         rt = ran_tabu(params%ncls)
         do i = 1,nptcls
             iptcl = pinds(i)
             call rt%ne_ran_iarr(s2D%srch_order(:,i))
+            l_fresh_start = is_fresh_2D_start(params, which_iter, spproj%os_ptcl2D%isthere(iptcl,'class'))
             if( l_fresh_start )then
                 prev_class = 0
             else

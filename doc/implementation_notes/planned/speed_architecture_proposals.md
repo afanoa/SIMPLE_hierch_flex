@@ -1,6 +1,8 @@
 # Speed and architecture: before the release, and the next release
 
-Proposal note, 2026-10-18. **Partly implemented: see "Status" below.** The maintainer
+Proposal note, 2026-10-18. **Partly implemented: see "Status" below; the architecture review's
+main item, the batch pipeline of probabilistic alignment, was implemented by the run
+`prob_pipeline` (2026-11-04/05).** The maintainer
 accepted the proposals on 2026-10-18, except two 2D defaults that stay as
 they are (section 1.2 c). It collects the changes proposed after the run
 `speed_mac`, split into what should be done before release 4 and what moves
@@ -20,6 +22,272 @@ Each proposal says what it is, why, whether results stay byte-identical
 ("identical"), and its size. Gains are estimates unless a measurement is
 named. Items that change results need a ruling and a check with the truth
 suite of the run `test_truth`.
+
+## Architecture review, 2026-11-04
+
+Source review at `69a623cb8`. This section supersedes the remaining-work order
+below where it conflicts with current code. The older measurements and release
+estimates remain historical evidence, not predictions for the current search.
+The architecture described here was proposed on 2026-11-04 and implemented by
+the run `prob_pipeline` on 2026-11-04/05 (`prob_align_batch_pipeline.md`, its
+Progress section holds the evidence and the measurements); the review's text
+below is kept as the record of what was found.
+
+### What remains, and what has changed
+
+The polar shift-search refactor has already removed unused evidence work,
+reused map geometry/plans/workspaces and avoided physical-width calculations
+for candidates that cannot enter the polish shortlist. Its retained scope and
+validation are in the existing
+[polar shift-search record](../../refactoring_notes/completed/polar_shift_search_performance_refactoring.md).
+Further gains should address the workflow's scientific-object lifetimes before
+adding more numerical shortcuts.
+
+The main remaining architectural cost was **probabilistic alignment implemented
+as a table pre-step followed by a separate generic matcher pass** (resolved by
+the batch pipeline, 2026-11-04; the description that follows is the state
+reviewed):
+
+- Shared-memory strategies still enter commanders that create another toolbox,
+  publish/reload project fields, and serialize tables and assignments inside the
+  same process. Distributed execution launches table and matcher workers
+  separately. See `simple_prob_align_strategy.f90`,
+  `simple_commanders_prob.f90` and the two refine strategies.
+- Table workers prepare references/noise and particle batches, then destroy
+  their scientific state. The matcher loads/prepares scientific state again and
+  rebuilds particle batches. Existing canonical particle buffers save some reads
+  and full-box preparation, not every polar transform.
+- The 3D probabilistic matcher already skips discrete exhaustive scoring and
+  skips reference memoization unless continuous in-plane polish needs it. Its
+  selected-pose polish, sigma2 residual calculation and reconstruction are real
+  consumers, not an accidental second exhaustive search. Optimize their shared
+  preparation rather than deleting these operations.
+- Dedicated particle-I/O prefetch is already implemented in
+  `simple_stack_read_session`; the separate read-ahead thread in Part 2 is stale.
+  The existing `_worker` backend retains a script dispatcher, not scientific
+  objects inside the SIMPLE child processes.
+
+Crucially, assignment is now **independent for each particle's candidate row**.
+Dense 3D first chooses the state from that row's closest reference, then draws
+within that state's block. Dense/sparse 2D and neighbourhood 3D likewise draw
+from each particle's own eligible candidates. No reference/class population
+balancing requires a global table (`ref_assign` in `simple_eul_prob_tab`,
+`simple_eul_prob_tab2D` and `simple_eul_prob_tab_neigh`). The sampled `n_eff`
+readout is diagnostic, not a feedback dependency between rows. Consequently,
+bounded streaming of **complete rows** can preserve the posterior; the older
+Part 2 proposal to retain only best candidates is a different, lossy proposal
+and is not required for this architecture.
+
+### Proposed execution contract
+
+Make probabilistic alignment a complete strategy-owned pipeline on the caller's
+`(params, build)`, with explicit begin/batch/end lifetimes. Reuse existing
+preparation, table evaluation, assignment, polish and sigma2 domain routines;
+do not create a second implementation of those algorithms. The commander stays
+a command wrapper. Table/assignment files become transport or checkpoint
+formats, rather than the mandatory interface between in-process operations.
+
+The target batch path is:
+
+```text
+immutable iteration model + incoming particle metadata
+  -> read/canonical observation -> prepare alignment batch
+  -> evaluate complete candidate rows -> draw assignments + insertion extras
+  -> polish selected poses when enabled -> sigma2 residuals when requested
+  -> compact final decisions + canonical reconstruction observations
+```
+
+Ownership and lifetime:
+
+| Lifetime | Owned state and boundary |
+| --- | --- |
+| Refine command | Partition identity, cache keys and small control metadata. No large alignment allocation is retained across the 3D reconstruction barrier merely because the process remains resident. |
+| Alignment phase of one iteration | Immutable reference/half/state model, noise generation, band/grid, masks, sampled indices, incoming orientations/shifts and temperatures; compatible FFT plans and scratch capacity. One project owner draws the sample. Workers consume this snapshot and return changed records. |
+| Bounded batch | Canonical observations, prepared polar particles/CTF terms, complete candidate rows and thread-local scratch. Keep them alive until selected-pose polish and sigma2 consumers finish, then recycle. |
+| Across alignment/reconstruction barrier | Final poses, shift state/widths, frozen weighted-insertion poses/weights, noise contributions and the existing budgeted canonical observation buffer. No alignment PFTC/reference memo survives into 3D reconstruction. |
+
+Represent the required consumers explicitly: candidate scoring, selected-pose
+polish, sigma2 and reconstruction preparation. A path that only commits a
+decision needs no polar particle preparation; a sigma2 or continuous-polish
+consumer still does. Decide this from actual consumers, not a substring of the
+mode name. A lightweight probabilistic finalizer can replace per-particle
+allocation of a general search object once the shared pipeline works.
+
+Preserve the distinctions between full-box input, canonical untapered cropped
+reconstruction observations and masked/normalized alignment PFTs. Reusing one
+as another requires a proven preparation contract, including CTF, band, half,
+noise, centering and coordinate frame. Keep incoming metadata immutable until
+each decision is complete; preserve the increment prior, shift-frame conversions,
+invalid/empty-row fallbacks, temperature, candidate order and topk weights.
+Continuous polish must not silently reweight insertion extras. The separate
+Cartesian `pose_cont` pass is outside this initial fusion.
+
+The memory target is references plus thread scratch plus bounded batch
+observations/candidates plus compact particle results: no mandatory global
+`Nparticles * Nreferences` table and no all-particle PFT cache. In 3D, release
+alignment objects before allocating the existing one-state/one-half
+reconstructor. Do not fuse all-state reconstruction into the alignment loop;
+the [multi-state memory policy](../../policies/3D/separate_alignment_and_reconstruction_for_multistate_peak_mem_reduction.md)
+is a hard boundary. Preserve 2D batch/class/half accumulation order initially.
+
+### RNG is the dependency that must be resolved before batch fusion
+
+Resolved by the keyed, stateless generator of `prob_align_batch_pipeline.md`
+(section 4; phase 1 of the run, 2026-11-04): every draw of the probabilistic
+routes is keyed on the run's seed, the pass, the iteration, the particle and
+the draw. The reasoning below is kept as the record.
+
+The mathematical row independence does not establish byte identity after
+reordering. Candidate evaluation draws in-plane/shift samples; assignment later
+draws in particle order on the master's intrinsic RNG stream. In shared memory
+the main thread also evaluates candidates. Interleaving assignment with later
+candidate evaluation changes that stream even at one thread. Longer-lived
+workers also change `SIMPLE_SEED`'s process-local reseed counter.
+
+First expose an explicit RNG contract for sample selection, candidate evaluation
+and assignment, including restart and invalid rows that consume no assignment
+draw. A later fusion can use independent logical streams keyed by iteration,
+particle and phase, with any further candidate identity required by the draw
+contract. This is a deliberate stochastic-trajectory change requiring truth
+validation, not a byte-identical optimization. Merely fixing a seed or preserving
+master assignment order does not settle it.
+
+For an exact first phase, retain existing phase barriers, reseed semantics and
+draw order. A resident worker can save reference setup across the barrier, but
+its old batches have already gone: it cannot also eliminate every second polar
+preparation without retaining/spilling those representations or changing RNG
+ownership. Do not promise bounded memory, full batch reuse and the old RNG
+schedule simultaneously without demonstrating how all three are met.
+
+### Implementation order and review gates
+
+1. **Measure the current boundary costs and expose typed entry points.** Split
+   existing worker/matcher bodies into preparation, batch operations and finish
+   routines. Use the caller's builder/project in shared memory; remove its
+   command/toolbox and table/assignment file roundtrips. Initially retain table
+   storage, barriers, numerical kernels and RNG behavior. Compare fixed-input
+   rows, assignments, shift metadata, extras and noise output against the current
+   path, not an older balanced-assignment implementation.
+2. **Retain alignment state within an iteration.** Share compatible references,
+   noise, plans and preparation capacity between evaluation and finalization.
+   A distributed worker fold may retain these across assignment using the
+   existing backend, with identical partition/sample coverage and bounded
+   memory. It must not be presented as eliminating the second batch preparation
+   automatically. Specify failure, cancellation and generation checks before
+   introducing a waiting worker protocol.
+3. **Separate RNG ownership, then fuse complete batches.** Extract one row
+   selector shared by dense/sparse/neighbourhood adapters. Retain every eligible
+   candidate, finish polish/noise while the prepared batch is live, and release
+   its rows. If the master remains the selector, use a bounded in-flight window
+   with backpressure and ordered decisions, not a gather of all rows. Cover
+   missing/duplicate/stale records and empty partitions. Establish equivalence of
+   the selection distribution and multi-seed scientific acceptance separately
+   from the intentional trajectory change.
+4. **Reuse the same pipeline in whole-command SPMD.** The existing
+   [coarray SPMD proposal](coarray_spmd_execution.md) is the durable route to
+   multi-iteration scientific residency and in-runtime publication/reduction.
+   It needs the pipeline above; collectives alone do not fix object teardown or
+   duplicated preparation. Keep transport/collectives in the execution adapter,
+   not PFTC or scoring routines. Avoid a second independent persistent-worker
+   framework. A per-iteration worker fold is an optional earlier adapter, not a
+   prerequisite to implementing SPMD.
+
+Acceptance combines unit assertions on complete row selection and metadata with
+existing `unit_pftc_align2D3D`, fast gates, simulated workflows and multi-state
+truth cases. Include sparse/dense/neighbourhood, topk, fractional sampling,
+continuous polish on/off, sigma2 on/off, empty parts and multiple threads. The
+exact first phases require observed fixed-seed identity; fused scheduling needs
+the explicit RNG contract and repeated truth checks. Add counters for reference
+loads, canonical and polar preparations, table bytes, optimizer/map work and
+phase peak RSS. Target one preparation per batch in the fused path, unchanged
+candidate/map work, and no shared-memory table transport. Unit/nightly runs can
+establish these properties; representative PfCRT/msp1/difficult-sample wall time,
+aggregate memory and NUMA measurements remain necessary to establish the gain.
+
+Reference-neighbourhood tiling, SP weights, alternate contractions and GPU work
+remain separate numerical/locality experiments. Search caps and refined-reference
+budgets are scientific approximations and are not required to remove this
+architectural overhead.
+
+## Status, 2026-11-05
+
+Done by the autonomous run `prob_pipeline` on the Dell, in the working tree
+(`prob_align_batch_pipeline.md`, Progress: phases 0 to 4):
+
+- Every random draw of the probabilistic routes (the sample, the in-plane draw
+  per scored reference, the polar shift map's disk draw, the sparse fills'
+  candidate order, the assignment draw, the diagnostics) comes from a keyed,
+  stateless generator (a multiply-xor-shift hash of the run's seed, the pass,
+  the iteration, the particle and the draw; `simple_rnd`), so a draw depends on
+  none of the thread, the batch, the part or the process. The seed travels as
+  `SIMPLE_SEED`; no new parameter.
+- Probabilistic alignment is one batch pipeline inside `refine3D_exec` and
+  `refine2D_exec`, in shared memory and in every distributed part alike: a
+  batch is prepared once, its probability-table rows filled, each particle's
+  pose or class drawn from its own row with the extras of the weighted
+  insertion, then polished, its residual computed and committed. The master
+  draws the sample, schedules its parts once, merges the parts' readout
+  records in part order and assembles as before. The global table, the part
+  files, the master's assignment step, the table programs and their commanders
+  are retired.
+- Measured (phase 4 of the note): the wall time per iteration and per phase of
+  the trpv1 2D and 3D cases against the base build, the preparations per
+  particle, and the peak resident memory of a worker, of the master and of the
+  node; the identity of the drawn entries across thread counts, batch sizes and
+  part counts holds (the fill harness), and a complete run across part counts
+  agrees to the accumulators' tolerance frozen in phase 0.
+
+## Status, 2026-11-03
+
+Done on the Oracle Linux test machine, in the working tree (the maintainer's
+request of 2026-11-03: sections 1.2 e, c and f, the worker fold, dropped, and
+the single-precision weights):
+
+- **Section 1.2 e, the 2D names and counts as 3D**: `refine2D` counts `minits`
+  and `maxits` from `startit` (the `solve2D` controller plans in absolute
+  iterations and emits run lengths; the stream's pool runs `maxits=1`); the 2D
+  convergence guard is the new key `assign_all`, and `fillin` keeps its 3D
+  meaning only, which 2D never had; 2D `refine=prob_snhc` is
+  `refine=prob_neigh` with `prob_neigh_mode=snhc`, the only 2D mode.
+  Byte-identical: distributed `solve2D` (two parts, one thread, fixed seed;
+  full and fractional updates), the 1jxy and 6vxx workflows (path-derived
+  bytes aside), `mini_stream`.
+- **Section 1.2 c and f**: the distributed master draws the sample of the
+  sampled stages without a table (`master_draws_sample2D`, as 3D's
+  `master_draws_sample3D`), so the sample does not depend on `nparts` (one
+  `refine2D` iteration at `update_frac=0.4` draws the same sample at two and
+  three parts); the 2D partitions, the matcher's and the table's, balance the
+  active particles. Changes results. Checked on the beta-galactosidase
+  selection (2,756 of 5,513 particles active, 40 classes, `nsample=1000`, four
+  seeds each): median class resolution 9.50 A before and 9.62 A after, the ten
+  best classes 6.73 and 6.76 A, classes better than 10 A 21.8 and 20.8, within
+  the seeds' spread.
+- **The worker fold, 3D and 2D** (section 1.3, stretch): implemented, then
+  dropped (ruling 2026-11-04). Where every part ran at once (the local queue, a
+  computing unit per part), one job per part filled its table part, waited for
+  the master's assignment and searched. It was byte-identical (one thread per
+  part: distributed `solve2D` of 1jxy, distributed `solve3D` of 6vxx) and
+  measured neutral on this machine: `refine2D` of trpv1 (35,645 particles, 100
+  classes, box 256, four parts of six threads, two iterations) took 138.4 s
+  folded and unfolded (three runs each, 124-146 s), `solve2D` of the
+  beta-galactosidase selection 32.7 against 33.8 s. It saved a process start, a
+  project read and (2D) a particle read per part and iteration, and it needed a
+  second scheduling path, because a queue that cannot run every part at once
+  would deadlock on a part waiting for the assignment. The gain counted above
+  needs the table's prepared particles and references handed to the search;
+  without that hand-over the fold is not worth its branching.
+- **Single-precision weights in the score kernels** (section 1.3): the euclid
+  rotation scan (`euclid_sums`) takes the single-precision weight
+  (`sigma2_wk`); the `_8` routines of the shift search stay double. At the
+  kernels (`polar_matching_bench suite=identity`, 32,000 rows per kernel): the
+  distances within 1.6e-7 relative, one unit in the last place, and no row's
+  best rotation moved. Per pair, pinned to the performance cores, 13.0 to
+  11.8 us at one thread (9.7 %), 19.8 to 18.0 us at eight (9 %). The FSC
+  check: three `refine3D` iterations of trpv1 (35,645 particles, c2, from its
+  `solve3D` map, `refine=prob`, crop 160, four parts of six threads) give the
+  same FSC=0.143 and FSC=0.5 resolutions at every iteration (4.04, 4.10,
+  4.10 A; 6.10, 6.62, 6.77 A); the curves differ by at most 0.02 in a shell,
+  as runs at six threads differ.
 
 ## Status, 2026-10-20
 
@@ -86,7 +354,7 @@ ran well on the code before `f078cf683`.
 Ruled 2026-10-19: the 2D code structure aligned with 3D moves from the next
 release to before this one (section 1.5). The states' parallel assembly
 (with the NU filter as an object, which existed for it) is left alone for
-now (Part 2).
+now (Part 2); rejected on 2026-11-04 as too memory-intensive.
 
 Two corrections to section 1.3, found by reading the code at `af13bc828`:
 
@@ -282,15 +550,23 @@ checked).
 
 ## Part 2. The next release
 
+The architecture review above is carried out by
+[`prob_align_batch_pipeline.md`](../completed/prob_align_batch_pipeline.md) (planned
+2026-11-04, ruled done): per-particle draws on keyed random streams, one batch
+pipeline for shared memory and the distributed parts, no global table and no
+part files. It absorbs the rows that stood here for the worker fold, the
+streaming assignment, the read-ahead thread and the 2D table pre-step (the
+first two superseded, the read-ahead already in the read session). What is left
+for the next release:
+
 | item | what | why later |
 | --- | --- | --- |
-| batched, GPU-ready kernels | pure kernels over explicit arrays (references, particle times CTF, shifts, rotations) scoring many references per call, first batched per particle on the CPU | the GPU release; FFT plans and precision change results |
-| the worker fold (if not done) | as in section 1.3 | size and risk |
-| persistent workers | worker processes that live for the run and exchange only model, sample and assignment; perhaps 5-15% per iteration on queued clusters | large; after the project owner and the worker fold |
-| the NU filter as an object, the states assembled in parallel | filter state in an object, one per state, so that volume assembly can run states concurrently | left alone for now (ruling 2026-10-19); open when it returns: holding several states' volumes (the multi-state memory policy forbids it today) and the sums that depend on the thread count (radial FSC, ML noise term, label smoothing weight, per-thread random streams, threaded FFTW plans) |
-| streaming assignment | keep only the best candidates per reference from each part; master table memory down by orders of magnitude on large multi-state runs | results change; needs a ruling; large |
-| particle read-ahead in its own thread | read the next batch while the current one computes (today the read-ahead runs in the same thread) | medium; gain depends on the storage |
-| table pre-step folded into the 2D search | in shared memory keep the table's prepared references and particle transforms for the search | medium to large; the one-read item of section 1.2 b takes most of the gain first |
+| batched, GPU-ready kernels | pure kernels over explicit arrays (references, particle times CTF, shifts, rotations) scoring many references per call, first batched per particle on the CPU, inside the batch of the pipeline | the GPU release; FFT plans and precision change results |
+| persistent workers, or the coarray SPMD route (`coarray_spmd_execution.md`) | worker processes or images that live for the run and exchange only model, sample and decisions; perhaps 5-15% per iteration on queued clusters | large; after the pipeline, which is the unit an image runs |
+
+Rejected (ruling 2026-11-04): the NU filter as an object with the states
+assembled in parallel. Holding several states' volumes and filter state at
+once is too memory-intensive.
 
 ## Part 3. Measurements that settle the order
 

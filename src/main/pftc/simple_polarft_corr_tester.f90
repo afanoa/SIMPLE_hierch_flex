@@ -1,4 +1,4 @@
-!@descr: unit tests of the polar-Fourier correlations (gen_objfun_vals, calc_frc, the cross-half and at-pose Euclidean losses, the slot detector, the reference model loaded at an offset) on generated images
+!@descr: unit tests of the polar-Fourier correlations (gen_objfun_vals, calc_frc, the cross-half, at-pose and seed-bank Euclidean losses, the in-plane posterior draw, the slot detector, the reference model loaded at an offset) on generated images
 ! Three smooth zero-mean images (so the shared mask envelope carries no correlation) are references
 ! and, rotated or unrelated, particles. gen_objfun_vals (objfun=cc) must peak at rotation 1 with cc ~1
 ! for an image against itself, at the applied sixth of a turn for a rotated copy, and stay low for an
@@ -9,11 +9,26 @@ use simple_core_module_api
 use simple_cmdline,      only: cmdline
 use simple_parameters,   only: parameters
 use simple_polarft_calc, only: polarft_calc
+use simple_pftc_shsrch_grad, only: shift_ptcl2ref
 use simple_image,        only: image
+use simple_rnd,          only: rnd_scope_key, RND_PROG_REFINE3D, RND_PASS_ALIGN
+use, intrinsic :: iso_fortran_env, only: int64
 use simple_test_utils
+use simple_forked_process, only: forked_process, FORK_STATUS_FAILED
+!$ use omp_lib,             only: omp_set_num_threads
 implicit none
 private
 public :: run_all_polarft_corr_tests
+
+
+!> a score that breaks a call-order rule of the calculator, which must stop by its check
+integer, parameter :: ORDER_NO_WEIGHTS = 1, ORDER_STALE_SPECTRA = 2, ORDER_STALE_PTCLS = 3
+integer, parameter :: POLAR_BOX = 4, POLAR_MODE = 5, POLAR_PDIM = 6
+type, extends(forked_process) :: order_violation
+    integer :: what = ORDER_NO_WEIGHTS
+contains
+    procedure :: execute => score_out_of_order
+end type order_violation
 
 contains
 
@@ -22,7 +37,376 @@ contains
         call test_generated_images()
         call test_cross_half_euclid()
         call test_ref_pfts_offset_io()
+        call test_bank_and_at_pose_kernels()
+        call test_posterior_inpl_draw()
+        call test_call_order_refusals()
     end subroutine run_all_polarft_corr_tests
+
+    !> the calculator's call-order rules stop a score that breaks them: a Euclidean score without sigma2
+    !! weights, on spectra newer than the weights, or on particles set after memoize_ptcls (each in a child)
+    subroutine test_call_order_refusals()
+        type(order_violation) :: child
+        character(len=*), parameter :: MSGS(6) = [character(len=64) :: &
+            &'a Euclidean score without sigma2 weights stops', 'a score on spectra newer than the weights stops', &
+            &'a new particle batch scored before memoize_ptcls stops', &
+            &'polarize of an image of another box than the memo stops', &
+            &'polarize_oversamp on a normal-mode memo stops', &
+            &'polarize with other polar dimensions than the memo stops']
+        integer :: what
+        write(*,'(A)') 'test_call_order_refusals'
+        do what = ORDER_NO_WEIGHTS, POLAR_PDIM
+            child%what = what
+            call child%start(name=string('PFTC_ORDER_'//int2str(what)))
+            call child%await_final_status()
+            call assert_int(FORK_STATUS_FAILED, child%status(), trim(MSGS(what)))
+            call assert_int(1, child%get_exit_code(), trim(MSGS(what))//' (by its check, not a crash)')
+            call child%destroy
+        end do
+    end subroutine test_call_order_refusals
+
+    subroutine score_out_of_order( self, cline )
+        class(order_violation), intent(inout) :: self
+        class(cmdline),         intent(inout) :: cline
+        integer, parameter :: BOX = 64
+        real,    parameter :: SMPD = 1.0, LP = 6.0
+        type(parameters), target :: p
+        type(cmdline)       :: cl
+        type(polarft_calc)  :: pftc
+        type(image)         :: img, img_big
+        real,           allocatable, target :: sigma2(:,:)
+        integer(int64),              target :: spectra_gen
+        real,           allocatable :: vals(:)
+        complex,        allocatable :: pft(:,:)
+        integer :: pdim(3), kfromto(2)
+        ! one thread: the parent's OpenMP pool does not exist in a forked child
+        !$ call omp_set_num_threads(1)
+        call cl%set('box',     real(BOX))
+        call cl%set('smpd',    SMPD)
+        call cl%set('mskdiam', 48.)
+        call cl%set('nptcls',  1.)
+        call cl%set('nthr',    1.)
+        call cl%set('ctf',     'no')
+        call cl%set('objfun',  'euclid')
+        call p%new(cl)
+        kfromto = [2, calc_fourier_index(LP, BOX, SMPD)]
+        call pftc%new(p, 1, [1,1], kfromto)
+        pdim = pftc%get_pdim_srch()
+        call img%new([BOX,BOX,1], SMPD)
+        call img%gauran(0.0, 1.0)
+        call img%memoize4polarize(pdim)
+        call img%fft
+        select case(self%what)
+            case(POLAR_BOX)
+                call img_big%new([BOX+16,BOX+16,1], SMPD)
+                call img_big%gauran(0.0, 1.0)
+                call img_big%fft
+                call pftc%polarize_ptcl_pft(img_big, 1, pdim=pdim, oversamp=.false.)
+                return
+            case(POLAR_MODE)
+                call pftc%polarize_ptcl_pft(img, 1, pdim=pdim, oversamp=.true.)
+                return
+            case(POLAR_PDIM)
+                allocate(pft(pdim(1), pdim(2):pdim(3)-1))
+                call img%polarize([pdim(1), pdim(2), pdim(3)-1], pft)
+                return
+        end select
+        call pftc%polarize_ref_pft(img, 1, iseven=.true.,  pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ref_pft(img, 1, iseven=.false., pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ptcl_pft(img, 1, pdim=pdim, oversamp=.false.)
+        call pftc%set_eo(1, .true.)
+        if( self%what /= ORDER_NO_WEIGHTS )then
+            allocate(sigma2(kfromto(1):kfromto(2),2), source=1.0)
+            spectra_gen = 1_int64
+            call pftc%assign_sigma2_noise(sigma2, spectra_gen)
+        endif
+        call pftc%memoize_refs
+        call pftc%memoize_ptcls
+        select case(self%what)
+            case(ORDER_STALE_SPECTRA)
+                sigma2      = 2.0
+                spectra_gen = spectra_gen + 1_int64
+            case(ORDER_STALE_PTCLS)
+                pft = pftc%allocate_pft()
+                pft = cmplx(1.,0.)
+                call pftc%set_ptcl_pft(1, pft)
+        end select
+        allocate(vals(pftc%get_nrots()))
+        call pftc%gen_objfun_vals(1, 1, [0.,0.], vals)
+        ! reached only when the score was not refused: a clean exit fails the test
+    end subroutine score_out_of_order
+
+    !> The in-plane posterior draw (gen_posterior_val and its bank form, the probability tables' fill): at a huge
+    !! temperature the argmin of the same kernel (gen_best_objfun_val, gen_best_euclid_val_bank), with its loss;
+    !! at temperature 0 uniform over the grid (many distinct rotations, the argmin a minority), the returned loss
+    !! the at-pose loss of the drawn rotation; at the particle's own temperature (posterior_temperature) the
+    !! draw's distribution is the posterior computed from the row (gen_objfun_vals): the mode's frequency and the
+    !! mass within two grid steps of it over 200 draws agree with the computed masses to 0.1, in two regimes. At
+    !! unit sigma2 the fixture's temperature is near zero (sigma2 = 1 is enormous against the image's power in
+    !! the calculator's units), the posterior is uniform and so are the draws; with sigma2 at the image's own
+    !! power scale, chosen so that the temperature is 100 (a constant sigma2 leaves the normalized loss
+    !! unchanged and scales the temperature as its inverse), the posterior and the draws concentrate about the
+    !! mode.
+    subroutine test_posterior_inpl_draw()
+        use simple_eul_prob_tab_utils, only: posterior_temperature
+        integer, parameter :: BOX = 64, NREFS = 2, NPTCLS = 1, NDRAWS = 200
+        real,    parameter :: SMPD = 1.0, MSKDIAM = 48.0, LP = 6.0, MSKRAD = 22.0
+        type(parameters), target :: p
+        type(cmdline)       :: cline
+        type(polarft_calc)  :: pftc
+        type(image)         :: img_self, img_other
+        real,    allocatable, target :: sigma2(:,:)
+        real,    allocatable :: vals(:)
+        real(dp), allocatable :: w(:)
+        complex, allocatable :: bank(:,:)
+        logical, allocatable :: seen(:)
+        real     :: s(2), u(2), dist, dist_b, dist_at, temp, max_err, p_near, f_near
+        integer  :: pdim(3), kfromto(2), irot, irot_b, nrots, idraw, nmode, ndistinct, noff
+        write(*,'(A)') 'test_posterior_inpl_draw'
+        call cline%set('box',     real(BOX))
+        call cline%set('smpd',    SMPD)
+        call cline%set('mskdiam', MSKDIAM)
+        call cline%set('nptcls',  real(NPTCLS))
+        call cline%set('nthr',    1.0)
+        call cline%set('ctf',     'no')
+        call cline%set('objfun',  'euclid')
+        call p%new(cline)
+        call set_fixed_seed(20261025)
+        kfromto = [2, calc_fourier_index(LP, BOX, SMPD)]
+        call pftc%new(p, NREFS, [1,NPTCLS], kfromto)
+        ! the keyed draws' scope: one pair draws one variate per scope, so the sampling loops below move the
+        ! scope's iteration from draw to draw
+        call pftc%set_rnd_scope(rnd_scope_key(20261025_int64, RND_PROG_REFINE3D, RND_PASS_ALIGN, 1))
+        pdim  = pftc%get_pdim_srch()
+        nrots = pftc%get_nrots()
+        call img_self%new([BOX,BOX,1], SMPD)
+        call img_self%gauran(0.0, 1.0)
+        call img_self%fft
+        call img_self%bpgau2D(0.0, LP)
+        call img_self%ifft
+        call img_self%memoize_mask_coords
+        call img_self%mask2D_soft(MSKRAD, backgr=0.0)
+        call img_other%new([BOX,BOX,1], SMPD)
+        call img_other%gauran(0.0, 1.0)
+        call img_other%fft
+        call img_other%bpgau2D(0.0, LP)
+        call img_other%ifft
+        call img_other%memoize_mask_coords
+        call img_other%mask2D_soft(MSKRAD, backgr=0.0)
+        call img_self%memoize4polarize(pdim)
+        call img_self%fft
+        call img_other%fft
+        ! reference 1 is the particle itself in both slots, reference 2 an unrelated image
+        call pftc%polarize_ref_pft(img_self,  1, iseven=.true.,  pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ref_pft(img_self,  1, iseven=.false., pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ref_pft(img_other, 2, iseven=.true.,  pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ref_pft(img_other, 2, iseven=.false., pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ptcl_pft(img_self, 1, pdim=pdim, oversamp=.false.)
+        call pftc%set_eo(1, .true.)
+        allocate(sigma2(kfromto(1):kfromto(2),2), source=1.0)
+        call pftc%assign_sigma2_noise(sigma2)
+        call pftc%memoize_refs
+        call pftc%memoize_ptcls
+        allocate(bank(pftc%get_pftsz()+1, kfromto(2)-kfromto(1)+1), seen(nrots), vals(nrots), w(nrots))
+        ! a huge temperature: the argmin of the same kernel, at a nonzero reference shift
+        s = [1.3, -0.6]
+        call pftc%gen_best_objfun_val(2, 1, s, dist_b, irot_b)
+        call pftc%gen_posterior_val(2, 1, s, huge(temp), dist, irot)
+        call assert_int(irot_b, irot, 'a huge temperature draws the argmin rotation')
+        call assert_real(dist_b, dist, 1.e-6, 'a huge temperature returns the argmin loss')
+        ! the bank form against gen_best_euclid_val_bank
+        u = [0.9, 1.4]
+        call pftc%memoize_shifted_ptcl(1, u, bank)
+        call pftc%gen_best_euclid_val_bank(2, 1, bank, dist_b, irot_b)
+        call pftc%gen_posterior_val_bank(2, 1, bank, huge(temp), dist, irot)
+        call assert_int(irot_b, irot, 'bank form: a huge temperature draws the argmin rotation')
+        call assert_real(dist_b, dist, 1.e-6, 'bank form: a huge temperature returns the argmin loss')
+        ! temperature 0: uniform over the grid; the returned loss is the drawn rotation's at-pose loss
+        call pftc%gen_best_objfun_val(1, 1, s, dist_b, irot_b)
+        seen    = .false.
+        nmode   = 0
+        noff    = 0
+        max_err = 0.
+        do idraw = 1,NDRAWS
+            call pftc%set_rnd_scope(rnd_scope_key(20261025_int64, RND_PROG_REFINE3D, RND_PASS_ALIGN, idraw))
+            call pftc%gen_posterior_val(1, 1, s, 0., dist, irot)
+            if( irot < 1 .or. irot > nrots )then
+                noff = noff + 1
+                cycle
+            endif
+            seen(irot) = .true.
+            if( irot == irot_b ) nmode = nmode + 1
+            if( idraw <= 10 )then
+                call pftc%gen_euclid_val_at(1, 1, s, irot, dist_at)
+                max_err = max(max_err, abs(dist_at - dist))
+            endif
+        enddo
+        call assert_int(0, noff, 'temperature 0: every drawn rotation is on the grid')
+        call assert_true(max_err <= 1.e-5, 'the returned loss is the at-pose loss of the drawn rotation')
+        ndistinct = count(seen)
+        call assert_true(ndistinct >= min(nrots, NDRAWS) / 4, 'temperature 0 spreads the draws over the grid')
+        call assert_true(nmode < NDRAWS / 2, 'temperature 0 draws the argmin a minority of the time')
+        ! the particle's own temperature: the draw's distribution is the posterior computed from the row. At unit
+        ! sigma2 the temperature is near zero and the posterior uniform
+        temp = posterior_temperature(pftc%wsqsum_ptcl_now(1), pftc%get_pftsz())
+        call assert_true(temp > 0. .and. temp < huge(temp), 'the posterior temperature is positive and finite')
+        call pftc%gen_best_objfun_val(1, 1, [0.,0.], dist_b, irot_b)
+        call assert_int(1, irot_b, 'the image against itself peaks at rotation 1')
+        call draws_against_posterior(temp, p_near, f_near)
+        call assert_true(p_near < 0.5, 'at unit sigma2 the fixture''s posterior over rotations is wide')
+        ! sigma2 at the image's own power scale, so that the temperature is 100: the normalized loss is unchanged
+        ! (a constant sigma2 cancels), the temperature scales as 1/sigma2, and the draws concentrate about the mode
+        sigma2 = temp / 100.
+        call pftc%memoize_sigma2_weights
+        temp = posterior_temperature(pftc%wsqsum_ptcl_now(1), pftc%get_pftsz())
+        call assert_real(100., temp, 0.1, 'the temperature scales as the inverse of a constant sigma2')
+        call draws_against_posterior(temp, p_near, f_near)
+        call assert_true(p_near > 0.5 .and. f_near > 0.5, 'at the image''s power scale the draws concentrate about the mode')
+        call img_self%kill
+        call img_other%kill
+        call pftc%kill
+        deallocate(sigma2, bank, seen, vals, w)
+
+    contains
+
+        !> the posterior over the rotations of reference 1 against the particle at temperature temp_loc, from
+        !! every rotation's loss (gen_objfun_vals), against NDRAWS draws: the mode's mass and frequency, and the
+        !! mass and frequency within two grid steps of the mode, must agree to 0.1
+        subroutine draws_against_posterior( temp_loc, p_near_loc, f_near_loc )
+            real, intent(in)  :: temp_loc
+            real, intent(out) :: p_near_loc, f_near_loc
+            real(dp) :: wsum
+            real     :: lmin, p_mode, f_mode, dist_loc
+            integer  :: irot_loc, idraw_loc, dstep, nmode_loc, nnear_loc
+            call pftc%gen_objfun_vals(1, 1, [0.,0.], vals)  ! exp(-L_r)
+            lmin = -log(max(maxval(vals), 1.e-30))
+            wsum = 0.d0
+            do irot_loc = 1,nrots
+                w(irot_loc) = exp(-real(temp_loc,dp) * (real(-log(max(vals(irot_loc), 1.e-30)),dp) - real(lmin,dp)))
+                wsum        = wsum + w(irot_loc)
+            enddo
+            p_mode     = real(w(irot_b) / wsum)
+            p_near_loc = 0.
+            do irot_loc = 1,nrots
+                dstep = min(abs(irot_loc - irot_b), nrots - abs(irot_loc - irot_b))
+                if( dstep <= 2 ) p_near_loc = p_near_loc + real(w(irot_loc) / wsum)
+            enddo
+            nmode_loc = 0
+            nnear_loc = 0
+            do idraw_loc = 1,NDRAWS
+                call pftc%set_rnd_scope(rnd_scope_key(20261025_int64, RND_PROG_REFINE3D, RND_PASS_ALIGN, idraw_loc))
+                call pftc%gen_posterior_val(1, 1, [0.,0.], temp_loc, dist_loc, irot_loc)
+                dstep = min(abs(irot_loc - irot_b), nrots - abs(irot_loc - irot_b))
+                if( irot_loc == irot_b ) nmode_loc = nmode_loc + 1
+                if( dstep <= 2 )         nnear_loc = nnear_loc + 1
+            enddo
+            f_mode     = real(nmode_loc) / real(NDRAWS)
+            f_near_loc = real(nnear_loc) / real(NDRAWS)
+            write(*,'(A,F10.3,A,F6.3,A,F6.3,A,F6.3,A,F6.3)') '  posterior temperature ', temp_loc, ': mode mass ', p_mode,&
+                &' drawn ', f_mode, '; mass within 2 steps ', p_near_loc, ' drawn ', f_near_loc
+            call assert_true(abs(f_mode - p_mode) <= 0.1, 'the mode is drawn at the posterior''s mode mass')
+            call assert_true(abs(f_near_loc - p_near_loc) <= 0.1, 'two grid steps about the mode are drawn at the posterior''s mass')
+        end subroutine draws_against_posterior
+
+    end subroutine test_posterior_inpl_draw
+
+    !> The at-pose loss at a nonzero reference shift is the shift search's objective (gen_objfun_vals, exp(-L))
+    !! at the same shift and rotation: the identical-pose null test of prob_post_diag re-scores a refined mode
+    !! through it. A seed-bank entry (the particle shifted by a particle-frame shift u) scores at rotation irot
+    !! as the reference shifted by shift_ptcl2ref(u, rot(irot)), both kernels carrying the angular Nyquist
+    !! bin; the bank's best-rotation and at-pose losses agree with each other
+    !! exactly, and cross swaps the half as for the unshifted kernels.
+    subroutine test_bank_and_at_pose_kernels()
+        integer, parameter :: BOX = 64, NREFS = 1, NPTCLS = 1
+        real,    parameter :: SMPD = 1.0, MSKDIAM = 48.0, LP = 6.0, MSKRAD = 22.0
+        real,    parameter :: NYQUIST_ATOL = 1.e-4 ! both kernels carry the Nyquist bin; a frame error is O(1)
+        type(parameters), target :: p
+        type(cmdline)       :: cline
+        type(polarft_calc)  :: pftc
+        type(image)         :: img_even, img_odd
+        real,    allocatable, target :: sigma2(:,:)
+        real,    allocatable :: vals(:)
+        complex, allocatable :: bank(:,:)
+        real    :: s(2), u(2), dist_at, dist_b, dist_bx, dist_r, dist_rx
+        integer :: pdim(3), kfromto(2), irot, irot_b, irot_bx, irot_r, nrots
+        write(*,'(A)') 'test_bank_and_at_pose_kernels'
+        call cline%set('box',     real(BOX))
+        call cline%set('smpd',    SMPD)
+        call cline%set('mskdiam', MSKDIAM)
+        call cline%set('nptcls',  real(NPTCLS))
+        call cline%set('nthr',    1.0)
+        call cline%set('ctf',     'no')
+        call cline%set('objfun',  'euclid')
+        call p%new(cline)
+        call set_fixed_seed(20261024)
+        kfromto = [2, calc_fourier_index(LP, BOX, SMPD)]
+        call pftc%new(p, NREFS, [1,NPTCLS], kfromto)
+        pdim  = pftc%get_pdim_srch()
+        nrots = pftc%get_nrots()
+        call img_even%new([BOX,BOX,1], SMPD)
+        call img_even%gauran(0.0, 1.0)
+        call img_even%fft
+        call img_even%bpgau2D(0.0, LP)
+        call img_even%ifft
+        call img_even%memoize_mask_coords
+        call img_even%mask2D_soft(MSKRAD, backgr=0.0)
+        call img_odd%new([BOX,BOX,1], SMPD)
+        call img_odd%gauran(0.0, 1.0)
+        call img_odd%fft
+        call img_odd%bpgau2D(0.0, LP)
+        call img_odd%ifft
+        call img_odd%memoize_mask_coords
+        call img_odd%mask2D_soft(MSKRAD, backgr=0.0)
+        call img_even%memoize4polarize(pdim)
+        call img_even%fft
+        call img_odd%fft
+        call pftc%polarize_ref_pft(img_even, 1, iseven=.true.,  pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ref_pft(img_odd,  1, iseven=.false., pdim=pdim, oversamp=.false.)
+        call pftc%polarize_ptcl_pft(img_even, 1, pdim=pdim, oversamp=.false.)
+        call pftc%set_eo(1, .true.)
+        allocate(sigma2(kfromto(1):kfromto(2),2), source=1.0)
+        call pftc%assign_sigma2_noise(sigma2)
+        call pftc%memoize_refs
+        call pftc%memoize_ptcls
+        allocate(vals(nrots), bank(pftc%get_pftsz()+1, kfromto(2)-kfromto(1)+1))
+        ! the at-pose loss at a nonzero reference shift is the shift search's objective, every rotation
+        s = [1.3, -0.6]
+        call pftc%gen_objfun_vals(1, 1, s, vals)
+        do irot = 1,nrots,max(1,nrots/7)
+            call pftc%gen_euclid_val_at(1, 1, s, irot, dist_at)
+            call assert_real(-log(max(vals(irot), 1.e-30)), dist_at, 1.e-4, &
+                &'the at-pose loss at a reference shift is the shift search''s objective at that pose')
+        end do
+        ! a bank entry: the particle shifted by u scores as the reference shifted by shift_ptcl2ref(u, rot)
+        u = [0.9, 1.4]
+        call pftc%memoize_shifted_ptcl(1, u, bank)
+        call pftc%gen_best_euclid_val_bank(1, 1, bank, dist_b, irot_b)
+        call pftc%gen_euclid_val_at_bank(1, 1, bank, irot_b, dist_at)
+        call assert_real(dist_b, dist_at, 1.e-6, 'the bank at-pose loss reproduces the bank best value at its rotation')
+        call pftc%gen_euclid_val_at_bank(1, 1, bank, 0, dist_at)
+        call assert_true(dist_at > 1.e30, 'the bank at-pose loss is huge off the rotation grid')
+        call pftc%gen_euclid_val_at(1, 1, shift_ptcl2ref(u, pftc%get_rot(irot_b)), irot_b, dist_r)
+        call assert_true(abs(dist_r - dist_b) <= NYQUIST_ATOL, &
+            &'the bank loss at its best rotation is the shifted-reference loss at the frame-converted seed')
+        call pftc%gen_euclid_val_at(1, 1, u, irot_b, dist_rx)
+        ! the unconverted seed is the wrong frame unless the rotation is near zero or the shift along the axis
+        if( sum(abs(shift_ptcl2ref(u, pftc%get_rot(irot_b)) - u)) > 0.5 ) call assert_true(abs(dist_rx - dist_b) > abs(dist_r - dist_b), &
+            &'the frame-converted seed is closer to the bank loss than the unconverted one')
+        ! cross swaps the half for the bank kernels as for the unshifted ones
+        call pftc%gen_best_euclid_val_bank(1, 1, bank, dist_bx, irot_bx, cross=.true.)
+        ! at the bank's own rotation: against an unrelated half another rotation can be the shifted kernel's best
+        call pftc%gen_euclid_val_at(1, 1, shift_ptcl2ref(u, pftc%get_rot(irot_bx)), irot_bx, dist_rx, cross=.true.)
+        call assert_true(abs(dist_bx - dist_rx) <= NYQUIST_ATOL, 'the cross bank loss is the cross shifted-reference loss at the converted seed')
+        call assert_true(dist_bx > dist_b + 0.3, 'the other half (an unrelated image) loses to the own half for the shifted particle too')
+        call pftc%set_eo(1, .false.)
+        call pftc%memoize_sigma2_weights
+        call pftc%gen_best_euclid_val_bank(1, 1, bank, dist_r, irot_r, cross=.true.)
+        call assert_real(dist_b, dist_r, 1.e-5, 'declared odd: the cross bank loss is the former own one')
+        call assert_int(irot_b, irot_r, 'declared odd: at the same rotation')
+        call img_even%kill
+        call img_odd%kill
+        call pftc%kill
+        deallocate(sigma2, vals, bank)
+    end subroutine test_bank_and_at_pose_kernels
 
     !> A reprojection model written by a two-reference object (write_ref_pfts) and read back by a
     !! four-reference one at iref_from 1 and 3 (read_ref_pfts): the sections of both halves land at

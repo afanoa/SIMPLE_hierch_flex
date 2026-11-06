@@ -99,6 +99,10 @@ contains
             call cline_pose_init%delete('box_crop')
             call cline_pose_init%delete('smpd_crop')
         endif
+        if( cline_pose_init%defined('shift_sigma') .and. cline_pose_init%get_carg('objfun').eq.'cc' ) then
+            write(logfhandle, '(A)') '>>> Deactivating SHIFT_SIGMA with OBJFUN=CC'
+            call cline_pose_init%delete('shift_sigma')
+        endif
         call prepare_pose_initialization_coverage(params%projfile)
         cline_sigma_bootstrap = parent_cline
         call cline_sigma_bootstrap%set('prg',                   'calc_pspec')
@@ -136,7 +140,6 @@ contains
         do state = 1,size(reference_vols)
             checkpoint_vols(state) = refine3D_state_vol_fname(state)
         enddo
-        call cleanup_assignment_files(params%nparts)
         if( l_all ) call prepare_pose_initialization_coverage(params%projfile)
         call cline_checkpoint%kill
         call cline_pose_init%kill
@@ -192,13 +195,5 @@ contains
         if( allocated(updatecnts) ) deallocate(updatecnts)
         call pose_proj%kill
     end subroutine validate_pose_initialized_states
-
-    subroutine cleanup_assignment_files( nparts )
-        integer, intent(in) :: nparts
-        call del_files(DIST_FBODY,       nparts, ext='.dat')
-        call del_files(ASSIGNMENT_FBODY, nparts, ext='.dat')
-        call del_file(DIST_FBODY//'.dat')
-        call del_file(ASSIGNMENT_FBODY//'.dat')
-    end subroutine cleanup_assignment_files
 
 end module simple_external_reference_pose_initialization

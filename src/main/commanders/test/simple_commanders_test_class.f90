@@ -1,13 +1,14 @@
 !@descr: the unit-test suites: the build's fast gate (test=unit_<area>), its umbrella (test=units) and the platform-tier forked-process suite
 module simple_commanders_test_class
 use simple_commanders_api
-use simple_test_utils,                       only: begin_test_suite, end_test_suite, reset_test_report, report_summary, &
+use simple_test_utils, only: begin_test_suite, end_test_suite, reset_test_report, report_summary, &
     &set_fixed_seed
 ! core library tester modules
 use simple_ansi_ctrls_tester,                only: run_all_ansi_ctrls_tests
 use simple_string_tester,                    only: run_all_string_tests
 use simple_syslib_tester,                    only: run_all_syslib_tests
 use simple_fileio_tester,                    only: run_all_fileio_tests
+use simple_epu_xml_tester,                   only: run_all_epu_xml_tests
 use simple_stack_io_tester,                  only: run_all_stack_io_tests
 use simple_class_sample_io_tester,           only: run_all_class_sample_io_tests
 use simple_chash_tester,                     only: run_all_chash_tests
@@ -24,9 +25,11 @@ use simple_linalg_tester,                    only: run_all_linalg_tests
 use simple_kbinterpol_tester,                only: run_all_kbinterpol_tests
 use simple_srch_sort_loc_tester,             only: run_all_srch_sort_loc_tests
 use simple_decay_funs_tester,                only: run_all_decay_funs_tests
-use simple_pca_tester,                       only: run_all_pca_tests
 use simple_opt_tester,                       only: run_all_opt_tests
+use simple_nlcg_solver_tester,               only: run_all_nlcg_solver_tests
 use simple_lpstages_tester,                  only: run_all_lpstages_tests
+use simple_dose_series_tester,               only: run_all_dose_series_tests
+use simple_dose_curve_tester,                only: run_all_dose_curve_tests
 use simple_image_msk_tester,                 only: run_all_mask_tests, run_all_nano_mask_tests, run_all_image_bin_tests
 use simple_segmentation_tester,              only: run_all_segmentation_tests
 use simple_accum_blend_tester,               only: run_all_accum_blend_tests
@@ -56,11 +59,12 @@ use simple_gui_assembler_tester,             only: run_all_gui_assembler_tests
 use simple_ui_hash_tester,                   only: run_all_ui_hash_tests
 use simple_ui_visibility_tester,             only: run_all_ui_visibility_tests
 use simple_rnd_tester,                       only: run_all_rnd_tests
-use simple_diff_map_graphs_tester,           only: run_all_diff_map_graphs_tests
 use simple_qsys_ctrl_tester,                 only: run_all_qsys_ctrl_tests
 use simple_qsys_env_tester,                  only: run_all_qsys_env_tests
 use simple_cavg_quality_relations_tester,    only: run_all_cavg_quality_relations_tests
 use simple_cavg_quality_selection_tester,    only: run_all_cavg_quality_selection_tests
+use simple_cavg_quality_lattice_tester,      only: run_all_cavg_quality_lattice_tests
+use simple_quality_logistic_tester,          only: run_all_quality_logistic_tests
 use simple_sigma2_state_tester,              only: run_all_sigma2_state_tests
 use simple_sigma2_bootstrap_tester,          only: run_all_sigma2_bootstrap_tests
 use simple_eul_prob_tab2D_tester,            only: run_all_eul_prob_tab2D_tests
@@ -72,21 +76,32 @@ use simple_rec3D_strategy_tester,            only: run_all_rec3D_strategy_tests
 use simple_frozen_accum_tester,              only: run_all_frozen_accum_tests
 use simple_reconstructor_tester,             only: run_all_reconstructor_tests
 use simple_rec3D_service_tester,             only: run_all_rec3D_service_lib_tests
+use simple_rec3D_wave_strategy_tester,       only: run_all_rec3D_wave_lib_tests
 use simple_solve3D_manifest_tester,          only: run_all_solve3D_manifest_tests
 use simple_solve3D_reseed_tester,            only: run_all_solve3D_reseed_tests
+use simple_solve2D_controller_tester,        only: run_all_solve2D_stage_rule_tests
 use simple_state_assignment_tester,          only: run_all_state_assignment_tests
 use simple_project_superset_tester,          only: run_all_project_superset_tests
 use simple_solve3D_addon_report_tester,      only: run_all_solve3D_addon_report_tests
 use simple_solve3D_chunks_plan_tester,  only: run_all_solve3D_chunks_plan_tests
 use simple_volpair_metrics_tester,           only: run_all_volpair_metrics_tests
 use simple_nu_filter_tester,                 only: run_all_nu_filter_tests
+use simple_halfmap_enhancer_tester,          only: run_all_halfmap_enhancer_tests
 use simple_solve3D_addon_dock_tester,        only: run_all_solve3D_addon_dock_tests
 use simple_pcg_halfset_tester,               only: run_all_pcg_halfset_tests
 use simple_pcg_sparse_tester,                only: run_all_pcg_sparse_tests
 use simple_pcg_atomic_prior_tester,          only: run_all_pcg_atomic_prior_tests
 use simple_pcg_focus_tester,                 only: run_all_pcg_focus_tests
+use simple_pcg_lattice_tester,               only: run_all_pcg_lattice_tests
+use simple_wave_field_tester,                only: run_all_wave_field_tests
+use simple_wave_imaging_tester,              only: run_all_wave_imaging_tests
+use simple_wave_multislice_tester,           only: run_all_wave_multislice_tests
+use simple_wave_projector_tester,            only: run_all_wave_projector_tests
+use simple_simulator_tester,                 only: run_all_simulator_tests
 use simple_pftc_inplane_tester,              only: run_all_pftc_inplane_tests
 use simple_strategy3D_inplane_tester,        only: run_all_strategy3D_inplane_tests
+use simple_refine3D_local_tester, only: run_all_refine3D_local_tests
+use simple_refine3D_startup_tester,              only: run_all_refine3D_startup_tests
 use simple_strategy3D_cont_tester,           only: run_all_strategy3D_cont_tests
 use simple_convergence_tester,               only: run_all_convergence_tests
 use simple_strategy3D_cont_1jyx_tester,      only: run_all_strategy3D_cont_1jyx_tests
@@ -127,28 +142,39 @@ use simple_atoms_tester,                     only: run_all_atoms_tests
 use simple_cif2mrc_tester,                   only: run_all_cif2mrc_tests
 use simple_calpha_finder_tester,             only: run_all_calpha_finder_tests
 use simple_nano_species_tester,              only: run_all_nano_species_tests
+use simple_commanders_postprocess_pdb_tester, only: run_all_postprocess_pdb_tests
+use simple_commanders_volops_tester,          only: run_all_volops_lib_tests
+use simple_nano_density_tester,              only: run_all_nano_density_tests, run_all_nano_density_lib_tests
 use simple_pdb2mrc_tester,                   only: run_all_pdb2mrc_tests
 use simple_image_serialize_tester,           only: run_all_image_serialize_tests
 use simple_cavg_registration_tester,         only: run_all_cavg_registration_tests
 use simple_cavgs_state_match_tester,         only: run_all_cavgs_state_match_tests
 use simple_polarft_corr_tester,              only: run_all_polarft_corr_tests
+use simple_polar_shiftmap_tester,            only: run_all_polar_shiftmap_tests
 use simple_openmp_offload_tester,            only: run_openmp_offload_tests
 use simple_stream_tester,                    only: run_all_stream_optics_tests, run_all_stream_pickrefs_tests, &
     &run_all_stream_pick_extract_tests
-use simple_stream_chain_tester,              only: run_all_stream_chain_sieve_tests, run_all_stream_chain_movie_tests
-use simple_stream_stage_preprocess_tester,   only: run_all_stream_stage_preprocess_tests
-use simple_stream_stage_optics_tester,       only: run_all_stream_stage_optics_tests
+use simple_stream_chain_tester,                  only: run_all_stream_chain_sieve_tests, run_all_stream_chain_movie_tests
+use simple_stream_stage_preprocess_tester,       only: run_all_stream_stage_preprocess_tests
+use simple_stream_stage_optics_tester,           only: run_all_stream_stage_optics_tests
 use simple_stream_stage_initial_analysis_tester, only: run_all_stream_stage_initial_analysis_tests
-use simple_stream_stage_refpick_tester,      only: run_all_stream_stage_refpick_tests
-use simple_stream_stage_sieve_tester,        only: run_all_stream_stage_sieve_tests
-use simple_stream_stage_pool2D_tester,       only: run_all_stream_stage_pool2D_tests
-use simple_stream_pool2D_tester,             only: run_all_stream_pool2D_tests
-use simple_stream_stage_solve3D_tester,   only: run_all_stream_stage_solve3D_tests, run_all_stream_stage_solve3D_lib_tests
-use simple_stream_master_tester,             only: run_all_stream_master_tests, run_stream_heartbeat_tests
-use simple_stream_job_sets_tester,           only: run_all_stream_job_sets_tests
-use simple_stream_meta_plots_tester,         only: run_all_stream_meta_plots_tests
-use simple_stream_watcher_tester,            only: run_all_stream_watcher_tests
-use simple_ui,                               only: validate_ui_json
+use simple_stream_stage_refpick_tester,          only: run_all_stream_stage_refpick_tests
+use simple_stream_stage_sieve_tester,            only: run_all_stream_stage_sieve_tests
+use simple_stream_stage_pool2D_tester,           only: run_all_stream_stage_pool2D_tests
+use simple_stream_pool2D_tester,                 only: run_all_stream_pool2D_tests
+use simple_stream_stage_solve3D_tester,          only: run_all_stream_stage_solve3D_tests, run_all_stream_stage_solve3D_lib_tests
+use simple_stream_master_tester,                 only: run_all_stream_master_tests, run_stream_heartbeat_tests
+use simple_stream_job_sets_tester,               only: run_all_stream_job_sets_tests
+use simple_stream_meta_plots_tester,             only: run_all_stream_meta_plots_tests
+use simple_stream_watcher_tester,                only: run_all_stream_watcher_tests
+use simple_ui,                                   only: validate_ui_json
+use simple_dose_filter3D_tester,              only: run_all_dose_filter3D_tests
+use simple_dose_series_manifest_tester,         only: run_all_dose_series_manifest_tests
+use simple_refine_motion_model_tester,          only: run_all_refine_motion_model_tests, &
+    &run_all_refine_motion_model_lib_tests
+use simple_refine3D_provenance_tester,           only: run_all_refine3D_provenance_tests
+use simple_refine3D_strategy_tester,             only: run_all_refine3D_staging_tests
+use simple_parameters_tester,                    only: run_all_parameters_tests
 implicit none
 #include "simple_local_flags.inc"
 
@@ -250,6 +276,11 @@ type, extends(commander_base) :: commander_test_lib_stream
     procedure :: execute      => exec_test_lib_stream
 end type commander_test_lib_stream
 
+type, extends(commander_base) :: commander_test_stream_chains
+  contains
+    procedure :: execute      => exec_test_stream_chains
+end type commander_test_stream_chains
+
 type, extends(commander_base) :: commander_test_unit_parallel
   contains
     procedure :: execute      => exec_test_unit_parallel
@@ -301,6 +332,7 @@ contains
         call add_suite(s, n, 'string',               run_all_string_tests)
         call add_suite(s, n, 'syslib',               run_all_syslib_tests)
         call add_suite(s, n, 'fileio',               run_all_fileio_tests)
+        call add_suite(s, n, 'EPU XML',              run_all_epu_xml_tests)
         call add_suite(s, n, 'stack I/O',            run_all_stack_io_tests)
         call add_suite(s, n, 'class sample I/O',     run_all_class_sample_io_tests)
         call add_suite(s, n, 'character hash',       run_all_chash_tests)
@@ -309,6 +341,7 @@ contains
         call add_suite(s, n, 'linked list',          run_all_list_tests)
         call add_suite(s, n, 'record list',          run_all_rec_list_tests)
         call add_suite(s, n, 'command line',         run_all_cmdline_tests)
+        call add_suite(s, n, 'parameters',           run_all_parameters_tests)
     end subroutine suites_core
 
     subroutine suites_ori( s, n )
@@ -355,12 +388,15 @@ contains
         call add_suite(s, n, 'Kaiser-Bessel kernel',    run_all_kbinterpol_tests)
         call add_suite(s, n, 'search, sort, locate',    run_all_srch_sort_loc_tests)
         call add_suite(s, n, 'decay schedules',         run_all_decay_funs_tests)
-        call add_suite(s, n, 'PCA',                     run_all_pca_tests)
         call add_suite(s, n, 'cavg quality relations',  run_all_cavg_quality_relations_tests)
         call add_suite(s, n, 'cavg quality selection',  run_all_cavg_quality_selection_tests)
-        call add_suite(s, n, 'diffusion-map graphs',    run_all_diff_map_graphs_tests)
+        call add_suite(s, n, 'cavg quality nano',       run_all_cavg_quality_lattice_tests)
+        call add_suite(s, n, 'quality logistic',        run_all_quality_logistic_tests)
         call add_suite(s, n, 'optimisers',              run_all_opt_tests)
+        call add_suite(s, n, 'nonlinear conjugate gradient', run_all_nlcg_solver_tests)
         call add_suite(s, n, 'low-pass stages',         run_all_lpstages_tests)
+        call add_suite(s, n, 'dose series',             run_all_dose_series_tests)
+        call add_suite(s, n, 'dose curve',              run_all_dose_curve_tests)
         ! motion-correction shift search on expanded Fourier transforms (an optimiser, not an image test)
         call add_suite(s, n, 'shift search',            run_all_ftexp_shsrch_tests)
         call add_suite(s, n, 'truth metrics',           run_all_truth_metrics_tests)
@@ -398,6 +434,7 @@ contains
         call add_suite(s, n, 'motion gain',             run_all_motion_gain_tests)
         call add_suite(s, n, 'motion model',            run_all_motion_model_tests)
         call add_suite(s, n, 'particle extractor',      run_all_particle_extractor_tests)
+        call add_suite(s, n, 'fraction dose metadata',   run_all_refine_motion_model_tests)
     end subroutine suites_motion
 
     subroutine suites_ui( s, n )
@@ -428,14 +465,23 @@ contains
         call add_suite(s, n, 'observation noise',         run_all_gauran_tests)
         call add_suite(s, n, 'class-average carry-over',  run_all_cavg_sums_tests)
         call add_suite(s, n, 'trailing chain identity',   run_all_trail_chain_manifest_tests)
+        call add_suite(s, n, 'refine3D provenance',        run_all_refine3D_provenance_tests)
+        call add_suite(s, n, 'dose series manifest',        run_all_dose_series_manifest_tests)
         call add_suite(s, n, 'frozen accumulator',        run_all_frozen_accum_tests)
         call add_suite(s, n, 'weighted insertion',        run_all_reconstructor_tests)
         call add_suite(s, n, 'volume pair metrics',       run_all_volpair_metrics_tests)
         call add_suite(s, n, 'nonuniform filtering',      run_all_nu_filter_tests)
+        call add_suite(s, n, 'half-map enhancement',      run_all_halfmap_enhancer_tests)
         call add_suite(s, n, 'solve3D_cavgs stage rules', run_all_solve3D_reseed_tests)
         call add_suite(s, n, 'state assignment rules',    run_all_state_assignment_tests)
         call add_suite(s, n, 'atomic prior',              run_all_pcg_atomic_prior_tests)
         call add_suite(s, n, 'focused PCG',               run_all_pcg_focus_tests)
+        call add_suite(s, n, 'PCG lattice',               run_all_pcg_lattice_tests)
+        call add_suite(s, n, 'wave field',                run_all_wave_field_tests)
+        call add_suite(s, n, 'wave imaging',              run_all_wave_imaging_tests)
+        call add_suite(s, n, 'wave multislice',           run_all_wave_multislice_tests)
+        call add_suite(s, n, 'wave projector',            run_all_wave_projector_tests)
+        call add_suite(s, n, 'wave simulation',           run_all_simulator_tests)
     end subroutine suites_reconstruction
 
     !> registration on the polar Fourier transform, shared by the 2D and 3D searches
@@ -443,14 +489,16 @@ contains
         type(unit_suite), intent(inout) :: s(:)
         integer,          intent(inout) :: n
         call add_suite(s, n, 'polar correlation',        run_all_polarft_corr_tests)
+        call add_suite(s, n, 'polar shift map',          run_all_polar_shiftmap_tests)
         call add_suite(s, n, 'continuous in-plane',      run_all_pftc_inplane_tests)
         call add_suite(s, n, 'refine3D in-plane state',  run_all_strategy3D_inplane_tests)
-        call add_suite(s, n, '2D probability table I/O', run_all_eul_prob_tab2D_tests)
+        call add_suite(s, n, '2D probability table',     run_all_eul_prob_tab2D_tests)
         call add_suite(s, n, '3D probability table',     run_all_eul_prob_tab_tests)
         call add_suite(s, n, 'sigma2 state',             run_all_sigma2_state_tests)
         call add_suite(s, n, 'sigma2 bootstrap',         run_all_sigma2_bootstrap_tests)
         call add_suite(s, n, 'cavg registration',          run_all_cavg_registration_tests)
         call add_suite(s, n, 'cavgs state match',          run_all_cavgs_state_match_tests)
+        call add_suite(s, n, 'solve2D stage rules',        run_all_solve2D_stage_rule_tests)
     end subroutine suites_pftc_align2D3D
 
     !> the Cartesian (continuous) 3D registration: the neutral Cartesian Fourier layer (shared
@@ -459,6 +507,9 @@ contains
     subroutine suites_cart_align3D( s, n )
         type(unit_suite), intent(inout) :: s(:)
         integer,          intent(inout) :: n
+        call add_suite(s, n, 'local startup',   run_all_refine3D_local_tests)
+        call add_suite(s, n, 'local staging',   run_all_refine3D_staging_tests)
+        call add_suite(s, n, 'startup state', run_all_refine3D_startup_tests)
         call add_suite(s, n, 'Cartesian Fourier', run_all_cartesian_fourier_tests)
         call add_suite(s, n, 'cart calculator',   run_all_cartft_calc_tests)
         call add_suite(s, n, 'pose optimizer',    run_all_cartft_pose_opt_tests)
@@ -474,8 +525,8 @@ contains
         call add_suite(s, n, 'pose 1JYX recovery', run_all_strategy3D_cont_1jyx_tests)
     end subroutine suites_lib_cart_align3D
 
-    !> SINGLE (nanoparticles, atomic models): the atoms module, the C-alpha candidate search and the
-    !! species-discovery numerics
+    !> SINGLE (nanoparticles, atomic models): the atoms module, the C-alpha candidate search, the
+    !! species-discovery numerics and the atomic density model
     subroutine suites_single( s, n )
         type(unit_suite), intent(inout) :: s(:)
         integer,          intent(inout) :: n
@@ -483,13 +534,15 @@ contains
         call add_suite(s, n, 'cif2mrc',        run_all_cif2mrc_tests)
         call add_suite(s, n, 'C-alpha finder', run_all_calpha_finder_tests)
         call add_suite(s, n, 'species',        run_all_nano_species_tests)
+        call add_suite(s, n, 'density',        run_all_nano_density_tests)
     end subroutine suites_single
 
-    !> nightly pdb2mrc coverage of the built-in 6VXX and 1JYX models
+    !> nightly molecular maps and full-particle atomic density fits
     subroutine suites_lib_single( s, n )
         type(unit_suite), intent(inout) :: s(:)
         integer,          intent(inout) :: n
         call add_suite(s, n, 'pdb2mrc', run_all_pdb2mrc_tests)
+        call add_suite(s, n, 'density particles', run_all_nano_density_lib_tests)
     end subroutine suites_lib_single
 
     !> STREAM stages (src/main/stream/stages), step by step without a queue or waits:
@@ -524,11 +577,16 @@ contains
         call add_suite(s, n, 'picking references', run_all_stream_pickrefs_tests)
         call add_suite(s, n, 'pick and extract',   run_all_stream_pick_extract_tests)
         call add_suite(s, n, 'solve 3D reference docking', run_all_stream_stage_solve3D_lib_tests)
-        ! decision 19 of the 5 October 2026 fix plan: the stages chained without the master; they
-        ! submit jobs to the local queue (installed executables) and take tens of minutes
-        call add_suite(s, n, 'sieve to 3D',        run_all_stream_chain_sieve_tests)
-        call add_suite(s, n, 'movies to 3D',       run_all_stream_chain_movie_tests)
     end subroutine suites_lib_stream
+
+    !> high-level: production stream stages chained without the master. Both cases submit local
+    !! worker jobs and compare the recovered multistate maps with their planted volumes.
+    subroutine suites_stream_chains( s, n )
+        type(unit_suite), intent(inout) :: s(:)
+        integer,          intent(inout) :: n
+        call add_suite(s, n, 'sieve to 3D',  run_all_stream_chain_sieve_tests)
+        call add_suite(s, n, 'movies to 3D', run_all_stream_chain_movie_tests)
+    end subroutine suites_stream_chains
 
     !> distributed execution: the job controller and the queue-system environment
     subroutine suites_parallel( s, n )
@@ -569,7 +627,12 @@ contains
         call add_suite(s, n, 'PCG sparse sampling',  run_all_pcg_sparse_tests)
         call add_suite(s, n, 'addon report docking', run_all_solve3D_addon_dock_tests)
         call add_suite(s, n, 'truth map docking', run_all_truth_docking_tests)
+        call add_suite(s, n, 'postprocess_pdb', run_all_postprocess_pdb_tests)
         call add_suite(s, n, 'fractional reconstruction', run_all_rec3D_service_lib_tests)
+        call add_suite(s, n, 'fraction dose export',    run_all_refine_motion_model_lib_tests)
+        call add_suite(s, n, 'dose filter3D',           run_all_dose_filter3D_tests)
+        call add_suite(s, n, 'wave reconstruction',  run_all_rec3D_wave_lib_tests)
+        call add_suite(s, n, 'volume programs',      run_all_volops_lib_tests)
     end subroutine suites_lib_reconstruction
 
     subroutine add_suite( s, n, name, proc )
@@ -704,7 +767,7 @@ contains
     end subroutine exec_test_unit_reconstruction
 
     subroutine exec_test_unit_pftc_align2D3D( self, cline )
-        class(commander_test_unit_pftc_align2D3D), intent(inout) :: self
+        class(commander_test_unit_pftc_align2D3D), intent(inout)        :: self
         class(cmdline),                                   intent(inout) :: cline
         type(unit_suite) :: s(MAX_SUITES)
         integer :: n
@@ -714,7 +777,7 @@ contains
     end subroutine exec_test_unit_pftc_align2D3D
 
     subroutine exec_test_unit_cart_align3D( self, cline )
-        class(commander_test_unit_cart_align3D), intent(inout) :: self
+        class(commander_test_unit_cart_align3D), intent(inout)        :: self
         class(cmdline),                                 intent(inout) :: cline
         type(unit_suite) :: s(MAX_SUITES)
         integer :: n
@@ -724,7 +787,7 @@ contains
     end subroutine exec_test_unit_cart_align3D
 
     subroutine exec_test_lib_cart_align3D( self, cline )
-        class(commander_test_lib_cart_align3D), intent(inout) :: self
+        class(commander_test_lib_cart_align3D), intent(inout)        :: self
         class(cmdline),                                intent(inout) :: cline
         type(unit_suite) :: s(MAX_SUITES)
         integer :: n
@@ -772,6 +835,16 @@ contains
         call suites_lib_stream(s, n)
         call run_unit_suites('lib_stream', cline, s(1:n))
     end subroutine exec_test_lib_stream
+
+    subroutine exec_test_stream_chains( self, cline )
+        class(commander_test_stream_chains), intent(inout) :: self
+        class(cmdline),                      intent(inout) :: cline
+        type(unit_suite) :: s(2)
+        integer :: n
+        n = 0
+        call suites_stream_chains(s, n)
+        call run_unit_suites('stream_chains', cline, s(1:n))
+    end subroutine exec_test_stream_chains
 
     subroutine exec_test_unit_parallel( self, cline )
         class(commander_test_unit_parallel), intent(inout) :: self

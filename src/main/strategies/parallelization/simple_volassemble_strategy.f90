@@ -14,6 +14,7 @@ use simple_oris,            only: population_blend_weights
 use simple_trail_chain_manifest, only: trail_chain_manifest, TRAIL_MANIFEST_OK, TRAIL_MANIFEST_MISSING
 use simple_state_weight_set,     only: state_weight_set
 use simple_reconstructor_pcg,    only: PCG_WEIGHT_THRESHOLD
+use simple_refine3D_provenance,  only: begin_reference_set, publish_reference_set, publish_reuse_provenance
 implicit none
 private
 public :: run_volassemble, volassemble_exec, filter_pcg_nonuniform_maps
@@ -53,7 +54,7 @@ contains
         &update_frac_trail_rec, realized_update_frac, trail_counts, wset_id, l_floor_rho, l_carry_forward, &
         &vol_nu_base_even, vol_nu_base_odd, vol_nu_aux_even, vol_nu_aux_odd, &
         &volname, eonames, res05, res0143, cfar, timings, frozen_rec, frozen_seed, frozen_carry )
-        use simple_reconstructor,       only: reconstructor, gridding_half_restore
+        use simple_reconstructor,       only: reconstructor, gridding_half_restore, RHO_HDR_BYTES, read_rho_header
         use simple_halfmap_diagnostics, only: halfmap_diagnostics_result, evaluate_halfmap_pair, &
             &write_halfmap_diagnostics, write_support_provenance
         type(parameters),       intent(in)    :: params
@@ -105,6 +106,7 @@ contains
             call even_rec%floor_rho_shellwise
             call odd_rec%floor_rho_shellwise
         endif
+        if( params%oritype == 'ptcl3D' ) call begin_reference_set(volname)
         call restore_eos_and_write_fsc()
         call sum_eos_after_density_correction_if_needed()
         call restore_merged_volume()
@@ -321,7 +323,7 @@ contains
         !! remnants are rejected and discarded by the next validation.
         subroutine write_trail_chain_set()
             type(trail_chain_manifest) :: man
-            type(string)    :: manifest
+            type(string)    :: manifest, files(5)
             integer(kind=8) :: sizes(4)
             integer         :: io_stat, ifile
             manifest = refine3D_trail_manifest_fname(state)
@@ -334,6 +336,13 @@ contains
                 &trail_chain_gen + 1, sizes, trail_mrep_new, trail_ncontrib, wset_id)
             call man%write(manifest, io_stat)
             if( io_stat /= 0 ) THROW_WARN('failed to write trailing chain manifest; chain will be re-seeded next iteration')
+            if( io_stat == 0 )then
+                files(1) = manifest
+                do ifile = 1,4
+                    files(ifile+1) = trail_chain_component(ifile)
+                enddo
+                call publish_reuse_provenance(params, build%spproj, build%spproj_field, 'chain', manifest, files)
+            endif
             call man%kill
             call manifest%kill
         end subroutine write_trail_chain_set
@@ -348,7 +357,8 @@ contains
             type(trail_chain_manifest) :: man
             type(string) :: manifest
             integer      :: status, ifile
-            real         :: extent_chain, extent_cur
+            integer(kind=8) :: actual_sizes(4)
+            character(len=256) :: message
             l_valid  = .false.
             manifest = refine3D_trail_manifest_fname(state)
             call man%read(manifest, status)
@@ -362,35 +372,14 @@ contains
                     call discard_trail_chain_set('unreadable or corrupt manifest')
                     return
             end select
-            if( man%get_nptcls() /= build%spproj_field%get_noris() )then
-                call discard_trail_chain_set('particle population mismatch')
-                return
-            endif
-            if( man%get_nstates() /= params%nstates .or. man%get_state() /= state )then
-                call discard_trail_chain_set('state layout mismatch')
-                return
-            endif
-            ! the weights are frozen for a chain: another weight set identity re-seeds, never blends
-            if( any(man%get_wset_id() /= wset_id) )then
-                call discard_trail_chain_set('state weight set identity mismatch')
-                return
-            endif
-            if( man%get_box() > params%box_crop )then
-                call discard_trail_chain_set('larger grid than current reconstruction')
-                return
-            endif
-            extent_chain = real(man%get_box())   * man%get_smpd()
-            extent_cur   = real(params%box_crop) * params%smpd_crop
-            if( abs(extent_chain - extent_cur) > 0.01 * extent_cur )then
-                call discard_trail_chain_set('physical extent mismatch')
-                return
-            endif
             do ifile = 1, 4
-                if( trail_chain_file_size(trail_chain_component(ifile)) /= man%get_size(ifile) )then
-                    call discard_trail_chain_set('component size mismatch (mixed generations)')
-                    return
-                endif
+                actual_sizes(ifile) = trail_chain_file_size(trail_chain_component(ifile))
             enddo
+            if( .not. man%compatible(build%spproj_field%get_noris(), params%nstates, state, &
+                &params%box_crop, params%smpd_crop, actual_sizes, wset_id, message) )then
+                call discard_trail_chain_set(trim(message))
+                return
+            endif
             ! a discarded chain leaves generation and mass at zero: its re-seed starts at generation one
             trail_chain_gen  = man%get_gen()
             trail_chain_mrep = man%get_mrep()
@@ -514,8 +503,10 @@ contains
             type(imgfile)     :: ioimg_e, ioimg_o
             real, allocatable :: rho_e(:,:,:), rho_o(:,:,:)
             integer :: current_ldim(3), cshape(3), prev_ldim(3)
-            integer :: fhandle_rho_e, fhandle_rho_o, i, ierr, dummy, read_threads
+            integer :: fhandle_rho_e, fhandle_rho_o, i, ierr, dummy, read_threads, hdr_ldim(3), hdr_shape(3)
             real    :: current_smpd, prev_smpd
+            real(dp) :: hdr_smpd, extent_prev, extent_current
+            character(len=:), allocatable :: errmsg
             logical :: here(4), l_pad_with_zeros
             current_ldim = even_rec%get_ldim()
             current_smpd = even_rec%get_smpd()
@@ -552,6 +543,30 @@ contains
                 call fileiochk('read_gridding_pair_accumulators opening '//even_rho%to_char(), ierr)
                 call fopen(fhandle_rho_o, file=odd_rho, status='OLD', action='READ', access='STREAM', iostat=ierr)
                 call fileiochk('read_gridding_pair_accumulators opening '//odd_rho%to_char(), ierr)
+                ! the densities' headers are checked here, serially, before the parallel reads
+                if( l_pad_with_zeros )then
+                    ! a smaller previous density is padded: it holds its numerator's box, over the same extent
+                    do i = 1, 2
+                        if( i == 1 )then
+                            call read_rho_header(fhandle_rho_e, even_rho, hdr_ldim, hdr_shape, hdr_smpd)
+                        else
+                            call read_rho_header(fhandle_rho_o, odd_rho,  hdr_ldim, hdr_shape, hdr_smpd)
+                        endif
+                        if( any(hdr_ldim /= prev_ldim) .or. hdr_shape(1) /= fdim(prev_ldim(1)) )then
+                            errmsg = 'previous gridding density does not hold its numerator''s box: '//fbody%to_char()
+                            THROW_HARD(errmsg)
+                        endif
+                        extent_prev    = real(hdr_ldim(1),dp) * hdr_smpd
+                        extent_current = real(current_ldim(1),dp) * real(current_smpd,dp)
+                        if( abs(extent_prev - extent_current) > 0.01_dp * extent_current )then
+                            errmsg = 'previous gridding density covers another physical extent: '//fbody%to_char()
+                            THROW_HARD(errmsg)
+                        endif
+                    enddo
+                else
+                    call even_rec%check_rho_header(fhandle_rho_e, even_rho)
+                    call odd_rec%check_rho_header(fhandle_rho_o, odd_rho)
+                endif
                 if( l_pad_with_zeros )then
                     call ioimg_e%open(even_vol, prev_ldim, prev_smpd, formatchar='M', readhead=.false., rwaction='read')
                     call ioimg_o%open(odd_vol, prev_ldim, prev_smpd, formatchar='M', readhead=.false., rwaction='read')
@@ -570,10 +585,10 @@ contains
                             case(2)
                                 call prev_vol_o%read_raw_mrc(ioimg_o)
                             case(3)
-                                read(fhandle_rho_e, pos=1, iostat=ierr) rho_e
+                                read(fhandle_rho_e, pos=RHO_HDR_BYTES+1, iostat=ierr) rho_e
                                 if( ierr /= 0 ) call fileiochk('read_gridding_pair_accumulators reading even rho', ierr)
                             case(4)
-                                read(fhandle_rho_o, pos=1, iostat=ierr) rho_o
+                                read(fhandle_rho_o, pos=RHO_HDR_BYTES+1, iostat=ierr) rho_o
                                 if( ierr /= 0 ) call fileiochk('read_gridding_pair_accumulators reading odd rho', ierr)
                         end select
                     enddo
@@ -642,6 +657,8 @@ contains
             type(image), optional,            intent(inout) :: base_even, base_odd !< the unregularized halves as written
             type(image), optional,            intent(inout) :: aux_even, aux_odd   !< the regularized halves as written (ml_reg)
             type(gridding_half_restore) :: even_restore, odd_restore
+            type(string) :: fname_even_unfil, fname_odd_unfil
+            logical :: l_unmasked
             real,     allocatable :: res(:)
             real                  :: smpd, fny
             integer               :: box, filtsz
@@ -653,18 +670,22 @@ contains
             allocate(diagnostics%fsc(filtsz), source=0.)
             call even_restore%new(even_rec)
             call odd_restore%new(odd_rec)
-            ! Every gridding product is deapodized, then given the PCG solve's soft sphere (msk_crop), so both
-            ! backends ship equivalent halves, the FSC takes them as shipped, and the sphere zeroes deapodization's rim gain.
+            fname_even_unfil = add2fbody(fname_even, MRC_EXT, '_unfil')
+            fname_odd_unfil  = add2fbody(fname_odd, MRC_EXT, '_unfil')
+            l_unmasked = trim(params%unfil_unmasked) == 'yes'
+            ! Standard halves carry spherical support; requested raw exports precede that mask.
             if( params%l_ml_reg )then
                 call even_rec%restore_base(even_restore%base, preserve_numerator=.true.)
                 call even_restore%finalize_from_base(even_rec)
                 call even_restore%final%mask3D_soft(params%msk_crop, backgr=0.)
-                call even_restore%final%write(add2fbody(fname_even,MRC_EXT,'_unfil'), del_if_exists=.true.)
+                call even_restore%final%write(fname_even_unfil, del_if_exists=.true.)
+                call write_support_provenance(fname_even_unfil, .false., 'gridding')
                 if( present(base_even) ) call keep_half(even_restore%final, base_even)
                 call odd_rec%restore_base(odd_restore%base, preserve_numerator=.true.)
                 call odd_restore%finalize_from_base(odd_rec)
                 call odd_restore%final%mask3D_soft(params%msk_crop, backgr=0.)
-                call odd_restore%final%write(add2fbody(fname_odd,MRC_EXT,'_unfil'), del_if_exists=.true.)
+                call odd_restore%final%write(fname_odd_unfil, del_if_exists=.true.)
+                call write_support_provenance(fname_odd_unfil, .false., 'gridding')
                 if( present(base_odd) ) call keep_half(odd_restore%final, base_odd)
                 call calc_gridding_pair_diagnostics(params, even_restore%final, odd_restore%final, &
                     &state, diagnostics)
@@ -692,19 +713,28 @@ contains
                 call even_rec%restore_base(even_restore%base)
                 call odd_rec%restore_base(odd_restore%base)
                 call even_restore%finalize_from_base(even_rec)
+                if( l_unmasked )then
+                    call even_restore%final%write(fname_even_unfil, del_if_exists=.true.)
+                    call write_support_provenance(fname_even_unfil, .false., 'gridding', support_kind='none')
+                endif
                 call even_restore%final%mask3D_soft(params%msk_crop, backgr=0.)
                 call even_restore%final%write(fname_even, del_if_exists=.true.)
-                ! without ML regularization the halves ARE the unregularized pair:
-                ! write the _unfil copies as well, so postprocess_nu and the
-                ! B-factor estimate always find the pair of the assembly that
-                ! wrote the map and never a stale pair from an earlier
-                ! regularized assembly at another box
-                call even_restore%final%write(add2fbody(fname_even,MRC_EXT,'_unfil'), del_if_exists=.true.)
+                if( .not. l_unmasked )then
+                    call even_restore%final%write(fname_even_unfil, del_if_exists=.true.)
+                    call write_support_provenance(fname_even_unfil, .false., 'gridding')
+                endif
                 if( present(base_even) ) call keep_half(even_restore%final, base_even)
                 call odd_restore%finalize_from_base(odd_rec)
+                if( l_unmasked )then
+                    call odd_restore%final%write(fname_odd_unfil, del_if_exists=.true.)
+                    call write_support_provenance(fname_odd_unfil, .false., 'gridding', support_kind='none')
+                endif
                 call odd_restore%final%mask3D_soft(params%msk_crop, backgr=0.)
                 call odd_restore%final%write(fname_odd, del_if_exists=.true.)
-                call odd_restore%final%write(add2fbody(fname_odd,MRC_EXT,'_unfil'), del_if_exists=.true.)
+                if( .not. l_unmasked )then
+                    call odd_restore%final%write(fname_odd_unfil, del_if_exists=.true.)
+                    call write_support_provenance(fname_odd_unfil, .false., 'gridding')
+                endif
                 if( present(base_odd) ) call keep_half(odd_restore%final, base_odd)
                 call calc_gridding_pair_diagnostics(params, even_restore%final, odd_restore%final, &
                     &state, diagnostics)
@@ -719,6 +749,8 @@ contains
             deallocate(res)
             call even_restore%kill
             call odd_restore%kill
+            call fname_even_unfil%kill
+            call fname_odd_unfil%kill
         end subroutine restore_gridding_pair
 
         !> a restored half as a read of the file just written gives it: the box only, zero FFT padding
@@ -1640,6 +1672,8 @@ contains
 
         subroutine postprocess_state()
             if( l_nonuniform_mode ) call run_state_nonuniform_filter()
+            call publish_reference_set(params, build%spproj, build%spproj_field, state, &
+                &volname, eonames, refine3D_fsc_fname(state), nu_align_lps(state))
         end subroutine postprocess_state
 
         subroutine run_state_nonuniform_filter()

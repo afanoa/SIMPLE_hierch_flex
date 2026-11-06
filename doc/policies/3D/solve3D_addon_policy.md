@@ -235,8 +235,11 @@ inherited state are refused.
   it, and uses its last stage only. The stage limit follows the `solve3D`
   rule: FSC=0.5 promotion at the stage boundary from the FSC measured on the
   union, and the NU handoff when the stage is an NU stage. The registration
-  pass keeps the planned limit (no promotion). The stage logs the add-on's
-  limits next to the frozen run's.
+  pass keeps the planned limit (no promotion). The frozen run's
+  `gold_standard` option is replayed: single-state stages 6 and later use
+  half-specific references and NU-selected bandwidth when enabled. The
+  registration pass retains its planned-band matching. The stage logs the
+  add-on's limits next to the frozen run's.
 - **Early stopping.** The add-on context switches stage-3 early stopping on
   (`overlap`, default 0.95) when the last stage is stage 3; the stage
   controller is otherwise unchanged.
@@ -350,8 +353,8 @@ frozen contributions; no terminal full reconstruction is added (ruled
 
 Distributed runs (`nparts > 1`) split the rows into contiguous partitions
 that balance the particles with state > 0, as every distributed 3D run does
-(`split_nobjs_active`, through `qsys_env%new(..., l_active)` in refine3D,
-reconstruct3D, `prob_align` and `prob_align_neigh`). Partition *k* ends on the
+(`split_nobjs_active`, through `qsys_env%new(..., l_active)` in refine3D and
+reconstruct3D). Partition *k* ends on the
 last active row of the *k*-th share of the even split of the active rows, so
 the masked frozen rows join the partition of the next active row and each
 partition holds an equal share of the cohort. A stream's frozen rows are its
@@ -371,10 +374,10 @@ active rows than partitions, or when a sample drawn over the whole project
 (`part` set) every per-partition sampler returns an empty sample instead of
 stopping (`allow_empty`: probabilistic reproduction, class-balanced,
 update-count and fill-in sampling); a shared-memory run still stops on an
-empty sample. `prob_tab` and `prob_tab_neigh` write a table without
-candidates, which `prob_align` reads; the refine3D matcher emits the unchanged
-committed sigma2 slice, the range's orientations, zero PCG accumulators when
-partial reconstructions are written, and `JOB_FINISHED`.
+empty sample. The refine3D matcher emits the unchanged committed sigma2 slice,
+the range's orientations, an empty readout record under the probabilistic
+modes, zero PCG accumulators when partial reconstructions are written, and
+`JOB_FINISHED`.
 
 The local queue checks no exit status: a worker that stops without
 `JOB_FINISHED` leaves the master waiting.

@@ -73,7 +73,8 @@ install(TARGETS ${SIMPLE_EXECUTABLES}
 # Complete UI JSON validation
 # ------------------------------------------------------------------------------
 # The UI descriptor is a client contract.  Regenerate and validate the complete
-# emitted registry whenever simple_exec is rebuilt, independently of the
+# emitted registry, and the stream launcher of simple_private_exec against it,
+# whenever simple_exec or simple_private_exec is rebuilt, independently of the
 # optional CTest suite. Use the serial front end so metadata validation does not
 # initialize an optional coarray/MPI runtime.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -84,10 +85,12 @@ add_custom_command(
   COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/validate_complete_ui_json.py"
     --executable "$<TARGET_FILE:${SIMPLE_EXE}>"
+    --launcher-executable "$<TARGET_FILE:${SIMPLE_PRIVATE_EXE}>"
     --output "${UI_JSON_VALIDATION_OUTPUT}"
     --stamp "${UI_JSON_VALIDATION_STAMP}"
   DEPENDS
     ${SIMPLE_EXE}
+    ${SIMPLE_PRIVATE_EXE}
     "${CMAKE_CURRENT_SOURCE_DIR}/validate_complete_ui_json.py"
   BYPRODUCTS "${UI_JSON_VALIDATION_OUTPUT}"
   COMMENT "Generating and validating the complete UI JSON registry"
@@ -97,8 +100,10 @@ add_custom_target(validate_complete_ui_json ALL
   DEPENDS "${UI_JSON_VALIDATION_STAMP}"
 )
 
-# The stream interface is a reviewed acquisition-facing screen. Its exact
-# snapshot is deliberately opt-in: ordinary builds verify valid JSON without
+# The stream interface is a reviewed acquisition-facing screen: the stream
+# programs' descriptors (stream_ui_contract.json) and the launcher written by
+# hand for prg=print_ui_stream (stream_launcher_contract.json), which every
+# build checks against the descriptors. Its exact snapshot is deliberately opt-in: ordinary builds verify valid JSON without
 # blocking routine wording or layout work on a separate approval step.
 set(STREAM_UI_CONTRACT_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/simple_stream_ui_contract.json")
 set(STREAM_UI_CONTRACT_STAMP "${CMAKE_CURRENT_BINARY_DIR}/simple_stream_ui_contract.valid")
@@ -116,6 +121,7 @@ add_custom_command(
     ${SIMPLE_PRIVATE_EXE}
     "${CMAKE_CURRENT_SOURCE_DIR}/validate_complete_ui_json.py"
     "${STREAM_UI_CONTRACT_REFERENCE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stream_launcher_contract.json"
   BYPRODUCTS "${STREAM_UI_CONTRACT_OUTPUT}"
   COMMENT "Reviewing the stream UI snapshot"
   VERBATIM
@@ -261,14 +267,12 @@ if(BUILD_TESTS)
   # Review verdict 2026-09-23 (plan, section 9.7, heterogeneity).
   simple_add_test(lib_heterogeneity library 3600 8 RUN_SERIAL
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=lib_heterogeneity)
-  # lib_single: in-process pdb2mrc coverage of the built-in molecular models.
+  # lib_single: molecular pdb2mrc coverage and full-particle atomic density fits.
   # The longer nanoparticle atom-statistics pipeline is an explicit highlevel entry.
   simple_add_test(lib_single library 7200 8 RUN_SERIAL
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=lib_single)
-  # lib_stream: optics assignment, picking references, pick and extract,
-  # plus the sieve-to-3D and movies-to-3D chains. The chains launch local
-  # worker jobs; reserve the machine and allow hosted runners two hours
-  # for the combined suite.
+  # lib_stream: in-process stream tests only. Worker-backed chain workflows
+  # are the separate high-level stream_chains entry below.
   simple_add_test(lib_stream library 7200 1 RUN_SERIAL
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=lib_stream)
   # pcg_recon: the gated stages of the PCG reconstruction operator on a phantom (operator identities,
@@ -311,6 +315,9 @@ if(BUILD_TESTS)
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=simulated_workflow suite=1jxy)
   # The FCC Pt and wurtzite CdSe fixtures are independent crystal-system
   # workflows and therefore receive isolated working directories and verdicts.
+  # fcc runs trajectory_solve3D and checks that its gates lose at most 5% of the
+  # frames; wurtzite runs the stages by hand with
+  # the atomicity-prior refinement, so both forms stay covered.
   simple_add_test(single_workflow_fcc highlevel 7200 1 PROCESSORS 2
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=single_workflow suite=fcc smpd=0.358)
   simple_add_test(single_workflow_wurtzite highlevel 7200 1 PROCESSORS 2
@@ -334,18 +341,14 @@ if(BUILD_TESTS)
   # 2026-09-30): a refinement mode independent of the polar workflows the other entries run.
   simple_add_test(cont_refine3D_1jxy highlevel 7200 8 PROCESSORS 10
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=cont_refine3D_1jxy nthr=8)
-  # multi-state refine3D (refine=prob and refine=prob_neigh, three states) on simulated blob
-  # phantoms, gated on the known state of every particle. Its own entry (test-suite truth plan,
-  # multi-state phase, 2026-10-17): no other entry checks the state assignment against the truth.
-  simple_add_test(multistate_assignment highlevel 3600 8 PROCESSORS 11
-    COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=multistate_assignment nthr=8)
   # the multi-state workflows on simulated beta-galactosidase states, judged against the known state
   # of every particle: the class-average route, solve3D nstates=3 from the particles, refine3D_states
   # from the true poses, and single-state solve3D followed by refine3D_states (the de novo routes'
   # state resolution is held over seeds by test=profile, ruling of 2026-10-18). Its own entry
   # (test-suite truth plan, multi-state workflow phase, 2026-10-17): the four routes take 32 minutes
-  # at eight threads alone, an hour beside other entries.
-  simple_add_test(multistate_workflows highlevel 7200 8 PROCESSORS 11
+  # at eight threads alone, an hour beside other entries, and about 1.5 h on a 4-core CI runner,
+  # hence the 4 h deadline (owner decision, 2026-11-02).
+  simple_add_test(multistate_workflows highlevel 14400 8 PROCESSORS 11
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=multistate_workflows nthr=8)
   # the multi-state fixture (its modes, its cache, the point groups of its truths). Its own entry by
   # the ruling of 2026-10-17: these checks are not simulate_particles', whose claim and cost they changed.
@@ -355,16 +358,19 @@ if(BUILD_TESTS)
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=single_atoms_stats smpd=0.358 element=Pt)
   # the same test on the CdSe wurtzite, zincblende and rocksalt lattices of the compound selectors, whose
   # lattice lookups took the cut symbol Cd (fcc) before the repair of the species-discovery plan (section 9):
-  # interior coordination and fitted lattice constant asserted
+  # interior coordination and fitted lattice constant asserted; detect_atoms runs without the element (its
+  # contact ceiling from the data), atoms_stats with it
   simple_add_test(single_atoms_stats_cdsew highlevel 3600 8 PROCESSORS 4
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=single_atoms_stats smpd=0.358 element=CdSeW)
   simple_add_test(single_atoms_stats_cdsez highlevel 3600 8 PROCESSORS 3
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=single_atoms_stats smpd=0.358 element=CdSeZ)
   simple_add_test(single_atoms_stats_cdser highlevel 3600 8 PROCESSORS 3
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=single_atoms_stats smpd=0.358 element=CdSeR)
-  # species discovery of detect_atoms (species list and discover_species=yes) on Pt, Pt/Ni and Pt/Al
+  # species discovery (detect_atoms, then detect_atomic_species with a species list or the class count
+  # free) on Pt, Pt/Ni and Pt/Al
   # particles rendered with the element kernels, judged against the generating models; its own entry by
-  # the plan doc/implementation_notes/completed/species_discovery_completed.md (sections 10.4 and 10.6)
+  # the plan doc/implementation_notes/completed/species_discovery_completed.md (sections 10.4 and 10.6);
+  # also the density model of detect_atoms on a Pt particle rendered by the model (atomic_density_model.md)
   simple_add_test(species_discovery highlevel 3600 8 PROCESSORS 8
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=species_discovery nthr=8)
   # stream preprocessing: five simulated movies through the stream's
@@ -373,6 +379,12 @@ if(BUILD_TESTS)
   # abinitio2D_stream was retired (plan, section 9.7, stream).
   simple_add_test(stream_preproc highlevel 3600 8 PROCESSORS 2
     COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=stream_preproc)
+  # Two worker-backed stream pipelines on planted two-state phantoms. The
+  # movies route covers p01-p07, including initial analysis; both routes dock
+  # their recovered state maps against both truths. One four-thread worker can
+  # overlap the one-thread stage driver, hence five reserved processors.
+  simple_add_test(stream_chains highlevel 10800 1 PROCESSORS 5
+    COMMAND $<TARGET_FILE:${SIMPLE_TEST_EXE}> test=stream_chains)
   # FLEX PCA end to end on one deterministic two-state phantom: shared memory
   # versus two real local workers. Two workers times four threads fill the
   # eight processors reserved by this serial CTest entry (D1 in

@@ -243,9 +243,6 @@ contains
             case('refs')
                 placeholder = 'e.g. references.mrc'
                 return
-            case('rmsd_file')
-                placeholder = 'e.g. atom_rmsd.bin'
-                return
             case('star_mic')
                 placeholder = 'e.g. micrographs.star'
                 return
@@ -266,9 +263,6 @@ contains
                 return
             case('stk_backgr')
                 placeholder = 'e.g. background_pspec.mrcs'
-                return
-            case('stk_traj')
-                placeholder = 'e.g. trajectory.mrcs'
                 return
             case('stktab')
                 placeholder = 'e.g. stktab.txt'
@@ -368,7 +362,7 @@ contains
             units = 'kV'
         else if( index(text, 'millimet') > 0 .or. index(text, '(mm)') > 0 .or. index(text, 'in mm') > 0 )then
             units = 'mm'
-        else if( index(text, 'second') > 0 )then
+        else if( index(text, 'seconds') > 0 )then
             units = 'seconds'
         else if( index(text, 'minute') > 0 )then
             units = 'minutes'

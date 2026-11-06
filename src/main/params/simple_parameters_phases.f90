@@ -38,6 +38,7 @@ contains
     end subroutine new
 
     module subroutine setup_execution_context(self, cline, silent)
+        use simple_syslib, only: resolve_project_files
         class(parameters), intent(inout) :: self
         class(cmdline),    intent(inout) :: cline
         logical,           intent(in)    :: silent
@@ -69,19 +70,15 @@ contains
         call get_prg_ptr(self%prg, self%ptr2prg)
         if( .not.associated(self%ptr2prg) ) call get_test_prg_ptr(self%prg, self%ptr2prg)
         call self%last_prev_dir%kill
-        idir = find_next_int_dir_prefix(self%cwd, self%last_prev_dir)
         if( .not. cline%defined('projfile') )then
-            if( self%last_prev_dir%is_allocated() )then
-                call simple_list_files(self%last_prev_dir%to_char()//'/*.simple', sp_files)
-            else
-                call simple_list_files('*.simple', sp_files)
-            endif
+            call resolve_project_files(self%cwd, self%last_prev_dir, idir, sp_files)
             if( allocated(sp_files) )then
                 nsp_files = size(sp_files)
             else
                 nsp_files = 0
             endif
         else
+            idir = find_next_int_dir_prefix(self%cwd, self%last_prev_dir)
             nsp_files = 0
         endif
         if( associated(self%ptr2prg) .and. .not. self%executable%has_substr('private') )then
@@ -121,6 +118,11 @@ contains
                 str_tmp       = get_fbody(basename(absname), string('simple'))
                 self%projname = str_tmp%to_char()
             endif
+        endif
+        ! a partition worker reads its master's project and writes part files (a stream job owns its job project)
+        if( allocated(worker_projfile_glob) ) deallocate(worker_projfile_glob)
+        if( self%l_distr_worker .and. self%stream .ne. 'yes' .and. self%projfile .ne. '' )then
+            worker_projfile_glob = self%projfile%to_char()
         endif
         if( self%mkdir .eq. 'yes' )then
             if( associated(self%ptr2prg) .and. .not. self%executable%has_substr('simple_private') )then
@@ -277,7 +279,7 @@ contains
             if( file_exists(self%stk) )then
                 if( .not. cline%defined('nptcls') ) call find_ldim_nptcls(self%stk, lfoo, self%nptcls)
             else
-                THROW_HARD('inputted stack (stk) file does not exist: '//self%stk%to_char())
+                THROW_HARD('input stack (stk) '//self%stk%to_char()//' does not exist')
             endif
         else if( self%oritab .ne. '' )then
             if( .not. cline%defined('nptcls') .and. self%oritab%has_substr('.txt') ) self%nptcls = nlines(self%oritab)
@@ -397,14 +399,12 @@ contains
                 vol = cline%get_carg(key%to_char())
                 if( vol%to_char([1,1]).eq.PATH_SEPARATOR )then
                     volname = vol
-                    if( .not. file_exists(volname) )then
-                        THROW_HARD('input volume does not exist: '//volname%to_char())
-                    endif
+                    if( .not. file_exists(volname) ) THROW_HARD('input volume '//volname%to_char()//' does not exist')
                 else
                     if( self%mkdir .eq. 'yes' ) call cline%set(key%to_char(), PATH_PARENT//vol%to_char())
                     volname = cline%get_carg(key%to_char())
                     if( .not. file_exists(volname) )then
-                        THROW_HARD('input volume does not exist: '//volname%to_char())
+                        THROW_HARD('input volume '//volname%to_char()//' does not exist')
                     else
                         call cline%set(key%to_char(), simple_abspath(volname, check_exists=.false.))
                     endif
@@ -495,11 +495,13 @@ contains
             self%l_update_frac = .true.
             self%l_trail_rec   = trim(self%trail_rec).eq.'yes'
             self%l_fillin      = trim(self%fillin).eq.'yes'
+            self%l_assign_all  = trim(self%assign_all).eq.'yes'
         else
             self%update_frac   = 1.0
             self%l_update_frac = .false.
             self%l_trail_rec   = .false.
             self%l_fillin      = .false.
+            self%l_assign_all  = .false.
         endif
         self%l_update_missing = trim(self%update_missing).eq.'yes'
         self%l_frac_best   = self%frac_best  <= 0.99
@@ -587,13 +589,15 @@ contains
                 self%msk_crop = min(round2even((real(self%box_crop)-COSMSKHALFWIDTH)/2.), &
                     &round2even(self%msk * real(self%box_crop) / real(self%box)))
             endif
+            ! the box's mask, under which a particle searching the polar shift map's disk is prepared
+            self%msk_box      = round2even((real(self%box) - COSMSKHALFWIDTH) / 2.)
+            self%msk_box_crop = round2even((real(self%box_crop) - COSMSKHALFWIDTH) / 2.)
         endif
         if( self%box > 0 )then
             if( .not. cline%defined('pftsz') ) self%pftsz = magic_pftsz(self%msk_crop)
         endif
         self%l_lpset  = cline%defined('lp')
         self%l_envfsc = self%envfsc .ne. 'no'
-        if( cline%defined('icm') )    self%l_icm    = (trim(self%icm).eq.'yes')
         if( cline%defined('preimage_auto') ) self%l_preimage_auto = (trim(self%preimage_auto).eq.'yes')
         if( cline%defined('gauref') ) self%l_gauref = (trim(self%gauref).eq.'yes')
         if( self%wcrit .ne. 'no' )then
@@ -745,6 +749,19 @@ contains
             case DEFAULT
                 THROW_HARD('prob_post_diag must be yes or no')
         end select
+        select case(trim(self%shift_prior))
+            case('yes')
+                self%l_shift_prior = .true.
+            case('no')
+                self%l_shift_prior = .false.
+            case DEFAULT
+                THROW_HARD('shift_prior must be yes or no')
+        end select
+        ! the probability tables' posterior draws: their tempering factor, and no ramp unless an end is given (the
+        ! run stays at prob_beta)
+        if( .not. (self%prob_beta > 0.) ) THROW_HARD('prob_beta must be positive')
+        if( .not. (self%prob_beta_end > 0.) ) self%prob_beta_end = self%prob_beta
+        if( self%topk < 1 ) THROW_HARD('topk must be 1 (the committed pose alone) or more')
         select case(trim(self%freq_march_aggressive))
             case('yes')
                 self%l_freq_march_aggressive = .true.
@@ -839,6 +856,16 @@ contains
             case DEFAULT
                 THROW_HARD('rec_backend must be gridding or pcg')
         end select
+        select case(trim(self%wave_model))
+            case('projection','first_born','rytov','multislice')
+            case DEFAULT
+                THROW_HARD('wave_model must be projection, first_born, rytov or multislice')
+        end select
+        select case(trim(self%ewald))
+            case('neg','pos','no')
+            case DEFAULT
+                THROW_HARD('ewald must be neg, pos or no')
+        end select
         select case(trim(self%m_estimator))
             case('no','flex')
             case DEFAULT
@@ -892,7 +919,7 @@ contains
                 ! reported once, by the workflow driver; every subprocess
                 ! applies the same rule silently
                 select case(trim(self%prg%to_char()))
-                    case('refine3D_auto','solve3D','solve3D_cavgs','refine3D_states','classify3D_refs')
+                    case('refine3D_auto','refine3D_local','solve3D','solve3D_cavgs','refine3D_states','classify3D_refs')
                         write(logfhandle,'(A,I0,A,F5.2,A,F6.3,A)') '>>> DENSITY ENVELOPE DILATION: ', binwidth_min, &
                             &' layers (', ENVMSKWIDTH_A_MIN, ' A at ', self%smpd_crop, ' A/pixel)'
                 end select
@@ -904,14 +931,13 @@ contains
             if( mod(self%box_crop,2) /= 0 ) THROW_HARD('reconstruct3D box_crop must be even')
         endif
         ! pose_cont: no|yes on refine3D (yes, the scheduled polish, from Phase 9 of the pose_cont
-        ! refactoring); only is the continuation switch of refine3D_auto (O7), which derives refine
+        ! refactoring); continuation uses refine3D_local, which derives refine
         select case(trim(self%pose_cont))
             case('yes','no')
             case('only')
-                if( trim(self%prg%to_char()) /= 'refine3D_auto' ) &
-                    &THROW_HARD('pose_cont=only is a refine3D_auto switch; refine3D takes refine=cont')
+                THROW_HARD('pose_cont=only is retired; use prg=refine3D_local without pose_cont')
             case DEFAULT
-                THROW_HARD('pose_cont must be no, yes or only')
+                THROW_HARD('pose_cont must be no or yes; use refine3D_local for continuous-only refinement')
         end select
         self%l_dose_weight = cline%defined('total_dose')
         if( self%fraction_dose_target < 0.01 )then
@@ -975,6 +1001,14 @@ contains
         self%l_lam_anneal = trim(self%lam_anneal).eq.'yes'
         self%l_ml_reg     = trim(self%ml_reg).eq.'yes'
         if( self%l_ml_reg ) self%l_ml_reg = self%cc_objfun == OBJFUN_EUCLID
+        select case(trim(self%unfil_unmasked))
+            case('yes')
+                if( trim(self%rec_backend) /= 'gridding' ) THROW_HARD('unfil_unmasked=yes requires gridding reconstruction')
+                if( self%l_ml_reg ) THROW_HARD('unfil_unmasked=yes requires nonregularized reconstruction')
+            case('no')
+            case default
+                THROW_HARD('internal unfil_unmasked must be yes or no')
+        end select
         if( cline%defined('pcg_mskfile') )then
             ! accepted on both backends: the solve support under pcg, the envelope window under gridding
             if( .not. file_exists(self%pcg_mskfile) ) &
@@ -1012,8 +1046,12 @@ contains
         end select
         if( self%l_atm_prior )then
             if( trim(self%rec_backend) /= 'pcg' ) THROW_HARD('atm_prior=yes requires rec_backend=pcg')
-            if( .not. cline%defined('pdbfile') )  THROW_HARD('atm_prior=yes requires the atom model pdbfile')
-            if( .not. file_exists(self%pdbfile) ) THROW_HARD('atm_prior=yes: pdbfile does not exist')
+            if( cline%defined('pdbfile') )then
+                if( .not. file_exists(self%pdbfile) ) THROW_HARD('atm_prior=yes: pdbfile does not exist')
+            else
+                if( trim(self%prg%to_char()) /= 'autorefine3D_nano' ) &
+                    &THROW_HARD('atm_prior=yes requires the atom model pdbfile; program is '//trim(self%prg%to_char()))
+            endif
             if( self%l_ml_reg )    THROW_HARD('atm_prior=yes requires ml_reg=no')
             if( self%l_pcg_solvent ) THROW_HARD('atm_prior=yes and pcg_solvent=yes are exclusive')
             if( self%l_nonuniform ) THROW_HARD('atm_prior=yes takes no nonuniform filtering')
@@ -1042,26 +1080,21 @@ contains
         self%l_bfac_data_fit = .not. cline%defined('bfac_data')
         self%l_incrreslim = trim(self%incrreslim) == 'yes' .and. .not. self%l_lpset
         self%l_bfac       = cline%defined('bfac')
-        if( trim(self%discover_species) /= 'yes' .and. trim(self%discover_species) /= 'no' )then
-            THROW_HARD('discover_species must be yes or no')
-        endif
         if( self%nspecies < 0 .or. self%nspecies > 3 ) THROW_HARD('nspecies must be 0 (from the data) to 3')
         if( self%min_nbrs < 0 ) THROW_HARD('min_nbrs must be 0 (no requirement) or positive')
-        self%l_discover_species = trim(self%discover_species) == 'yes'
         if( cline%defined('element') )then
             if( index(self%element, ',') > 0 )then
-                ! a species list, brightest first: its length is the number of classes, level 1 runs on its first symbol
-                if( self%prg%to_char() /= 'detect_atoms' ) THROW_HARD('a list of elements is accepted by detect_atoms only')
+                ! a species list, brightest first: its length is the number of classes
+                if( trim(self%prg%to_char()) /= 'detect_atomic_species' ) THROW_HARD('a list of elements is accepted by detect_atomic_species only')
                 if( .not. parse_element_list(self%element, self%species, selector, errmsg) ) THROW_HARD(errmsg%to_char())
                 self%l_species_list     = .true.
-                self%l_discover_species = .true.
                 self%nspecies           = size(self%species)
                 self%element            = self%species(1)
             else
                 if( .not. atoms_obj%element_exists(self%element) )then
                     THROW_HARD('Element: '//trim(self%element)//' unsupported for now')
                 endif
-                if( self%l_discover_species )then
+                if( trim(self%prg%to_char()) == 'detect_atomic_species' )then
                     ! a compound selector names its two species
                     if( parse_element_list(self%element, symbols, selector, errmsg) )then
                         if( len_trim(selector) > 0 )then
@@ -1090,7 +1123,7 @@ contains
         end select
         self%l_prob_align_mode = .false.
         select case(trim(self%refine))
-            case('prob','prob_neigh','prob_snhc')
+            case('prob','prob_neigh')
                 self%l_prob_align_mode = .true.
             case DEFAULT
         end select
@@ -1114,6 +1147,12 @@ contains
             self%l_cont_polish = trim(self%pose_cont) == 'yes'
             self%inpl_cont = 'no'
         endif
+        ! 2D's neighbourhood table (refine=prob_neigh on ptcl2D) draws the stochastic class neighbourhood only
+        if( trim(self%oritype) == 'ptcl2D' .and. trim(self%refine) == 'prob_neigh' )then
+            if( cline%defined('prob_neigh_mode') .and. trim(self%prob_neigh_mode) /= 'snhc' )&
+                &THROW_HARD('2D refine=prob_neigh supports prob_neigh_mode=snhc only')
+            self%prob_neigh_mode = 'snhc'
+        endif
         select case(trim(self%prob_neigh_mode))
             case('state','geom','shc','snhc')
             case DEFAULT
@@ -1126,7 +1165,6 @@ contains
         end select
         ! negative values other than the -1. automatic sentinel are invalid
         if( (self%local_ang_bound   < 0. .and. abs(self%local_ang_bound   + 1.) > 1.e-6) .or. &
-            (self%local_inpl_bound  < 0. .and. abs(self%local_inpl_bound  + 1.) > 1.e-6) .or. &
             (self%local_shift_bound < 0. .and. abs(self%local_shift_bound + 1.) > 1.e-6) )then
             THROW_HARD('local pose bounds must be -1 (automatic) or non-negative')
         endif
@@ -1134,7 +1172,8 @@ contains
             THROW_HARD('min_state_frac must be in [0,1)')
         endif
         self%l_neigh = .false.
-        if( str_has_substr(self%refine, 'neigh') )then
+        ! the 3D projection-direction neighbourhood (2D's prob_neigh searches classes, not directions)
+        if( str_has_substr(self%refine, 'neigh') .and. trim(self%oritype) /= 'ptcl2D' )then
             if( .not. cline%defined('nspace_sub') ) self%nspace_sub = 500
             if( .not. cline%defined('nspace') )     self%nspace     = 20000
             self%nspace_sub = round2even(real(self%nspace_sub))
@@ -1146,7 +1185,8 @@ contains
                 case('snhc','snhc_smpl','snhc_smpl_many')
                     self%trs = 0.
                 case DEFAULT
-                    if( trim(self%refine) == 'prob_neigh' .and. trim(self%prob_neigh_mode) == 'snhc' )then
+                    if( trim(self%refine) == 'prob_neigh' .and. trim(self%prob_neigh_mode) == 'snhc' .and. &
+                        &trim(self%oritype) /= 'ptcl2D' )then
                         self%trs = 0.
                     else
                         self%trs = MINSHIFT
@@ -1159,6 +1199,25 @@ contains
             self%trs = 0.
             self%l_doshift = .false.
         endif
+        ! the polar shift map: a positive prior width is the key (the default), under the Euclidean objective, whose
+        ! posterior the map draws (an explicit key under cc is refused); a run centres with it when its mode searches
+        ! shifts on the polar grid, a probability table or a classic mode (ruling 20), and a workflow's master carries
+        ! the key to the stages that do
+        self%l_shift_map = self%shift_sigma > 0.01
+        if( self%l_shift_map .and. self%cc_objfun /= OBJFUN_EUCLID )then
+            if( cline%defined('shift_sigma') ) THROW_HARD('shift_sigma needs objfun=euclid: the map draws the tempered posterior')
+            self%l_shift_map = .false.
+        endif
+        select case(trim(self%refine))
+            case('prob', 'prob_neigh', 'snhc', 'snhc_smpl', 'snhc_smpl_many', 'greedy', 'shc', 'neigh',&
+                &'greedy_inpl')
+                self%l_centring = self%l_shift_map .and. self%l_doshift .and. trim(self%tseries) /= 'yes'
+            case DEFAULT
+                self%l_centring = .false.
+        end select
+        ! under the map every polish is the data's alone (the map's prior enters the first centring's coarse draw and
+        ! the insertion's loss): the window search's prior on the increment is off
+        if( self%l_centring ) self%l_shift_prior = .false.
         self%l_prob_inpl = trim(self%prob_inpl).eq.'yes'
         if( self%mcpatch.eq.'yes' .and. self%nxpatch*self%nypatch <= 1 ) self%mcpatch = 'no'
         if( self%mcpatch.eq.'no' )then
@@ -1185,7 +1244,7 @@ contains
                     if( cline%defined('fname') ) &
                         THROW_HARD('quality_mode=apply uses infile for model input; fname is output-only')
                     if( cline%defined('quality_context') ) &
-                        THROW_HARD('quality_mode=apply gets quality_context from the selected model')
+                        THROW_HARD('quality_mode=apply gets quality_context from the selected model: choose it with quality_model=chunk100mics|sieve|pool|nano (or infile=)')
                 case('analyze')
                     if( cline%defined('fname') ) &
                         THROW_HARD('quality_mode=analyze uses infile for model input; fname is output-only')
@@ -1208,9 +1267,9 @@ contains
                         THROW_HARD('quality_mode=promote preserves infile context; quality_context is unsupported')
             end select
             select case(trim(self%quality_context))
-                case('chunk','pool','sieve')
+                case('chunk','pool','sieve','nano')
                 case DEFAULT
-                    THROW_HARD('model_cavgs_rejection quality_context must be chunk, pool, or sieve')
+                    THROW_HARD('model_cavgs_rejection quality_context must be chunk, pool, sieve or nano')
             end select
         endif
         select case(trim(self%merge_geom_reuse))
@@ -1258,12 +1317,6 @@ contains
                 THROW_HARD('rec_plane_reuse must be yes or no')
         end select
         if( self%rec_states_box < 0 ) THROW_HARD('rec_states_box must be >= 0')
-        select case(trim(self%cache))
-            case('yes','no')
-            case DEFAULT
-                THROW_HARD('Unsupported cache='//trim(self%cache)//'; expected yes|no')
-        end select
-        self%l_cache = trim(self%cache) == 'yes'
         select case(trim(self%umap))
             case('yes','no')
             case DEFAULT

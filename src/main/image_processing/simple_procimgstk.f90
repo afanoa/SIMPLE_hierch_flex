@@ -558,49 +558,13 @@ contains
         call img%kill
     end subroutine nlmean_imgfile
 
-    subroutine diffmap_denoise_imgfile( fname2process, fname, smpd, k_nn )
-        use simple_denoise_movies, only: diffmap_denoise_image_stack
-        class(string),     intent(in) :: fname2process, fname
-        real,              intent(in) :: smpd
-        integer, optional, intent(in) :: k_nn
-        type(image), allocatable :: imgs(:), den_imgs(:)
-        type(stack_io)           :: stkio_r, stkio_w
-        integer                  :: n, i, ldim(3)
-        call find_ldim_nptcls(fname2process, ldim, n)
-        ldim(3) = 1
-        call raise_exception_imgfile( n, ldim, 'diffmap_denoise_imgfile' )
-        ! Read
-        call stkio_r%open(fname2process, smpd, 'read')
-        allocate(imgs(n))
-        write(logfhandle,'(a)') '>>> DENOISING IMAGES WITH DIFFUSION MAPS'
-        do i = 1,n
-            call imgs(i)%new(ldim, smpd, wthreads=.false.)
-            call stkio_r%read(i, imgs(i))
-        end do
-        call stkio_r%close
-        ! Denoise
-        call diffmap_denoise_image_stack(imgs, den_imgs, k_nn=k_nn)
-        ! Write
-        call stkio_w%open(fname, smpd, 'write', ldim(1:2))
-        do i = 1,n
-            call stkio_w%write(i, den_imgs(i))
-        end do
-        call stkio_w%close
-        ! cleanup
-        do i = 1,n
-            call imgs(i)%kill
-            call den_imgs(i)%kill
-        end do
-        deallocate(imgs,den_imgs)
-    end subroutine diffmap_denoise_imgfile
-
-    subroutine apply_ctf_imgfile( fname2process, fname, o, smpd, mode, bfac )
-        use simple_ctf,   only: ctf
+    subroutine apply_ctf_imgfile( fname2process, fname, o, smpd, mode )
+        use simple_ctf,             only: ctf
+        use simple_memoize_ft_maps, only: memoize_ft_maps, forget_ft_maps
         class(string),    intent(in)    :: fname2process, fname
         class(oris),      intent(inout) :: o
         real,             intent(in)    :: smpd
         character(len=*), intent(in)    :: mode
-        real, optional,   intent(in)    :: bfac
         type(stack_io) :: stkio_r, stkio_w
         type(image)    :: img
         integer        :: i, n, ldim(3)
@@ -613,6 +577,8 @@ contains
         call stkio_r%open(fname2process, smpd, 'read')
         call stkio_w%open(fname,         smpd, 'write', box=ldim(1))
         call img%new(ldim,smpd)
+        ! apply_ctf_wpad applies the CTF to the image padded to twice the box
+        call memoize_ft_maps([2*ldim(1), 2*ldim(2), 1], smpd)
         write(logfhandle,'(a)') '>>> APPLYING CTF TO IMAGES'
         do i=1,n
             call progress(i,n)
@@ -622,15 +588,16 @@ contains
             if( o%isthere(i,'phshift') ) phshift = o%get(i,'phshift')
             if( o%isthere('dfy') )then ! astigmatic CTF
                 call img%apply_ctf_wpad(tfun, o%get_dfx(i), mode, phshift, dfy=o%get_dfy(i), &
-                    &angast=o%get(i,'angast'), bfac=bfac)
+                    &angast=o%get(i,'angast'))
             else ! non-astigmatic CTF
-                call img%apply_ctf_wpad(tfun, o%get_dfx(i), mode, phshift, bfac=bfac)
+                call img%apply_ctf_wpad(tfun, o%get_dfx(i), mode, phshift)
             endif
             call stkio_w%write(i, img)
         end do
         call stkio_r%close
         call stkio_w%close
         call img%kill
+        call forget_ft_maps
     end subroutine apply_ctf_imgfile
 
     subroutine mask_imgfile( fname2mask, fname, mskrad, smpd )

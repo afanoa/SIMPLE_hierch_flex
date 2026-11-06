@@ -12,7 +12,6 @@ type(ui_program), target :: solve3D_addon_snapshots
 type(ui_program), target :: cont_refine3D_1jxy
 type(ui_program), target :: cont_refine3D_bench
 type(ui_program), target :: polar_matching_bench
-type(ui_program), target :: multistate_assignment
 type(ui_program), target :: multistate_workflows
 type(ui_program), target :: state_fixture
 type(ui_program), target :: pcg_recon
@@ -22,6 +21,7 @@ type(ui_program), target :: single_atoms_stats
 type(ui_program), target :: species_discovery
 type(ui_program), target :: single_workflow
 type(ui_program), target :: stream_preproc
+type(ui_program), target :: stream_chains
 type(ui_program), target :: flex_pca_blobs
 type(ui_program), target :: write_state_weights_labels
 type(ui_program), target :: write_state_weights_mixed
@@ -40,7 +40,6 @@ contains
         call new_cont_refine3D_1jxy(tsttab)
         call new_cont_refine3D_bench(tsttab)
         call new_polar_matching_bench(tsttab)
-        call new_multistate_assignment(tsttab)
         call new_multistate_workflows(tsttab)
         call new_state_fixture(tsttab)
         call new_simulated_workflow(tsttab)
@@ -51,6 +50,7 @@ contains
         call new_species_discovery(tsttab)
         call new_single_workflow(tsttab)
         call new_stream_preproc(tsttab)
+        call new_stream_chains(tsttab)
         call new_flex_pca_blobs(tsttab)
         call new_write_state_weights(tsttab)
         call new_nightly(tsttab)
@@ -68,7 +68,6 @@ contains
         write(logfhandle,'(A)') cont_refine3D_1jxy%name%to_char()
         write(logfhandle,'(A)') cont_refine3D_bench%name%to_char()
         write(logfhandle,'(A)') polar_matching_bench%name%to_char()
-        write(logfhandle,'(A)') multistate_assignment%name%to_char()
         write(logfhandle,'(A)') multistate_workflows%name%to_char()
         write(logfhandle,'(A)') state_fixture%name%to_char()
         write(logfhandle,'(A)') simulated_workflow%name%to_char()
@@ -79,6 +78,7 @@ contains
         write(logfhandle,'(A)') species_discovery%name%to_char()
         write(logfhandle,'(A)') single_workflow%name%to_char()
         write(logfhandle,'(A)') stream_preproc%name%to_char()
+        write(logfhandle,'(A)') stream_chains%name%to_char()
         write(logfhandle,'(A)') flex_pca_blobs%name%to_char()
         write(logfhandle,'(A)') write_state_weights_labels%name%to_char()
         write(logfhandle,'(A)') write_state_weights_mixed%name%to_char()
@@ -171,11 +171,13 @@ contains
         call cont_refine3D_1jxy%new(&
         &'cont_refine3D_1jxy',&                     ! name
         &'validate continuous Cartesian pose refinement end to end on simulated 1JYX particles',&
-        &'refine3D refine=cont (euclid, cc, distributed) and refine3D_auto pose_cont=only on 1 000 simulated 1JYX '//&
+        &'refine3D refine=cont (euclid, cc, distributed) and refine3D_local on 1 000 simulated 1JYX '//&
         &'particles from poses perturbed by 15 degrees and 2 pixels, and as the continuation of a polar refine3D_auto, '//&
         &'checked against the simulation truth',&
         &'simple_test_exec',&                       ! executable
         &.false., display_name='Continuous Refinement Validation')                                   ! requires sp_project
+        call cont_refine3D_1jxy%add_input(UI_PARM, 'suite', 'str', 'Run one integration case', &
+            &'all (default) runs the complete gate; nu_handoff runs only verified NU-bundle continuation', '', .false., '')
         ! add to ui_hash
         call add_ui_program('cont_refine3D_1jxy', cont_refine3D_1jxy, tsttab, UI_CATEGORY)
     end subroutine new_cont_refine3D_1jxy
@@ -220,13 +222,16 @@ contains
         &'case (1000 and 2500 directions; 1, 2 and 4 states) and team (1, 5 and nthr threads). '//&
         &'A measurement with no thresholds and no CTest entry: rows are appended to ./polar_matching_bench.tsv '//&
         &'(./polar_matching_check.tsv for suite=check); run with OPENBLAS_NUM_THREADS=1 '//&
-        &'(doc/implementation_notes/planned/polar_matching_layout_bench.md)',&
+        &'(doc/implementation_notes/completed/polar_matching_layout_bench.md)',&
         &'simple_test_exec',&                       ! executable
         &.false., display_name='Polar Matching Benchmark')                                       ! requires sp_project
         call polar_matching_bench%add_input(UI_PARM, 'suite', 'str', 'Layout', &
             &'Run one layout (per_pair, replica, blocked, states_inner, matrix, matrix_t, per_pair_cc), the identity '//&
             &'checks of the layouts (check) or of the production kernels (identity, 32 particles unless nptcls is '//&
-            &'given, one-thread results written to ./polar_kernel_identity_*.bin); list prints them. '//&
+            &'given, one-thread results written to ./polar_kernel_identity_*.bin), or the frozen-input harness of '//&
+            &'the probabilistic routes (fills: each route''s batch pipeline, the fill, selection and extras, in parts at '//&
+            &'one thread against the full team, batches of a third and three parts, 200 directions, 1 and 2 states '//&
+            &'and 64 particles unless given; rows to ./polar_fill_identity.tsv); list prints them. '//&
             &'Default times all euclid layouts', '', .false., '')
         call polar_matching_bench%add_input(UI_PARM, 'nspace', 'num', 'Directions', &
             &'Run one number of projection directions. Default runs 1000 and 2500', '', .false., 0.)
@@ -238,26 +243,6 @@ contains
         ! add to ui_hash
         call add_ui_program('polar_matching_bench', polar_matching_bench, tsttab, UI_CATEGORY)
     end subroutine new_polar_matching_bench
-
-    subroutine new_multistate_assignment( tsttab )
-        class(ui_hash), intent(inout) :: tsttab
-        ! PROGRAM SPECIFICATION
-        call multistate_assignment%new(&
-        &'multistate_assignment',&                  ! name
-        &'validate multi-state refine3D against the known states of a simulated blob phantom',&
-        &'refine3D nstates=3 with refine=prob and with refine=prob_neigh on 1 500 simulated particles of three '//&
-        &'blob phantoms (populations 50, 30 and 20 %), from the truths low-passed to 20 A and random initial '//&
-        &'states, the state labels, maps and poses checked against the simulation truth, with shuffled-label and '//&
-        &'duplicated-maps controls in every refinement and an identical-states control on request',&
-        &'simple_test_exec',&                       ! executable
-        &.false., display_name='Multi-State Assignment Validation')                            ! requires sp_project
-        call multistate_assignment%add_input(UI_PARM, 'suite', 'str', 'Sub-suite', &
-            &'Run one case: prob, prob_neigh or identical (the identical-states control); list prints them. '//&
-            &'Default runs prob and prob_neigh', '', .false., '')
-        call multistate_assignment%add_input(UI_COMP, nthr, required_override=.false.)
-        ! add to ui_hash
-        call add_ui_program('multistate_assignment', multistate_assignment, tsttab, UI_CATEGORY)
-    end subroutine new_multistate_assignment
 
     subroutine new_multistate_workflows( tsttab )
         class(ui_hash), intent(inout) :: tsttab
@@ -431,7 +416,7 @@ contains
         call single_atoms_stats%new(&
         &'single_atoms_stats',&
         &'SINGLE nanoparticle atom statistics',&
-        &'validates atom detection and statistics against a simulated nanoparticle',&
+        &'validates species-free atom detection, the products of the atomic density model and the statistics of atoms_stats with the element against a simulated nanoparticle',&
         &'simple_test_exec',&
         &.false., display_name='SINGLE Atom Statistics Test')
         call single_atoms_stats%add_input(UI_PARM, 'smpd', 'num', 'Sampling distance', &
@@ -446,7 +431,7 @@ contains
         call species_discovery%new(&
         &'species_discovery',&
         &'species discovery in atom detection',&
-        &'validates the species list and the residual recovery and species call of detect_atoms on Pt, Pt/Ni and Pt/Al nanoparticles rendered with element kernels and surface B factors',&
+        &'validates detect_atoms and then detect_atomic_species (the residual recovery of weak atoms, the species list and the class call) on Pt, Pt/Ni and Pt/Al nanoparticles rendered with element kernels and surface B factors, and the atomic density model of detect_atoms on a Pt particle rendered by the model',&
         &'simple_test_exec',&
         &.false., display_name='Species Discovery Test')
         call species_discovery%add_input(UI_COMP, nthr)
@@ -458,7 +443,9 @@ contains
         call single_workflow%new(&
         &'single_workflow',&
         &'validate SINGLE reconstruction for FCC Pt and wurtzite CdSe',&
-        &'runs focused Pt and CdSeW nanoparticle suites and validates each final map against its known truth',&
+        &'runs focused Pt and CdSeW nanoparticle suites and validates each final map against its known truth; fcc runs '//&
+        &'trajectory_solve3D and checks that its gates lose at most 5% of the frames, '//&
+        &'wurtzite runs the stages by hand with the atomicity-prior refinement',&
         &'simple_test_exec',&
         &.false., display_name='SINGLE Workflow Validation')
         call single_workflow%add_input(UI_PARM, 'suite', 'multi', 'Nanoparticle suite', &
@@ -477,6 +464,17 @@ contains
             &'simple_test_exec', .false., display_name='Stream Preprocessing Validation')
         call add_ui_program('stream_preproc', stream_preproc, tsttab, UI_CATEGORY)
     end subroutine new_stream_preproc
+
+    subroutine new_stream_chains( tsttab )
+        class(ui_hash), intent(inout) :: tsttab
+        call stream_chains%new('stream_chains', 'stream-chains', &
+            &'runs worker-backed sieve-to-3D and full p01-p07 movie stream chains and validates their state maps against truth', &
+            &'simple_test_exec', .false., display_name='Stream Chain Validation')
+        call stream_chains%add_input(UI_PARM, 'suite', 'str', 'Run one chain', &
+            &'Choose sieve_to_3d or movies_to_3d for a focused run; list prints the accepted names', &
+            &'chain name{sieve_to_3d|movies_to_3d|list}', .false., 'sieve_to_3d')
+        call add_ui_program('stream_chains', stream_chains, tsttab, UI_CATEGORY)
+    end subroutine new_stream_chains
 
     subroutine new_flex_pca_blobs( tsttab )
         class(ui_hash), intent(inout) :: tsttab

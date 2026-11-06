@@ -253,14 +253,6 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
             &are then reconstructed from their hard labels. Incompatible with preimage_auto and the merge', &
             'fraction of particles 0-1', .false., 0.0, &
         &visibility=UI_VIS_STANDARD)
-call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
-            'Cross-halfset (held-out) embedding', &
-            'Fit the covariance basis on one halfset and embed the other, then swap, so no particle is &
-            &projected onto a basis estimated from it; removes in-sample bias and reports the halfset &
-            &subspace principal angles. Costs two covariance estimations', &
-            '(yes|no){no}', .false., 'no', &
-        &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
-        &visibility=UI_VIS_ADVANCED)
         call add_ui_program('flex_pca', flex_pca, prgtab, UI_CATEGORY)
     end subroutine new_flex_pca
 
@@ -288,9 +280,6 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
         &choices=ui_choices([character(len=6) :: 'local', 'global']), visibility=UI_VIS_STANDARD)
         call refine3D_states%add_input(UI_SRCH, 'local_ang_bound', 'num', 'Local projection-angle bound', &
         &'Advanced override for the automatically derived local projection-direction neighborhood in degrees', &
-        &'degrees (-1=automatic)', .false., -1., group='search', visibility=UI_VIS_DEVELOPER)
-        call refine3D_states%add_input(UI_SRCH, 'local_inpl_bound', 'num', 'Local in-plane angle bound', &
-        &'Advanced upper bound for the automatically derived probabilistic in-plane neighborhood in degrees', &
         &'degrees (-1=automatic)', .false., -1., group='search', visibility=UI_VIS_DEVELOPER)
         call refine3D_states%add_input(UI_SRCH, 'local_shift_bound', 'num', 'Local shift bound', &
         &'Advanced override for the automatically derived local translational half-width in pixels', &

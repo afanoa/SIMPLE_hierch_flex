@@ -11,6 +11,7 @@ public :: param_registry
 type :: char_binding
     character(len=KEYLEN) :: key = ''
     character(len=:), pointer :: var => null()
+    logical :: yesno = .false.   !< a yes/no key: any other value stops
 end type char_binding
 
 type :: string_binding
@@ -71,6 +72,7 @@ contains
     procedure, private :: ensure_file_capacity
     procedure, private :: ensure_dir_capacity
     generic   :: add_char => add_char_fixed, add_char_string
+    procedure :: add_yesno
     procedure :: add_int
     procedure :: add_real
     procedure :: add_file
@@ -105,6 +107,16 @@ contains
         self%char_bindings(self%nchars)%key = trim(key)
         self%char_bindings(self%nchars)%var => var
     end subroutine add_char_fixed
+
+    !> a key declared with the choices (yes|no): apply_cmdline refuses any other value
+    !! (scripts/check_cli_chain.py requires this binding for every such key)
+    subroutine add_yesno(self, key, var)
+        class(param_registry),    intent(inout) :: self
+        character(len=*),         intent(in)    :: key
+        character(len=*), target, intent(inout) :: var
+        call self%add_char_fixed(key, var)
+        self%char_bindings(self%nchars)%yesno = .true.
+    end subroutine add_yesno
 
     subroutine add_char_string(self, key, var)
         class(param_registry), intent(inout) :: self
@@ -280,13 +292,19 @@ contains
         class(cmdline),        intent(inout) :: cline
         integer, optional,     intent(inout) :: cntfile
         character(len=1), optional, intent(inout) :: checkupfile(:)
-        type(string)     :: str, abspath_name
+        type(string)     :: str, abspath_name, errmsg
         character(len=1) :: file_descr
         logical          :: raise_exception
         integer          :: i
         do i=1,self%nchars
             if( cline%defined(self%char_bindings(i)%key) )then
                 str = cline%get_carg(self%char_bindings(i)%key)
+                if( self%char_bindings(i)%yesno )then
+                    if( str%to_char() /= 'yes' .and. str%to_char() /= 'no' )then
+                        errmsg = trim(self%char_bindings(i)%key)//'='//str%to_char()//': the key takes yes or no'
+                        THROW_HARD(errmsg%to_char())
+                    endif
+                endif
                 self%char_bindings(i)%var = str%to_char()
             endif
         end do
@@ -328,7 +346,9 @@ contains
                     if( self%file_bindings(i)%not_allowed == file_descr ) raise_exception = .true.
                 endif
                 if( raise_exception )then
-                    THROW_HARD('format '//file_descr//' is not allowed for '//trim(self%file_bindings(i)%key)//' = '//self%file_bindings(i)%var%to_char())
+                    errmsg = 'format '//file_descr//' is not allowed for '//self%file_bindings(i)%var%to_char()//&
+                        &' (key '//trim(self%file_bindings(i)%key)//')'
+                    THROW_HARD(errmsg%to_char())
                 endif
                 select case(file_descr)
                     case('I')

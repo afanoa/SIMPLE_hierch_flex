@@ -40,7 +40,7 @@ integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
 real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
 ! the split step logs the molecule fraction the level set holding MSHARE of the stage-B cross-half variance covers (nulls 33-46 %, real splits <= 23 %)
 real,     parameter :: MSHARE = 0.7
-real,     parameter :: ATHR = 0.01, LPD = 10.
+real,     parameter :: LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
 integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_SBATCH = 18
@@ -4468,7 +4468,6 @@ contains
         character(len=*),   intent(in)    :: mask
         call cl%set('refine',          'prob_neigh')
         call cl%set('prob_neigh_mode', 'geom')
-        call cl%set('prob_athres',     ATHR)
         call cl%set('lp',              lp)
         call cl%set('maxits',          maxits)
         call cl%set('center',          'no')

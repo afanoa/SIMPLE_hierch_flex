@@ -3,11 +3,21 @@ module simple_oris_tester
 use simple_core_module_api
 use simple_test_utils    ! for assert_* utilities and counters
 use simple_oris,        only: population_blend_weights, class_sample_quotas, class_sample_sweep
+use simple_rnd,         only: rnd_key, rnd_scope_key, rnd_draw_key, ran3, RND_PROG_REFINE3D, RND_PASS_ALIGN, RND_FAM_SAMPLE
+use, intrinsic :: iso_fortran_env, only: int64
 use simple_oris_utils,  only: oridist_from_oris
 !$ use omp_lib,          only: omp_get_max_threads, omp_get_num_procs, omp_set_num_threads
+use simple_forked_process, only: forked_process, FORK_STATUS_FAILED
+use simple_cmdline,        only: cmdline
 implicit none
 private
 public :: run_all_oris_tests
+
+!> a half sum taking a row in no half (eo = -1), which must stop
+type, extends(forked_process) :: half_of_unhalved
+contains
+    procedure :: execute => take_unhalved
+end type half_of_unhalved
 
 contains
 
@@ -18,6 +28,7 @@ contains
         call test_extract_and_copy()
         call test_compress_and_masks()
         call test_sampling_and_updatecnt()
+        call test_keyed_sampling()
         call test_ranked_balanced_sampling()
         call test_empty_partition_sampling()
         call test_nested_class_quota()
@@ -39,7 +50,143 @@ contains
         call test_assignment()
         call test_oridist_from_oris()
         call test_get_pops_halves()
+        call test_get_half()
     end subroutine run_all_oris_tests
+
+    !> get_half returns a row's even/odd half and stops on a row in no half (eo = -1), which the half sums
+    !! (class averages, 3D reconstruction) once put in the even half
+    subroutine test_get_half()
+        type(oris) :: os
+        type(half_of_unhalved) :: child
+        write(*,'(A)') 'test_get_half'
+        call os%new(2, is_ptcl=.true.)
+        call os%set(1, 'eo', 0.)
+        call os%set(2, 'eo', 1.)
+        call assert_int(0, os%get_half(1), 'get_half of an even row')
+        call assert_int(1, os%get_half(2), 'get_half of an odd row')
+        call child%start(name=string('HALF_OF_UNHALVED'))
+        call child%await_final_status()
+        call assert_int(FORK_STATUS_FAILED, child%status(), 'a row in no half (eo=-1) stops the half sums')
+        call child%destroy
+        call os%kill
+    end subroutine test_get_half
+
+    subroutine take_unhalved( self, cline )
+        class(half_of_unhalved), intent(inout) :: self
+        class(cmdline),          intent(inout) :: cline
+        type(oris) :: os
+        integer    :: eo
+        call os%new(1, is_ptcl=.true.)
+        call os%set(1, 'eo', -1.)
+        eo = os%get_half(1)
+        call os%kill
+    end subroutine take_unhalved
+
+    !> The keyed fractional-update samplers: given a key, sample4update_rnd, _cnt, _fillin and _class draw the
+    !! same subset again whatever the intrinsic stream drew in between, another iteration's key draws another
+    !! subset, the tier rules and counts hold as they do on the intrinsic stream, and without a key the
+    !! intrinsic stream is used as before
+    subroutine test_keyed_sampling()
+        type(oris) :: os
+        type(class_sample), allocatable :: clssmp(:)
+        integer, allocatable :: inds1(:), inds2(:), inds3(:)
+        type(rnd_key) :: key, key2
+        integer :: i, n, nsamp, nsamp2, nsamp3, nchanged, irep
+        real    :: r
+        write(*,'(A)') 'test_keyed_sampling'
+        n = 40
+        key  = rnd_draw_key(rnd_scope_key(20261104_int64, RND_PROG_REFINE3D, RND_PASS_ALIGN, 3), 0, RND_FAM_SAMPLE)
+        key2 = rnd_draw_key(rnd_scope_key(20261104_int64, RND_PROG_REFINE3D, RND_PASS_ALIGN, 4), 0, RND_FAM_SAMPLE)
+        ! sample4update_rnd: half of the active particles, the same under the same key, another under another
+        call fresh_field
+        call os%sample4update_rnd([1, n], 0.5, nsamp, inds1, .false., key=key)
+        call assert_int(n/2, nsamp, 'keyed sample4update_rnd draws the requested fraction')
+        do irep = 1, 7
+            r = ran3()
+        enddo
+        call fresh_field
+        call os%sample4update_rnd([1, n], 0.5, nsamp2, inds2, .false., key=key)
+        call assert_true(nsamp2 == nsamp .and. all(inds2 == inds1), 'the same key draws the same subset whatever was drawn before')
+        call fresh_field
+        call os%sample4update_rnd([1, n], 0.5, nsamp3, inds3, .false., key=key2)
+        call assert_true(any(inds3 /= inds1), 'another iteration''s key draws another subset')
+        ! sample4update_cnt: the lowest tier whole, the cutoff tier keyed
+        call fresh_field
+        do i = 1, 6
+            call os%set(i, 'updatecnt', 0.)
+        enddo
+        call os%sample4update_cnt([1, n], 0.25, nsamp, inds1, .false., key=key)
+        call assert_int(10, nsamp, 'keyed sample4update_cnt draws the requested count')
+        call assert_int(6, count(inds1 <= 6), 'keyed sample4update_cnt exhausts the lowest tier')
+        call fresh_field
+        do i = 1, 6
+            call os%set(i, 'updatecnt', 0.)
+        enddo
+        call os%sample4update_cnt([1, n], 0.25, nsamp2, inds2, .false., key=key)
+        call assert_true(all(inds2 == inds1), 'keyed sample4update_cnt reproduces its cutoff tier')
+        call fresh_field
+        do i = 1, 6
+            call os%set(i, 'updatecnt', 0.)
+        enddo
+        call os%sample4update_cnt([1, n], 0.25, nsamp3, inds3, .false., key=key2)
+        call assert_true(any(inds3 /= inds1), 'another key draws another cutoff tier')
+        ! sample4update_fillin: the never-updated first, keyed
+        call fresh_field
+        call os%set_all2single('updatecnt', 1.0)
+        do i = 1, 4
+            call os%set(i, 'updatecnt', 0.)
+        enddo
+        call os%sample4update_fillin([1, n], 0.25, nsamp, inds1, .false., key=key)
+        call assert_int(10, nsamp, 'keyed sample4update_fillin draws the requested count')
+        call assert_int(4, count(inds1 <= 4), 'keyed sample4update_fillin takes the never-updated first')
+        call fresh_field
+        call os%set_all2single('updatecnt', 1.0)
+        do i = 1, 4
+            call os%set(i, 'updatecnt', 0.)
+        enddo
+        call os%sample4update_fillin([1, n], 0.25, nsamp2, inds2, .false., key=key)
+        call assert_true(all(inds2 == inds1), 'keyed sample4update_fillin reproduces its draw')
+        ! sample4update_class: two units of twenty, a quarter of each, keyed per unit and tier
+        allocate(clssmp(2))
+        do i = 1, 2
+            clssmp(i)%clsind = i
+            clssmp(i)%pop    = 20
+            allocate(clssmp(i)%pinds(20), clssmp(i)%ccs(20))
+            clssmp(i)%pinds = [(20*(i-1) + irep, irep=1,20)]
+            clssmp(i)%ccs   = [(real(21 - irep), irep=1,20)]
+        enddo
+        call fresh_field
+        call os%sample4update_class(clssmp, [1, n], 0.25, nsamp, inds1, .false., .false., key=key)
+        call assert_int(10, nsamp, 'keyed sample4update_class draws the requested count')
+        call assert_int(5, count(inds1 <= 20), 'keyed sample4update_class takes the unit quota')
+        call fresh_field
+        call os%sample4update_class(clssmp, [1, n], 0.25, nsamp2, inds2, .false., .false., key=key)
+        call assert_true(all(inds2 == inds1), 'keyed sample4update_class reproduces its draw')
+        call fresh_field
+        call os%sample4update_class(clssmp, [1, n], 0.25, nsamp3, inds3, .false., .false., key=key2)
+        call assert_true(any(inds3 /= inds1), 'another key draws another class-balanced subset')
+        ! no key: the intrinsic stream, so two seeds give two subsets of the same size
+        call fresh_field
+        call set_fixed_seed(11)
+        call os%sample4update_rnd([1, n], 0.5, nsamp, inds1, .false.)
+        call fresh_field
+        call set_fixed_seed(12)
+        call os%sample4update_rnd([1, n], 0.5, nsamp2, inds2, .false.)
+        nchanged = count(inds2 /= inds1)
+        call assert_true(nsamp == n/2 .and. nsamp2 == n/2 .and. nchanged > 0, 'without a key the samplers draw on the intrinsic stream')
+        call os%kill
+
+    contains
+
+        subroutine fresh_field
+            call os%kill
+            call os%new(n, .true.)
+            call os%set_all2single('state',     1.0)
+            call os%set_all2single('updatecnt', 1.0)
+            call os%set_all2single('sampled',   0.0)
+        end subroutine fresh_field
+
+    end subroutine test_keyed_sampling
 
     subroutine test_ranked_balanced_sampling()
         use simple_type_defs, only: class_sample
@@ -136,14 +283,14 @@ contains
         os2 = oris(n, .false.)
         call assert_int(n, os2%get_noris(), 'oris constructor: size')
         call assert_true(.not. os2%is_particle(), 'oris constructor: is_particle() false')
-        ! new_2: from array of ori
+        ! new_from_arr: from array of ori
         call o%new_ori(.true.)
         call o%e1set(10.0)
         call o%e2set(20.0)
         call o%e3set(30.0)
         call os2%new([o, o])
-        call assert_int(2, os2%get_noris(), 'new_2 size from ori array')
-        call assert_real(10.0, os2%e1get(1), 1.0e-6, 'new_2 e1get')
+        call assert_int(2, os2%get_noris(), 'new_from_arr size from ori array')
+        call assert_real(10.0, os2%e1get(1), 1.0e-6, 'new_from_arr e1get')
         call os%kill
         call os2%kill
         call o%kill
@@ -216,16 +363,16 @@ contains
         sub2 = os%extract_subset(inds)
         call assert_int(3, sub2%get_noris(), 'extract_subset(indices) size')
         call assert_int(3, sub2%get_state(2), 'extract_subset(indices) state(2)')
-        ! copy_2
+        ! copy_same_kind
         call os_copy%copy(os)
-        call assert_int(n, os_copy%get_noris(), 'copy_2 size')
-        call assert_int(5, os_copy%get_state(5), 'copy_2 content')
+        call assert_int(n, os_copy%get_noris(), 'copy_same_kind size')
+        call assert_int(5, os_copy%get_state(5), 'copy_same_kind content')
         ! append(oris)
         os2 = oris(2, .true.)
         call os2%set_all('state', [10.0, 11.0])
         call os%append(os2)
-        call assert_int(n+2, os%get_noris(), 'append_2 size')
-        call assert_int(11, os%get_state(n+2), 'append_2 content')
+        call assert_int(n+2, os%get_noris(), 'append_oris size')
+        call assert_int(11, os%get_state(n+2), 'append_oris content')
         ! delete (single entry)
         call os%delete(3)
         call assert_int(n+1, os%get_noris(), 'delete size')
@@ -874,7 +1021,7 @@ contains
     ! 6. Randomization helpers and symmetry / merge / partition_eo
     !---------------------------------------------------------------
     subroutine test_randomization_and_symmetry()
-        type(oris) :: os, os2
+        type(oris) :: os, os2, os_ptcl
         integer    :: n
         write(*,'(A)') 'test_randomization_and_symmetry'
         n = 8
@@ -886,6 +1033,13 @@ contains
         call os%rnd_corrs()
         call os%partition_eo()
         call assert_int(os%get_noris(), os%get_nevenodd(), 'partition_eo nevenodd==n')
+        ! a particle field reads eo=0 on every row: no halves until a row is odd
+        call os_ptcl%new(n, .true.)
+        call assert_int(0, os_ptcl%get_nevenodd(), 'a particle field without halves counts no even/odd rows')
+        call os_ptcl%partition_eo()
+        call assert_int(n/2, os_ptcl%get_neven(), 'get_neven counts the even rows of a particle field')
+        call assert_int(n/2, os_ptcl%get_nodd(),  'get_nodd counts the odd rows of a particle field')
+        call os_ptcl%kill
         ! symmetrize
         os2 = os
         call os2%symmetrize(3)
@@ -947,9 +1101,9 @@ contains
         call os%spiral()
         ! stats (simple interface)
         call os%stats('corr', ave, sdev, var, err)
-        call assert_true(.not. err, 'stats_1 no error')
+        call assert_true(.not. err, 'stats_all no error')
         call os%stats('corr', ave, sdev, var, err, fromto=[2,4])
-        call assert_true(.not. err, 'stats_2 no error with fromto')
+        call assert_true(.not. err, 'stats_masked no error with fromto')
         ! order / order_cls: best correlation first, state ignored
         inds = os%order()
         call assert_int(n, size(inds), 'order size')
@@ -1003,7 +1157,6 @@ contains
         call os%set_all('x', [1.0,2.0,3.0])
         call os%zero_shifts()
         call assert_real(0.0, os%get(1,'x'), 1.0e-6, 'zero_shifts() (x field zeroed)')
-        call os%zero_inpl()
         call os%zero('corr')
         ! revshsgn / revorisgn
         call os%set_all('x', [1.0,2.0,3.0])

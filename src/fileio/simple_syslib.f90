@@ -656,18 +656,15 @@ contains
         endif
     end subroutine syslib_symlink
 
-    !> \brief  Rename or move file
+    !> \brief  Rename or move file; an existing fileout is replaced atomically (rename(2)), never absent
     subroutine simple_rename( filein, fileout, overwrite )
         class(*),          intent(in) :: filein, fileout !< input filename
-        logical, optional, intent(in) :: overwrite       !< default true
+        logical, optional, intent(in) :: overwrite       !< ignored: the replacement is always atomic (one caller
+                                                         !! in simple_commanders_solve3D.f90 still passes it)
         character(kind=c_char, len=:), allocatable :: f1, f2
         character(len=:),              allocatable :: msg
-        logical :: force_overwrite
         integer :: file_status
         if( .not. file_exists(filein) ) THROW_ERROR("designated input file does not exist")
-        force_overwrite = .true.
-        if( present(overwrite) ) force_overwrite=overwrite
-        if( file_exists(fileout) .and. (force_overwrite) ) call del_file(fileout)
         select type(filein)
             type is(string)
                 allocate(f1, source=filein%to_char()//achar(0))
@@ -995,27 +992,28 @@ contains
         if (present(status)) status = 0
 #else
         character(kind=c_char,len=:), allocatable :: path
-        integer :: io_status
-        logical :: file_e
-        file_e    = .false.
+        integer :: io_status, err
         io_status = 0
         select type(f)
             type is(string)
-                inquire(file=f%to_char(), exist=file_e)
-                if( file_e ) allocate(path, source=f%to_char()//c_null_char)
+                allocate(path, source=f%to_char()//c_null_char)
             type is(character(*))
-                inquire(file=trim(adjustl(f)), exist=file_e)
-                if( file_e ) allocate(path, source=trim(adjustl(f))//c_null_char)
+                allocate(path, source=trim(adjustl(f))//c_null_char)
             class default
                 call simple_exception('Unsupported type', __FILENAME__ , __LINE__)
         end select
-        if( file_e ) then
-            io_status = unlink(trim(adjustl(path)))
-            if( io_status /= 0 ) then
+        ! inquire follows a symbolic link and therefore cannot see a dangling link or an ELOOP.
+        ! unlink the directory entry directly; a missing entry is the documented successful no-op.
+        io_status = unlink(trim(adjustl(path)))
+        if( io_status /= 0 ) then
+            err = int(IERRNO(), kind=4)
+            if( err == 2 )then ! POSIX ENOENT
+                io_status = 0
+            else
                 call simple_error_check(io_status, 'syslib:: simple_rmfile failed to remove '//trim(adjustl(path)))
-            end if
-            deallocate(path)
+            endif
         end if
+        deallocate(path)
         if( present(status) ) status = io_status
 #endif
     end subroutine simple_rmfile
@@ -1029,6 +1027,20 @@ contains
         if(present(len)) len = l-1
         if(l>0) str(l:)=' '
     end subroutine syslib_c2fortran_string
+
+    ! Read-only discovery: an existing numbered run takes precedence over the current directory.
+    subroutine resolve_project_files( directory, previous_dir, next_dir, projects )
+        class(string), intent(in)              :: directory
+        type(string), intent(out)              :: previous_dir
+        integer, intent(out)                   :: next_dir
+        type(string), allocatable, intent(out) :: projects(:)
+        next_dir = find_next_int_dir_prefix(directory, previous_dir)
+        if( previous_dir%is_allocated() )then
+            call simple_list_files(previous_dir%to_char()//'/*.simple', projects)
+        else
+            call simple_list_files(directory%to_char()//'/*.simple', projects)
+        endif
+    end subroutine resolve_project_files
 
     function find_next_int_dir_prefix( dir2list, last_prev_dir ) result( next_int_dir_prefix )
         class(string),           intent(in)  :: dir2list

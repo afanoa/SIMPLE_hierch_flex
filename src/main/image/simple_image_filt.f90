@@ -509,7 +509,7 @@ contains
             endif
         endif
         ! make the output image
-        call img_filt%new(self%ldim, self%smpd)
+        call img_filt%new(self%ldim, self%smpd, wthreads=self%wthreads)
         ! filter
         if( self%ldim(3) == 1 )then
             select case(which)
@@ -673,7 +673,7 @@ contains
         if( didft ) call self%ifft()
     end subroutine apply_bfac
 
-    module subroutine apply_filter( self, filter )
+    module subroutine apply_filter_single( self, filter )
         class(image), intent(inout) :: self
         real,         intent(in)    :: filter(:)
         integer :: nyq, sh, logi(3), a,b,c
@@ -712,15 +712,15 @@ contains
         end do
         !$omp end parallel do
         if( didft ) call self%ifft()
-    end subroutine apply_filter
+    end subroutine apply_filter_single
 
-    module subroutine apply_filter_2( self, self2, filter )
+    module subroutine apply_filter_pair( self, self2, filter )
         class(image), intent(inout) :: self, self2
         real,         intent(in)    :: filter(:)
         integer :: nyq, sh, logi(3), a, b, c
         logical :: didft_self, didft_self2
         real    :: fwght, wzero
-        if( .not.(self.eqdims.self2) ) THROW_HARD('images to be filtered need to have same dimensions; apply_filter_2')
+        if( .not.(self.eqdims.self2) ) THROW_HARD('images to be filtered need to have same dimensions; apply_filter_pair')
         nyq = size(filter)
         didft_self  = .false.
         didft_self2 = .false.
@@ -755,7 +755,7 @@ contains
         !$omp end parallel do
         if( didft_self )  call self%ifft()
         if( didft_self2 ) call self2%ifft()
-    end subroutine apply_filter_2
+    end subroutine apply_filter_pair
 
     module subroutine apply_filter_serial( self, filter )
         class(image), intent(inout) :: self
@@ -927,7 +927,7 @@ contains
         integer, parameter :: CFR_BOX = 3
         real    :: exponentials(-CFR_BOX:CFR_BOX,-CFR_BOX:CFR_BOX), sw_px(DIM_SW,DIM_SW)
         real    :: z, pix_avg, sigma2t2
-        integer :: i, j, m, n, pad, ithr
+        integer :: i, j, m, n, pad, ithr, nthr_team
         if( even%is_3d() ) THROW_HARD('2D images only; NLmean2D_eo')
         if( even%ft )      THROW_HARD('Real space only;NLmean2D_eo')
         call noise%copy(even)
@@ -939,7 +939,9 @@ contains
         call avg%mul(0.5)
         pad     = CFR_BOX + 2
         pix_avg = sum(avg%rmat(:avg%ldim(1),:avg%ldim(2),1)) / real(product(avg%ldim))
-        allocate(rmat_threads(nthr_glob,avg%ldim(1),avg%ldim(2),1),   source=0.)
+        nthr_team = 1   ! one sum per thread of the team in use
+        !$ nthr_team = omp_get_max_threads()
+        allocate(rmat_threads(nthr_team,avg%ldim(1),avg%ldim(2),1),   source=0.)
         allocate(rmat_pad(-pad:avg%ldim(1)+pad,-pad:avg%ldim(2)+pad), source=pix_avg)
         rmat_pad(1:avg%ldim(1),1:avg%ldim(2)) = avg%rmat(1:avg%ldim(1),1:avg%ldim(2),1)
         do n = 1,avg%ldim(2)
@@ -973,7 +975,7 @@ contains
         integer, parameter :: CFR_BOX = 10 ! as suggested in the paper, use a box 21x21
         real    :: exponentials(-CFR_BOX:CFR_BOX,-CFR_BOX:CFR_BOX,-CFR_BOX:CFR_BOX), sw_px(DIM_SW,DIM_SW,DIM_SW)
         real    :: z, sigma, h, h_sq, mmsk, avg
-        integer :: i, j, k, m, n, o, pad, ithr
+        integer :: i, j, k, m, n, o, pad, ithr, nthr_team
         if( self%is_2d() ) THROW_HARD('3D images only; NLmean3D')
         if( self%ft )      THROW_HARD('Real space only; 3DNLmean3D')
         mmsk = real(self%ldim(1)) / 2. - real(DIM_SW)
@@ -991,7 +993,9 @@ contains
         h    = 4.*sigma
         h_sq = h**2.
         avg  = sum(self%rmat(:self%ldim(1),:self%ldim(2),:self%ldim(3))) / real(product(self%ldim))
-        allocate(rmat_threads(nthr_glob,self%ldim(1),self%ldim(2),self%ldim(3)), source=0.)
+        nthr_team = 1   ! one sum per thread of the team in use
+        !$ nthr_team = omp_get_max_threads()
+        allocate(rmat_threads(nthr_team,self%ldim(1),self%ldim(2),self%ldim(3)), source=0.)
         allocate(rmat_pad(-pad:self%ldim(1)+pad,-pad:self%ldim(2)+pad,-pad:self%ldim(3)+pad), source=avg)
         rmat_pad(1:self%ldim(1),1:self%ldim(2),1:self%ldim(3)) = self%rmat(1:self%ldim(1),1:self%ldim(2),1:self%ldim(3))
         !$omp parallel do schedule(static) default(shared) private(m,n,o,ithr,sw_px,exponentials,i,j,k,z)&
@@ -1028,7 +1032,7 @@ contains
         type(image) :: noise, noise_var
         real    :: exponentials(-CFR_BOX:CFR_BOX,-CFR_BOX:CFR_BOX,-CFR_BOX:CFR_BOX), sw_px(DIM_SW,DIM_SW,DIM_SW)
         real    :: z, sigma2t2, pixavg
-        integer :: i, j, k, m, n, o, pad, ithr
+        integer :: i, j, k, m, n, o, pad, ithr, nthr_team
         if( even%is_2d() ) THROW_HARD('3D images only; NLmean3D_eo')
         if( even%ft )      THROW_HARD('Real space only; 3DNLmean3D_eo')
         call noise%copy(even)
@@ -1040,7 +1044,9 @@ contains
         call avg%mul(0.5)
         pad     = CFR_BOX + 2
         pixavg  = sum(avg%rmat(:avg%ldim(1),:avg%ldim(2),:avg%ldim(3))) / real(product(avg%ldim))
-        allocate(rmat_threads(nthr_glob,avg%ldim(1),avg%ldim(2),avg%ldim(3)), source=0.)
+        nthr_team = 1   ! one sum per thread of the team in use
+        !$ nthr_team = omp_get_max_threads()
+        allocate(rmat_threads(nthr_team,avg%ldim(1),avg%ldim(2),avg%ldim(3)), source=0.)
         allocate(rmat_pad(-pad:avg%ldim(1)+pad,-pad:avg%ldim(2)+pad,-pad:avg%ldim(3)+pad), source=pixavg)
         rmat_pad(1:avg%ldim(1),1:avg%ldim(2),1:avg%ldim(3)) = avg%rmat(1:avg%ldim(1),1:avg%ldim(2),1:avg%ldim(3))
         !$omp parallel do schedule(static) default(shared) private(m,n,o,ithr,sw_px,exponentials,sigma2t2,i,j,k,z)&
@@ -1126,226 +1132,6 @@ contains
         call self%quantize_bwd(NQUANTA, transl_tab)
         call self_prev%kill
     end subroutine ICM2D
-
-    module subroutine ICM2D_eo( even, odd, lambda, verbose )
-        class(image),      intent(inout) :: even, odd
-        real,              intent(in)    :: lambda
-        logical, optional, intent(in)    :: verbose
-        integer, parameter :: MAXITS    = 3
-        integer, parameter :: NQUANTA   = 256
-        type(image) :: even_prev, odd_prev, noise, noise_var
-        integer     :: n_8(3,8), nsz, i, j, k, m, n
-        real        :: transl_tab_even(NQUANTA), transl_tab_odd(NQUANTA)
-        real        :: pot_term(2), pix(2), minv(2), proba(2), sigma2t2
-        real        :: x, xmin(2), eucl, y(2), sy(2), syy(2), diff(2), rnsz
-        logical     :: l_verbose
-        if( even%is_3d() ) THROW_HARD('2D images only; ICM2D_eo')
-        if( even%ft )      THROW_HARD('Real space only; ICM2D_eo')
-        l_verbose = .true.
-        if( present(verbose) ) l_verbose = verbose
-        call noise%copy(even)
-        call noise%subtr(odd)
-        call noise%loc_var(noise_var)
-        call noise_var%norm([5.,2.])
-        call even%quantize_fwd(NQUANTA, transl_tab_even)
-        call odd%quantize_fwd(NQUANTA, transl_tab_odd)
-        call even_prev%copy(even)
-        call odd_prev%copy(odd)
-        do i = 1, MAXITS
-            do m = 1,even%ldim(2)
-                do n = 1,even%ldim(1)
-                    pix(1)   = odd_prev%rmat(n,m,1)
-                    pix(2)   = even_prev%rmat(n,m,1)
-                    sigma2t2 = 2. * noise_var%rmat(n,m,1)
-                    call neigh_8(even%ldim, [n,m,1], n_8, nsz)
-                    rnsz = real(nsz)
-                    sy   = 0.
-                    syy  = 0.
-                    do j = 1, nsz
-                        y(1) = odd_prev%rmat(n_8(1,j),n_8(2,j),1)
-                        y(2) = even_prev%rmat(n_8(1,j),n_8(2,j),1)
-                        sy   = sy  + y
-                        syy  = syy + y*y
-                    end do
-                    xmin     = 0.
-                    pot_term = syy ! x=0.
-                    minv     = (pix * pix) / sigma2t2 + lambda * pot_term
-                    ! Every shade of gray is tested to find the a local minimum of the energy corresponding to a Gibbs distribution
-                    do k = 1,NQUANTA - 1
-                        x        = real(k)
-                        pot_term = syy + rnsz*x*x - 2.0*sy*x
-                        diff     = pix - x
-                        proba    = (diff * diff) / sigma2t2 + lambda * pot_term
-                        if( minv(1) > proba(1) )then
-                            minv(1) = proba(1)
-                            xmin(1) = x
-                        endif
-                        if( minv(2) > proba(2) )then
-                            minv(2) = proba(2)
-                            xmin(2) = x
-                        endif
-                    end do
-                    odd%rmat(n,m,1)  = xmin(1)
-                    even%rmat(n,m,1) = xmin(2)
-                end do
-            end do
-            if( l_verbose )then
-                eucl = (even%euclid_norm(even_prev) + odd%euclid_norm(odd_prev)) / 2.
-                ! write(logfhandle,'(A,I2,A,F8.4)') 'ICM Iteration ', i, ', Euclidean distance ', eucl
-            endif
-            if( i < MAXITS)then
-                even_prev%rmat = even%rmat
-                odd_prev%rmat  = odd%rmat
-            endif
-        end do
-        call even%quantize_bwd(NQUANTA, transl_tab_even)
-        call odd%quantize_bwd(NQUANTA, transl_tab_odd)
-        call even_prev%kill
-        call odd_prev%kill
-        call noise%kill
-        call noise_var%kill
-    end subroutine ICM2D_eo
-
-    module subroutine ICM3D( self, lambda )
-        class(image), intent(inout) :: self
-        real,         intent(in)    :: lambda
-        integer, parameter :: MAXITS    = 3
-        integer, parameter :: NQUANTA   = 256
-        type(image) :: self_prev
-        integer     :: n_4(3,6), nsz, i, j, k, m, n, l
-        real        :: pot_term, pix, min, proba, sigma2t2, x, xmin, transl_tab(NQUANTA), eucl,y, sy, syy, diff, rnsz
-        if( self%is_2d() ) THROW_HARD('3D images only; ICM')
-        if( self%ft )      THROW_HARD('Real space only; ICM')
-        call self%quantize_fwd(NQUANTA, transl_tab)
-        call self_prev%copy(self)
-        sigma2t2 = 10.
-        do i = 1, MAXITS
-            !$omp parallel do schedule(static) default(shared) private(n,m,l,pix,n_4,nsz,rnsz,pot_term,diff,j,xmin,min,k,x,proba,y,sy,syy)&
-            !$omp proc_bind(close) collapse(3)
-            do l = 1,self%ldim(3)
-                do m = 1,self%ldim(2)
-                    do n = 1,self%ldim(1)
-                        pix  = self_prev%rmat(n,m,l)
-                        call neigh_4_3D(self%ldim, [n,m,l], n_4, nsz)
-                        rnsz = real(nsz)
-                        sy   = 0.
-                        syy  = 0.
-                        do j = 1, nsz
-                            y   = self_prev%rmat(n_4(1,j),n_4(2,j),n_4(3,j))
-                            sy  = sy  + y
-                            syy = syy + y*y
-                        end do
-                        pot_term = syy
-                        min      = (pix * pix) / sigma2t2 + lambda * pot_term
-                        xmin     = 0.
-                        ! Every shade of gray is tested to find the a local minimum of the energy corresponding to a Gibbs distribution
-                        do k = 1,NQUANTA - 1
-                            x        = real(k)
-                            pot_term = syy + rnsz*x*x - 2.0*sy*x
-                            diff     = pix - x
-                            proba    = (diff * diff) / sigma2t2 + lambda * pot_term
-                            if( min > proba )then
-                                min  = proba
-                                xmin = x
-                            endif
-                        end do
-                        self%rmat(n,m,l) = xmin
-                    end do
-                end do
-            end do
-            !$omp end parallel do
-            eucl = self%euclid_norm(self_prev)
-            ! write(logfhandle,'(A,I2,A,F8.4)') 'ICM Iteration ', i, ', Euclidean distance ', eucl 
-            call self_prev%copy(self)
-        end do
-        call self%quantize_bwd(NQUANTA, transl_tab)
-        call self_prev%kill
-    end subroutine ICM3D
-
-    module subroutine ICM3D_eo( even, odd, lambda, l_msk )
-        class(image),      intent(inout) :: even, odd
-        real,              intent(in)    :: lambda
-        logical, optional, intent(in)    :: l_msk(even%ldim(1),even%ldim(2),even%ldim(3))
-        integer, parameter :: MAXITS    = 3
-        integer, parameter :: NQUANTA   = 256
-        type(image) :: even_prev, odd_prev, noise, noise_var
-        integer     :: n_4(3,6), nsz, i, j, k, m, n, l
-        real        :: transl_tab_even(NQUANTA), transl_tab_odd(NQUANTA)
-        real        :: sy(2), syy(2), y(2), pot_term(2), pix(2), minv(2)
-        real        :: proba(2), sigma2t2, x, xmin(2), eucl, diff(2), rnsz
-        if( even%is_2d() ) THROW_HARD('3D images only; ICM3D_eo')
-        if( even%ft      ) THROW_HARD('Real space only; ICM3D_eo')
-        call noise%copy(even)
-        call noise%subtr(odd)
-        call noise%loc_var3D(noise_var)
-        call noise_var%norm([5.,2.])
-        if( present(l_msk) )then
-            call even%quantize_fwd(NQUANTA, transl_tab_even, l_msk)
-            call odd%quantize_fwd(NQUANTA, transl_tab_odd, l_msk)
-        else
-            call even%quantize_fwd(NQUANTA, transl_tab_even)
-            call odd%quantize_fwd(NQUANTA, transl_tab_odd)
-        endif
-        call even_prev%copy(even)
-        call odd_prev%copy(odd)
-        do i = 1, MAXITS
-            !$omp parallel do private(n,m,l,pix,sigma2t2,n_4,nsz,rnsz,pot_term,diff,j,xmin,minv,k,x,proba,y,syy,sy)&
-            !$omp proc_bind(close) collapse(3) schedule(static) default(shared)
-            do l = 1,even%ldim(3)
-                do m = 1,even%ldim(2)
-                    do n = 1,even%ldim(1)
-                        pix(1)   = odd_prev%rmat(n,m,l)
-                        pix(2)   = even_prev%rmat(n,m,l)
-                        sigma2t2 = 2. * noise_var%rmat(n,m,l)
-                        call neigh_4_3D(even%ldim, [n,m,l], n_4, nsz)
-                        rnsz = real(nsz)
-                        ! x: central pixel/candidate value
-                        ! y: nsz neighbours, constants
-                        ! pot_term = SUMi((x-yi)**2) = SUMi(yi**2) + nsz.x**2 - 2.x.SUMi(yi)
-                        sy  = 0.
-                        syy = 0.
-                        do j = 1, nsz
-                            y(1) = odd_prev%rmat( n_4(1,j),n_4(2,j),n_4(3,j))
-                            y(2) = even_prev%rmat(n_4(1,j),n_4(2,j),n_4(3,j))
-                            sy   = sy  + y
-                            syy  = syy + y * y
-                        end do
-                        xmin     = 0.
-                        pot_term = syy ! x=0
-                        minv     = (pix * pix) / sigma2t2 + lambda * pot_term
-                        ! Every shade of gray is tested to find the a local minimum of the energy corresponding to a Gibbs distribution
-                        do k = 1,NQUANTA - 1
-                            x        = real(k)
-                            pot_term = syy + rnsz*x*x - 2.0*sy*x
-                            diff     = pix - x
-                            proba    = (diff * diff) / sigma2t2 + lambda * pot_term
-                            if( minv(1) > proba(1) )then
-                                minv(1) = proba(1)
-                                xmin(1) = x
-                            endif
-                            if( minv(2) > proba(2) )then
-                                minv(2) = proba(2)
-                                xmin(2) = x
-                            endif
-                        end do
-                        odd%rmat(n,m,l)  = xmin(1)
-                        even%rmat(n,m,l) = xmin(2)
-                    end do
-                end do
-            end do
-            !$omp end parallel do
-            eucl = (even%euclid_norm(even_prev) + odd%euclid_norm(odd_prev)) / 2.
-            ! write(logfhandle,'(A,I2,A,F8.4)') 'ICM Iteration ', i, ', Euclidean distance ', eucl
-            call even_prev%copy(even)
-            call odd_prev%copy(odd)
-        end do
-        call even%quantize_bwd(NQUANTA, transl_tab_even)
-        call odd%quantize_bwd(NQUANTA, transl_tab_odd)
-        call even_prev%kill
-        call odd_prev%kill
-        call noise%kill
-        call noise_var%kill
-    end subroutine ICM3D_eo
 
     module subroutine GLCM( self, nquanta, pmat )
         class(image), intent(in)    :: self

@@ -7,17 +7,23 @@ use simple_parameters, only: parameters
 use simple_gridding,   only: kb_stencil_inv_envelope_1d, deapodize3D_inplace
 implicit none
 
-public :: reconstructor, gridding_half_restore, exp_samples, insert_planes_multi
+public :: reconstructor, gridding_half_restore, exp_samples, insert_planes_multi, wiener_ridge
 public :: insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
+public :: RHO_HDR_BYTES, read_rho_header
 private
 #include "simple_local_flags.inc"
 
 integer, parameter :: MAX_INSERT_TARGETS = 4
 integer, parameter :: MAX_INSERT_PLANES = 32
 
-!> Dense outputs produced while restoring one gridding half. The base image is
-!! deliberately undeapodized because FSC and cFAR are estimated on it;
-!! final is the deapodized map handed to downstream consumers.
+! A density file (rho_*) starts with a header (magic, box, density shape, sampling) padded to RHO_HDR_BYTES;
+! the payload follows it
+integer(kind=8),  parameter :: RHO_HDR_BYTES = 64_8
+character(len=8), parameter :: RHO_MAGIC     = 'SMPLRHO1'
+
+!> Dense outputs produced while restoring one gridding half: base is the
+!! undeapodized map; final is its deapodized copy, on which FSC and cFAR are
+!! estimated (masked at msk_crop) and which downstream consumers take.
 type :: gridding_half_restore
     type(image) :: base
     type(image) :: final
@@ -87,7 +93,7 @@ type, extends(image) :: reconstructor
     ! I/O
     procedure          :: write_raw_accum
     procedure          :: write_rho, write_rho_as_mrc, write_absfc_as_mrc
-    procedure          :: read_rho, read_raw_rho
+    procedure          :: read_rho, read_raw_rho, check_rho_header
     ! CONVOLUTION INTERPOLATION
     procedure          :: insert_plane_oversamp
     procedure          :: sampl_dens_correct
@@ -290,37 +296,78 @@ contains
         class(reconstructor), intent(in) :: self   !< this instance
         class(string),        intent(in) :: kernam !< kernel name
         integer :: filnum, ierr
+        character(len=24) :: pad
         call del_file(kernam)
         call fopen(filnum, kernam, status='NEW', action='WRITE', access='STREAM', iostat=ierr)
         call fileiochk( 'simple_reconstructor ; write rho '//kernam%to_char(), ierr)
-        write(filnum, pos=1, iostat=ierr) self%rho
+        pad = repeat(achar(0), 24)
+        write(filnum, pos=1, iostat=ierr) RHO_MAGIC, self%get_ldim(), self%rho_shape, real(self%get_smpd(),dp), pad
         if( ierr .ne. 0 ) &
-            call fileiochk('read_rho; simple_reconstructor writing '//kernam%to_char(), ierr)
+            call fileiochk('write_rho; simple_reconstructor writing the header of '//kernam%to_char(), ierr)
+        write(filnum, pos=RHO_HDR_BYTES+1, iostat=ierr) self%rho
+        if( ierr .ne. 0 ) &
+            call fileiochk('write_rho; simple_reconstructor writing '//kernam%to_char(), ierr)
         call fclose(filnum)
     end subroutine write_rho
 
-    !> Read sampling density matrix
+    !> Read sampling density matrix, after its header is checked against this accumulator
     subroutine read_rho( self, kernam )
         class(reconstructor), intent(inout) :: self !< this instance
         class(string),        intent(in)    :: kernam !< kernel name
         integer :: filnum, ierr
         call fopen(filnum, file=kernam, status='OLD', action='READ', access='STREAM', iostat=ierr)
         call fileiochk('read_rho; simple_reconstructor opening '//kernam%to_char(), ierr)
-        read(filnum, pos=1, iostat=ierr) self%rho
-        if( ierr .ne. 0 ) &
-            call fileiochk('simple_reconstructor::read_rho; simple_reconstructor reading '//kernam%to_char(), ierr)
+        call self%check_rho_header(filnum, kernam)
+        call self%read_raw_rho(filnum)
         call fclose(filnum)
     end subroutine read_rho
 
-    !> Serial read of sampling density matrix given an open pipe
+    !> Read the payload of a density file given an open unit; the caller checks its header first
+    !! (check_rho_header), serially
     subroutine read_raw_rho( self, fhandle )
         class(reconstructor), intent(inout) :: self
         integer,              intent(in)    :: fhandle
         integer :: ierr
-        read(fhandle, pos=1, iostat=ierr) self%rho
+        read(fhandle, pos=RHO_HDR_BYTES+1, iostat=ierr) self%rho
         if( ierr .ne. 0 ) &
             call fileiochk('simple_reconstructor::raw read_rho; simple_reconstructor reading from pipe', ierr)
     end subroutine read_raw_rho
+
+    !> The box (ldim), density shape and sampling recorded in a density file's header; stops on a file
+    !! without the header
+    subroutine read_rho_header( fhandle, fname, ldim, rho_shape, smpd )
+        integer,       intent(in)  :: fhandle
+        class(string), intent(in)  :: fname
+        integer,       intent(out) :: ldim(3), rho_shape(3)
+        real(dp),      intent(out) :: smpd
+        character(len=8)              :: magic
+        character(len=:), allocatable :: errmsg
+        integer :: ierr
+        read(fhandle, pos=1, iostat=ierr) magic, ldim, rho_shape, smpd
+        if( ierr /= 0 .or. magic /= RHO_MAGIC )then
+            errmsg = 'not a gridding density file with a header: '//fname%to_char()
+            THROW_HARD(errmsg)
+        endif
+    end subroutine read_rho_header
+
+    !> Stops unless the density file open on fhandle holds this accumulator's box and sampling
+    subroutine check_rho_header( self, fhandle, fname )
+        class(reconstructor), intent(in) :: self
+        integer,              intent(in) :: fhandle
+        class(string),        intent(in) :: fname
+        character(len=:), allocatable :: errmsg
+        character(len=160) :: line
+        integer  :: ldim(3), rho_shape(3)
+        real(dp) :: smpd
+        call read_rho_header(fhandle, fname, ldim, rho_shape, smpd)
+        if( any(ldim /= self%get_ldim()) .or. any(rho_shape /= self%rho_shape) .or. &
+            &abs(smpd - real(self%get_smpd(),dp)) > 1.d-4 * real(self%get_smpd(),dp) )then
+            write(line,'(A,3I6,A,F10.5,A,3I6,A,F10.5)') ' holds box', ldim, ' at smpd', smpd, &
+                &'; the reader is', self%get_ldim(), ' at smpd', self%get_smpd()
+            errmsg = 'gridding density file '//fname%to_char()//trim(line)
+            THROW_HARD(errmsg)
+        endif
+    end subroutine check_rho_header
 
     ! CONVOLUTION INTERPOLATION
 
@@ -339,7 +386,7 @@ contains
         call deapodize3D_inplace(vol, self%invenv1d)
     end subroutine deapodize_volume
 
-    !> Promote the undeapodized FSC base representation to the deapodized final-map
+    !> Promote the undeapodized base representation to the deapodized final-map
     !! representation without changing the base image.
     subroutine finalize_gridding_half_restore( self, backend )
         class(gridding_half_restore), intent(inout) :: self
@@ -349,8 +396,8 @@ contains
         call backend%deapodize_volume(self%final)
     end subroutine finalize_gridding_half_restore
 
-    !> Restore the dense, undeapodized native-grid map on which the gridding
-    !! FSC is estimated. With preserve_numerator=.true., sampling-density
+    !> Restore the dense, undeapodized native-grid map (the gridding FSC is taken
+    !! on its deapodized copy). With preserve_numerator=.true., sampling-density
     !! correction runs on a temporary image and the raw Fourier numerator is
     !! restored for a later FSC-prior replay. Rho is deliberately not copied:
     !! attaching a prior to it remains an in-place backend operation.
@@ -1515,17 +1562,30 @@ contains
                     sh = nint(sqrt(real(h*h + k*k + m*m)))
                     if( (sh < reslim_ind) .or. (sh > sz) ) cycle
                     phys = self%comp_addr_phys(h, k, m)
-                    if( tau2(sh) > TINY)then
-                        invtau2 = 1.0/(fudge*tau2(sh))
-                    else
-                        invtau2 = min(1.e3, 1.e3 * self%rho(phys(1),phys(2),phys(3)))
-                    endif
+                    invtau2 = wiener_ridge(tau2(sh), fudge, self%rho(phys(1),phys(2),phys(3)))
                     self%rho(phys(1),phys(2),phys(3)) = self%rho(phys(1),phys(2),phys(3)) + invtau2
                 enddo
             enddo
         enddo
         !$omp end parallel do
     end subroutine add_invtausq2rho
+
+    !> the ridge a voxel's density gets from its shell's signal power tau2 (the Gaussian prior of the MAP estimate,
+    !! x = B / (D + 1/(tau tau2))): 1/(tau tau2) when the shell has a power estimate, a thousandfold its own density
+    !! when it has none (an unsampled shell, sig2 = 0), so that it is shrunk by 1/1001 whatever the scale of rho. The
+    !! scale-free form matters: with the Euclidean 1/sigma2 weights rho runs to 1e7 and beyond, and a floor on tau2
+    !! against an absolute TINY with the ridge then capped at 1e3 left every shell of zero FSC unregularized when
+    !! tau2 = 0.001 sig2 fell under 1e-10 (PfCRT, 2026-10-25: the final map's power beyond the FSC=0.143 cutoff was
+    !! 6.7 times the power of its 10 A to cutoff band, pure noise that the postprocess sharpened and the Butterworth
+    !! let through as grain)
+    pure real function wiener_ridge( tau2, fudge, rho ) result( invtau2 )
+        real, intent(in) :: tau2, fudge, rho
+        if( tau2 > 0. )then
+            invtau2 = 1.0 / (fudge * tau2)
+        else
+            invtau2 = 1.e3 * rho
+        endif
+    end function wiener_ridge
 
     ! DESTRUCTORS
 

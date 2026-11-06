@@ -8,18 +8,24 @@ not a narrow library.
 ## Use the repo skills
 
 Skills live in `.claude/skills/` (a symlink to `.github/skills/`, shared with
-Copilot). **Select the narrowest applicable skill before editing code.** Only
-name + description stay in context; the skill body loads on demand.
+Copilot). Folder guides load by themselves: a folder's `CLAUDE.md` imports its
+`simple-main-*` guide, which loads the first time a file in that folder (or below)
+is read, and `src/CLAUDE.md` imports `simple-modern-fortran`. Edit the `SKILL.md`,
+never the importing `CLAUDE.md`; `scripts/check_guide_imports.py` (fast gate)
+catches a broken import, which Claude Code otherwise drops silently. Workflow
+skills load only on request: **select the narrowest applicable one before
+editing code.**
 
 - `simple-architecture`: read first when a task spans multiple subsystems.
 - `simple-modern-fortran`: Fortran style, lifecycle, generated sources, modules.
 - Workflow skills: `simple-solve2d`, `simple-refine3d`,
   `simple-solve3d-importance-sampling`, `simple-cluster-cavgs-quality`,
   `simple-frac-update-trailing`, `simple-nonuniform-regularization`.
-- Subsystem skills: `simple-main-*` for `ui`, `root`, `commanders`,
-  `strategies`, `project`, `ori`, `pftc`, `image`, `params`, `nu-filt`,
-  `volume`, `ctf`, `motion`, `opt`, `pca`, `pick`, `star`, `stream`, `nano`,
-  and related modules.
+- Folder guides: `simple-main-<folder>` for most `src/main` folders, with
+  `strategies` split into `-parallelization`, `-search` and `-probabilistic`;
+  `preprocess` is in `motion`, `image_processing` in `image`, `quality` and
+  `cavg_quality` in `simple-cluster-cavgs-quality`, and the modules directly in
+  `src/main` together with `solve/` in `root`.
 
 Routing:
 - Multi-area task → `simple-architecture` first, then the most specific skill.
@@ -92,6 +98,9 @@ living docs and leave the old ones in dated history docs.
   from scratch. Run the touched area's `build/bin/simple_test_exec test=unit_<area>`
   and the high-level entries a change affects; start long runs in the background.
   Report what was built and run, and the results.
+- The build (option `FORTLS`, on) installs the `fortls` Fortran language server in the build tree and
+  registers its Claude Code plugin for the checkout, so sessions get Fortran diagnostics and go-to-definition
+  (`scripts/CMakeLists.txt`, `cmake/InstallFortls.cmake`); offline it only warns.
 - Never commit or push. The maintainer decides what is committed and pushed:
   leave changes in the working tree and say which are ready.
 

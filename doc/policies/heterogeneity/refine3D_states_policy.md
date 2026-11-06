@@ -101,9 +101,10 @@ Fixed-pose classification (keeping every projection direction and choosing
 only the state) is not a pose policy: it is what `flex_pca` does when it
 initializes the states.
 
-For `local`, angular, in-plane, and shift bounds are automatic. Advanced
-`local_ang_bound`, `local_inpl_bound`, and `local_shift_bound` values override
-only the corresponding automatic bound and are rejected for other policies.
+For `local`, the angular and shift bounds are automatic. Advanced
+`local_ang_bound` and `local_shift_bound` values override only the
+corresponding automatic bound and are rejected for other policies. The
+in-plane search has no bound: the tables draw the rotation from the posterior.
 
 The implementation-shaped `multivol_mode` and `prob_neigh_mode` controls are
 not public inputs to this workflow; the controller derives them from
@@ -119,17 +120,17 @@ more subspace directions than that is limited to the 2,500.
 
 The automatic per-iteration target is 10,000 particles per state, capped at
 100,000. If the active count exceeds the target, the wrapper uses stochastic
-fractional updates over the sampling units of `balance=cavg`: one unit per
-selected 2D class, grouped into `nclust` (default 20) groups of similar class
-averages; every draw shares its target equally over the groups, then over the
-classes of a group, then lowest `updatecnt` first inside a class. Without
+fractional updates over the sampling units of `balance=class`: one unit per
+selected 2D class; every draw shares its target over the classes in
+proportion to the square root of their populations, then lowest `updatecnt`
+first inside a class. Without
 selected class averages in the project the wrapper falls back to
 `balance=none` (global lowest `updatecnt` tiers). Particles inactive in
 `ptcl3D` (state 0, for example those flex initialization dropped) are not part
 of any unit. Otherwise it uses a full update. The sampler never uses the state
 maps, poses or projection directions to choose particles.
 
-With equal quotas one full visit of the active particles takes
+One full visit of the active particles takes
 `sweep = max over units of ceil(pop / quota)` draws, computed from the unit
 table before the first stage. The automatic `maxits` is four target updates
 per particle times `sweep`, between 10 and 50 iterations.
@@ -147,9 +148,9 @@ frequency march is adjusted, and the terminal missing-update pass labels any
 particle the march did not reach. The missing-update pass draws every
 active particle that has not been updated. Holding one cohort for `k` iterations of trailing
 reconstruction gives it a cumulative map coefficient `1 − (1−u)^k`; the
-equal quota biases the composition of each partial reconstruction towards
-about `min(pop, quota)` particles per class, which moves with `nsample`,
-`nclust` and the class selection. Under cohorts `updatecnt` counts
+quota biases the composition of each partial reconstruction towards
+about `min(pop, quota)` particles per class, which moves with `nsample`
+and the class selection. Under cohorts `updatecnt` counts
 iterations, not draws; coverage is read from `% PARTICLES UPDATED SO FAR`.
 
 `lpstart` and `lpstop` define one common frequency schedule for all states.

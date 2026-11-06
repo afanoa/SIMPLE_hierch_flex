@@ -12,6 +12,12 @@ simple_exec prg=list
   average micrograph from a projection stack, with a PDB-to-movie tutorial.
 - [simulate_particles](simulate_particles.md) — generate boxed particle
   images and their simulation metadata from a volume.
+- [simulate_scattering](simulate_scattering.md) — generate boxed detector
+  intensities under a wave model (projection, first Born, Rytov or multislice)
+  from a PDB or electrostatic potential.
+- [reconstruct3D_wave](reconstruct3D_wave.md) — reconstruct half maps from
+  oriented particles under a wave model of the image (Ewald-sphere curvature,
+  strong phase, multiple scattering).
 - [Simulated validation workflows](simulated_workflows.md) — run the
   built-in molecular workflows and quantitative checks with `simple_test_exec`.
 
@@ -129,6 +135,13 @@ probabilities. `subset_score=none` gives each eligible particle unit support.
 Coverage selection requires updated particles with finite orientations and
 complete existing project half-set provenance. It never creates a new split.
 
+The particle recommendation target is the eligible particle count multiplied
+by `nmics / eligible_micrographs`, rounded to the nearest integer, with at least
+one recommendation per populated half. The unchanged particle selector ranks
+particles separately within each existing half. Unavailable half quotas are
+redistributed. The derived target appears in the log and micrograph report;
+it does not set the final particle count.
+
 The default output is `my_project_mic_subset.simple` beside the input. Use
 `outfile=another_subset.simple` for a different destination. The input and
 image stacks are not modified. Output keeps original row indices and retained
@@ -138,12 +151,15 @@ cleared, so reconstruct the selected particles before assessing map quality.
 
 The output project has accompanying `.micrographs.csv` and `.coverage.csv`
 reports containing selected micrographs, eligible particle counts, direction
-coordinates and support before/after selection. `nspace=64` controls the
+coordinates and recommendation support before/after selection. `nspace=64` controls the
 symmetry-aware direction grid and must be even. Set the correct molecular
 symmetry with `pgrp=`.
 
-The optimizer balances quality-weighted particle yield and directional support
-using a logarithmic objective. It starts with a deterministic greedy subset,
+The optimizer balances quality-weighted engine recommendations across separate
+direction/half cells using a logarithmic objective. All eligible particles in
+selected micrographs are retained, including those outside the recommendations.
+Micrographs with no recommendations can fill unused places to keep exactly
+`nmics`; ties use original micrograph order. It starts with a deterministic greedy subset,
 then searches globally. `subset_max_nodes=100000` limits search work. The log
 and micrograph report explicitly say whether the optimum of this objective
 was proved; otherwise the subset is the best solution found within that
@@ -212,6 +228,37 @@ voltage in kV, Cs in mm, and sampling in Angstroms per pixel.
 Inherited map outputs and registered sigma state are cleared from the
 subset project. Reconstruct the subset before judging map quality; score
 selection alone does not guarantee improved resolution.
+
+## Exchanging particles with RELION (STAR files)
+
+SIMPLE stores a particle's shift (`x`, `y`) in pixels of the stack its image
+lives in; RELION stores it as `rlnOriginXAngst`, `rlnOriginYAngst` in
+Angstroms. Every STAR import divides by the pixel size of the particle's stack,
+every export multiplies by it, once per particle. Euler angles map one to one
+(`e1`, `e2`, `e3` are `rlnAngleRot`, `rlnAngleTilt`, `rlnAnglePsi`); defocus is
+in micrometres in SIMPLE and Angstroms in STAR, the phase shift in radians in
+SIMPLE and degrees in STAR. A particle whose stack has no pixel size stops a
+conversion of a nonzero shift with a message naming the particle and stack.
+
+Only RELION 3.1 or later files are read: a STAR file without a `data_optics`
+block (the RELION 3.0 layout) is refused with a message that says so; convert
+it with RELION first.
+
+- `import_particles starfile=particles.star` reads the 3D field (rotation,
+  tilt, psi, origins, CTF) and copies it to the 2D field without rotation and
+  tilt.
+- `import_starproject import_type=ptcl3D` reads the same into the 3D field;
+  `import_type=ptcl2D` reads psi and the origins into the 2D field;
+  `import_type=mic` reads micrographs.
+- `export_starproject` writes `micrographs.star` and, for a project with
+  micrographs, `particles2D.star`: image and micrograph names, coordinates,
+  CTF, optics group, psi and the origins in Angstroms.
+- `export_relion` writes RELION 3.1 files (optics and particles blocks) with
+  image names, coordinates and CTF, and the poses: rotation, tilt, psi and the
+  origins in Angstroms from the 3D field when it holds 3D poses, otherwise psi
+  and the origins from the 2D field.
+- The streaming pipeline's particle export writes its origins in Angstroms the
+  same way.
 
 ## NICE (New Interface for CryoEM)
 Launch the Graphical User Interface (GUI) with:

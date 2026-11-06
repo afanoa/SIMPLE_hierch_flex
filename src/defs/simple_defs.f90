@@ -51,18 +51,9 @@ logical, parameter            :: STDOUT2LOG = .false.
 ! other global variables
 integer                       :: nthr_glob = 1                    !< number of threads global variable
 logical                       :: l_distr_worker_glob              !< global distributed worker mode execution flag
+character(len=:), allocatable :: worker_projfile_glob             !< a partition worker's input project, which it never writes
 integer                       :: part_glob                        !< global part index
 character(len=:), allocatable :: cmdline_glob                     !< global command line string
-! Exit-time cache cleanup hook. The process that owns an on-disk cache (see
-! simple_ptcl_cache) points this at its cleanup routine; simple_exception calls
-! it before a hard stop and the exec programs call it on normal termination.
-! It lives here, not in the cache module, because simple_error can only see
-! simple_defs: the cache module itself throws through simple_exception.
-abstract interface
-    subroutine exit_cleanup_iface()
-    end subroutine exit_cleanup_iface
-end interface
-procedure(exit_cleanup_iface), pointer :: cache_cleanup_glob => null()
 integer,          parameter   :: NTHR_SHMEM_MAX       = 20        !< maximum number of shared-memory threads used by master process
 logical,          parameter   :: L_BENCH_GLOB         = .true.    !< global benchmarking flag
 logical,          parameter   :: L_USE_SLURM_ARR      = .false.   !< use SLURM arrays for jobs where we know nparts
@@ -109,6 +100,9 @@ real,    parameter    :: GLOB_FREQ                 = 0.2       !< frequency of g
 real,    parameter    :: LP2SMPDFAC                = 0.4125    !< low-pass limit scaling constant
 real,    parameter    :: LP2SMPDFAC2D              = 0.4       !< low-pass limit scaling constant
 real,    parameter    :: SHC_INPL_TRSHWDTH         = 2.0       !< shift search halfwidht (pixels)ch
+integer, parameter    :: PROB_BETA_TAIL            = 5         !< annealing tail of the probability tables' draws: once the resolution (3D) or the class overlap (2D) stops gaining, the draws ramp geometrically from prob_beta to prob_beta_end over this many iterations and the run ends
+real,    parameter    :: PROB_BETA                 = 0.3       !< the probability tables' tempering factor, one for every posterior draw (in-plane, direction, class, neighbourhood): T_eff = PROB_BETA x T, below one hotter; the workflows carry it as prob_beta and the last stage's tail ramps it to 1 (0.3: hotter draws re-derive the poses at every band entry, which the physical posterior is too sharp to do)
+real,    parameter    :: PROB_INSERT_WMIN          = 0.01      !< weighted insertion (topk > 1): an extra pose with less than this share of its particle's weight is not inserted: below it the pose adds a gridding insertion for no measurable signal
 real,    parameter    :: MC_PATCHSZ                = 200.      !< recommended patch size (in Angstroms) for motion correction
 real,    parameter    :: ENVMSK_FSC_THRESH         = 0.8       !< FSC value after which phase-randomization and FSC correction is applied in enveloppe masking
 real,    parameter    :: MAX_SMPD                  = 2.67      !< maximum sampling distance in scaling

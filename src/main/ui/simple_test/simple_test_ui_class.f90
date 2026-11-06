@@ -77,7 +77,9 @@ contains
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Core')
         call unit_core%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (ansi_formatting, string, syslib, fileio, stack_io, class_sample_io, character_hash, hash, value_reference_hash, linked_list, record_list, command_line)', '', .false., '')
+            &'One sub-suite of this area to run alone (ansi_formatting, string, syslib, fileio, epu_xml, stack_io, &
+            &class_sample_io, character_hash, hash, value_reference_hash, linked_list, record_list, &
+            &command_line, parameters)', '', .false., '')
         call add_ui_program('unit_core', unit_core, tsttab, UI_CATEGORY)
     end subroutine new_unit_core
 
@@ -116,7 +118,7 @@ contains
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Numerics')
         call unit_numerics%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (online_variance, random_draws, affinity_propagation, hierarchical_clustering, k_means, k_center, gaussian_mixture, extreme_deconvolution, statistics, linear_algebra, kaiser_bessel_kernel, search_sort_locate, decay_schedules, pca, cavg_quality_relations, cavg_quality_selection, diffusion_map_graphs, optimisers, low_pass_stages, shift_search, truth_metrics)', '', .false., '')
+            &'One sub-suite of this area to run alone (online_variance, random_draws, affinity_propagation, hierarchical_clustering, k_means, k_center, gaussian_mixture, extreme_deconvolution, statistics, linear_algebra, kaiser_bessel_kernel, search_sort_locate, decay_schedules, cavg_quality_relations, cavg_quality_selection, cavg_quality_nano, quality_logistic, optimisers, nonlinear_conjugate_gradient, low_pass_stages, dose_series, dose_curve, shift_search, truth_metrics)', '', .false., '')
         call add_ui_program('unit_numerics', unit_numerics, tsttab, UI_CATEGORY)
     end subroutine new_unit_numerics
 
@@ -137,12 +139,12 @@ contains
         class(ui_hash), intent(inout) :: tsttab
         call unit_motion%new(&
         &'unit_motion',&
-        &'unit tests: motion gain, motion model and particle extraction',&
-        &'is the fast-gate unit suite for motion gain helpers, motion model persistence and geometry, and particle extractor initialization',&
+        &'unit tests: motion and particle extraction',&
+        &'tests motion gain, saved-model geometry and particle extraction',&
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Motion')
         call unit_motion%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (motion_gain, motion_model, particle_extractor)', '', .false., '')
+            &'One sub-suite of this area to run alone (motion_gain, motion_model, particle_extractor, fraction_dose_metadata)', '', .false., '')
         call add_ui_program('unit_motion', unit_motion, tsttab, UI_CATEGORY)
     end subroutine new_unit_motion
 
@@ -177,11 +179,14 @@ contains
         call unit_reconstruction%new(&
         &'unit_reconstruction',&
         &'unit tests: 3D reconstruction backends and observation noise',&
-        &'is the fast-gate unit suite for 3D reconstruction: the rec3D backend selector, the Gaussian observation-noise contracts, the nonuniform filter competition and the PCG atomicity prior',&
+        &'is the fast-gate unit suite for 3D reconstruction: the rec3D backend selector, the Gaussian observation-noise contracts, the nonuniform filter competition, the PCG atomicity prior, the PCG lattice''s flat and curved plane gather and scatter, the wave field, the wave imaging, the multislice chain, the wave projector and the wave mode of simulate_particles',&
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Reconstruction')
         call unit_reconstruction%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (rec3d_backend, observation_noise, class_average_carry_over, trailing_chain_identity, frozen_accumulator, weighted_insertion, volume_pair_metrics, nonuniform_filtering, solve3d_cavgs_stage_rules, state_assignment_rules, atomic_prior, focused_pcg)', '', .false., '')
+            &'One sub-suite of this area to run alone (rec3d_backend, observation_noise, class_average_carry_over, &
+            &trailing_chain_identity, refine3d_provenance, dose_series_manifest, frozen_accumulator, weighted_insertion, volume_pair_metrics, &
+            &nonuniform_filtering, half_map_enhancement, solve3d_cavgs_stage_rules, state_assignment_rules, atomic_prior, pcg_lattice, &
+            &wave_field, wave_imaging, wave_multislice, wave_projector, wave_simulation, focused_pcg)', '', .false., '')
         call add_ui_program('unit_reconstruction', unit_reconstruction, tsttab, UI_CATEGORY)
     end subroutine new_unit_reconstruction
 
@@ -190,11 +195,11 @@ contains
         call lib_reconstruction%new(&
         &'lib_reconstruction',&
         &'library tests: half-set PCG reconstruction against gridding, map docking',&
-        &'is the nightly library suite for 3D reconstruction: independent half-set PCG solves, lambda sweep and FSC against gridding; PCG from sparse and preferred-orientation view sets against gridding; the solve3D_addon report docking a moved map',&
+        &'is the nightly library suite for 3D reconstruction: independent half-set PCG solves, lambda sweep and FSC against gridding; PCG from sparse and preferred-orientation view sets against gridding; the solve3D_addon report docking a moved map; reconstruct3D_wave on a multislice-imaged phantom; symaxis_search, dock_volpair and centervol on phantoms of known symmetry, rotation and offset',&
         &'simple_test_exec',&
         &.false., display_name='Library Tests: Reconstruction')
         call lib_reconstruction%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this suite to run alone (pcg_half_set, pcg_sparse_sampling, addon_report_docking, truth_map_docking, fractional_reconstruction)', '', .false., '')
+            &'One sub-suite of this suite to run alone (pcg_half_set, pcg_sparse_sampling, addon_report_docking, truth_map_docking, postprocess_pdb, fractional_reconstruction, fraction_dose_export, dose_filter3d, wave_reconstruction, volume_programs)', '', .false., '')
         call add_ui_program('lib_reconstruction', lib_reconstruction, tsttab, UI_CATEGORY)
     end subroutine new_lib_reconstruction
 
@@ -207,7 +212,7 @@ contains
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Polar Alignment')
         call unit_pftc_align2D3D%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (polar_correlation, continuous_in_plane, refine3d_in_plane_state, 2d_probability_table_io, 3d_probability_table, sigma2_state, sigma2_bootstrap, cavg_registration, cavgs_state_match)', '', .false., '')
+            &'One sub-suite of this area to run alone (polar_correlation, polar_shift_map, continuous_in_plane, refine3d_in_plane_state, 2d_probability_table, 3d_probability_table, sigma2_state, sigma2_bootstrap, cavg_registration, cavgs_state_match, solve2d_stage_rules)', '', .false., '')
         call add_ui_program('unit_pftc_align2D3D', unit_pftc_align2D3D, tsttab, UI_CATEGORY)
     end subroutine new_unit_pftc_align2D3D
 
@@ -221,7 +226,8 @@ contains
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: Cartesian Alignment')
         call unit_cart_align3D%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (cartesian_fourier, cart_calculator, pose_optimizer, pose_strategy, pose_statistics)', '', .false., '')
+            &'One sub-suite of this area to run alone (local_startup, local_staging, startup_state, cartesian_fourier, &
+            &cart_calculator, pose_optimizer, pose_strategy, pose_statistics)', '', .false., '')
         call add_ui_program('unit_cart_align3D', unit_cart_align3D, tsttab, UI_CATEGORY)
     end subroutine new_unit_cart_align3D
 
@@ -243,11 +249,11 @@ contains
         call unit_single%new(&
         &'unit_single',&
         &'unit tests: SINGLE (nanoparticles, atomic models)',&
-        &'is the fast-gate unit suite for SINGLE: the atoms module, the C-alpha candidate search on a synthetic three-residue map and the species-discovery numerics',&
+        &'is the fast-gate unit suite for SINGLE: the atoms module, the C-alpha candidate search on a synthetic three-residue map, the species-discovery numerics and the atomic density fitting primitives',&
         &'simple_test_exec',&
         &.false., display_name='Unit Tests: SINGLE')
         call unit_single%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this area to run alone (atoms, cif2mrc, c_alpha_finder, species)', '', .false., '')
+            &'One sub-suite of this area to run alone (atoms, cif2mrc, c_alpha_finder, species, density)', '', .false., '')
         call add_ui_program('unit_single', unit_single, tsttab, UI_CATEGORY)
     end subroutine new_unit_single
 
@@ -255,12 +261,12 @@ contains
         class(ui_hash), intent(inout) :: tsttab
         call lib_single%new(&
         &'lib_single',&
-        &'library tests: SINGLE molecular models',&
-        &'is the nightly library suite for pdb2mrc coverage of the built-in 6VXX and 1JYX models',&
+        &'library tests: SINGLE molecular models and density fits',&
+        &'is the nightly library suite for pdb2mrc coverage of the built-in 6VXX and 1JYX models and rendered nanoparticle density fits with known and measured transfer',&
         &'simple_test_exec',&
         &.false., display_name='Library Tests: SINGLE')
         call lib_single%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this suite to run alone (pdb2mrc)', '', .false., '')
+            &'One sub-suite of this suite to run alone (pdb2mrc, density_particles)', '', .false., '')
         call add_ui_program('lib_single', lib_single, tsttab, UI_CATEGORY)
     end subroutine new_lib_single
     
@@ -286,7 +292,7 @@ contains
         &'simple_test_exec',&
         &.false., display_name='Library Tests: Stream')
         call lib_stream%add_input(UI_PARM, 'suite', 'str', 'Run one sub-suite', &
-            &'One sub-suite of this suite to run alone (optics_assignment, picking_references, pick_and_extract, solve_3d_reference_docking, sieve_to_3d, movies_to_3d)', '', .false., '')
+            &'One sub-suite of this suite to run alone (optics_assignment, picking_references, pick_and_extract, solve_3d_reference_docking)', '', .false., '')
         call add_ui_program('lib_stream', lib_stream, tsttab, UI_CATEGORY)
     end subroutine new_lib_stream
 

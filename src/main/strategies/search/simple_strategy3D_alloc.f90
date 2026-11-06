@@ -3,6 +3,7 @@ module simple_strategy3D_alloc
 use simple_pftc_srch_api
 use simple_builder, only: builder
 implicit none
+#include "simple_local_flags.inc"
 
 public :: s3D, clean_strategy3D, prep_strategy3D, prep_strategy3D_thread
 public :: ref_state_from_index, ref_proj_from_index
@@ -12,6 +13,7 @@ private
 type strategy3D_alloc
     ! global parameters
     real,           allocatable :: smpl_inpl_athres(:)      !< angular threshold of in-plane rotation sampling
+    real                        :: shift_prior_sigma2 = 0.  !< the shift prior's variance per axis (shift_prior=yes, the prob modes' polish)
     logical,        allocatable :: state_exists(:)          !< indicates state existence
     ! per thread allocation
     type(ran_tabu), allocatable :: rts(:)                   !< stochastic search order generators
@@ -33,14 +35,18 @@ logical                :: srch_order_allocated = .false.
 contains
 
     subroutine prep_strategy3D( params, build )
-        use simple_eul_prob_tab_utils, only: calc_athres
+        use simple_eul_prob_tab_utils, only: calc_athres, shift_prior_sigma2
+        !$ use omp_lib,                only: omp_get_max_threads
         class(parameters), intent(in)    :: params
         class(builder),    intent(inout) :: build
-        integer :: istate, ithr, nrefs, nrefs_sub
+        integer :: istate, ithr, nrefs, nrefs_sub, nteam
         real    :: areal
         logical :: l_prob_mode
         ! clean all class arrays & types
         call clean_strategy3D()
+        ! the per-thread state is sized by the team the pass's regions run
+        nteam = nthr_glob
+        !$ nteam = omp_get_max_threads()
         ! a Cartesian pass (l_cart_refine) searches no projection grid: no polar search state
         if( params%l_cart_refine ) return
         ! parameters
@@ -50,12 +56,12 @@ contains
         ! Probabilistic matching consumes an assignment map directly and never
         ! produces a per-thread reference-search solution table.
         if( .not. l_prob_mode )then
-            allocate(s3D%proj_space_shift(2,nrefs,nthr_glob),&
-                &s3D%proj_space_corrs(nrefs,nthr_glob),&
-                &s3D%proj_space_inplinds(nrefs,nthr_glob))
+            allocate(s3D%proj_space_shift(2,nrefs,nteam),&
+                &s3D%proj_space_corrs(nrefs,nteam),&
+                &s3D%proj_space_inplinds(nrefs,nteam))
             if( trim(params%inpl_cont) == 'yes' )then
-                allocate(s3D%proj_space_inplcoords(nrefs,nthr_glob),&
-                    &s3D%proj_space_inplvalid(nrefs,nthr_glob))
+                allocate(s3D%proj_space_inplcoords(nrefs,nteam),&
+                    &s3D%proj_space_inplvalid(nrefs,nteam))
             endif
         endif
         ! states existence
@@ -77,12 +83,12 @@ contains
             case( 'cluster','clustersym','clustersoft','prob','prob_neigh')
                 srch_order_allocated = .false.
             case DEFAULT
-                allocate(s3D%srch_order(nrefs,nthr_glob), s3D%rts(nthr_glob),&
-                    &s3D%rts_inpl(nthr_glob), s3D%inpl_order(build%pftc%get_nrots(),nthr_glob))
+                allocate(s3D%srch_order(nrefs,nteam), s3D%rts(nteam),&
+                    &s3D%rts_inpl(nteam), s3D%inpl_order(build%pftc%get_nrots(),nteam))
                 if( params%l_neigh )then
-                    allocate(s3D%srch_order_sub(nrefs_sub,nthr_glob), s3D%rts_sub(nthr_glob))
+                    allocate(s3D%srch_order_sub(nrefs_sub,nteam), s3D%rts_sub(nteam))
                 endif
-                do ithr=1,nthr_glob
+                do ithr=1,nteam
                     s3D%rts(ithr)      = ran_tabu(nrefs)
                     s3D%rts_inpl(ithr) = ran_tabu(build%pftc%get_nrots())
                     if( params%l_neigh ) s3D%rts_sub(ithr) = ran_tabu(nrefs_sub)
@@ -92,6 +98,9 @@ contains
                 s3D%inpl_order       = 1
                 if( allocated(s3D%srch_order_sub) ) s3D%srch_order_sub = 0
         end select
+        ! the shift prior's width for the committed pose's polish, as the tables' (shift_prior_sigma2)
+        s3D%shift_prior_sigma2 = 0.
+        if( params%l_shift_prior .and. l_prob_mode ) s3D%shift_prior_sigma2 = shift_prior_sigma2(build%spproj_field, params%lp / params%smpd)
         ! calculate peak thresholds for probabilistic searches
         if( allocated(s3D%smpl_inpl_athres) ) deallocate(s3D%smpl_inpl_athres)
         if( .not. l_prob_mode )then
@@ -130,14 +139,14 @@ contains
         if( allocated(s3D%proj_space_inplvalid) ) deallocate(s3D%proj_space_inplvalid)
         if( allocated(s3D%smpl_inpl_athres)    ) deallocate(s3D%smpl_inpl_athres)
         if( allocated(s3D%rts) )then
-            do ithr=1,nthr_glob
+            do ithr=1,size(s3D%rts)
                 call s3D%rts(ithr)%kill
                 call s3D%rts_inpl(ithr)%kill
             enddo
             deallocate(s3D%rts, s3D%rts_inpl)
         endif
         if( allocated(s3D%rts_sub) )then
-            do ithr=1,nthr_glob
+            do ithr=1,size(s3D%rts_sub)
                 call s3D%rts_sub(ithr)%kill
             enddo
             deallocate(s3D%rts_sub)

@@ -9,11 +9,11 @@ use simple_eo_partition, only: ensure_field_halves
 use simple_qsys_env,    only: qsys_env
 use simple_convergence, only: convergence
 use simple_matcher_smpl_and_lplims, only: refine2D_requires_full_assignment, all_active_ptcls_2D_assigned, &
-    &refine2D_blends_carryover
+    &refine2D_blends_carryover, master_draws_sample2D, sample_ptcls4update2D, adopt_run_seed, sample_ptcls4prob2D
+use simple_eul_prob_tab_utils, only: merge_prob_readouts
 use simple_cavg_sums,   only: cavg_sums, cavg_contrib_fname, CAVG_SUMS_STATE, CAVG_SUMS_OK
 use simple_classaverager, only: cavger_commit_carryover, cavger_restore_cavgs, cavger_gen2Dclassdoc, &
     &cavger_write_merged, cavger_write_eo, cavger_kill
-use simple_ptcl_cache,  only: ptcl_cache_ensure
 use simple_gui_utils,   only: mrc2jpeg_tiled
 use simple_progress,    only: progressfile_update
 use simple_euclid_sigma2, only: sigma2_commit_iter
@@ -33,6 +33,7 @@ contains
     procedure(finalize_iter_interface), deferred :: finalize_iteration
     procedure(finalize_run_interface),  deferred :: finalize_run
     procedure(cleanup_interface),       deferred :: cleanup
+    procedure(tail_start_interface),    deferred :: anneal_tail_start
 end type refine2D_strategy
 
 !> Timings of an iteration, from its start to the end of finalize_iteration (the REFINE2D_STRATEGY bench record)
@@ -45,7 +46,7 @@ type :: refine2D_bench_state
     real(timer_int_kind)    :: rt_sigma_prep = 0.
     real(timer_int_kind)    :: rt_sigma      = 0.
     real(timer_int_kind)    :: rt_setup      = 0.  !< job description, stale artifacts, the carried-sums check
-    real(timer_int_kind)    :: rt_prestep    = 0.  !< prob_align2D
+    real(timer_int_kind)    :: rt_prestep    = 0.  !< the master's sample draw (the probabilistic modes)
     real(timer_int_kind)    :: rt_search     = 0.  !< shared memory: the matcher; distributed: scheduling and search
     real(timer_int_kind)    :: rt_merge      = 0.  !< merging the partitions' alignment documents
     real(timer_int_kind)    :: rt_cavg       = 0.  !< distributed class-average assembly
@@ -69,6 +70,7 @@ contains
     procedure :: finalize_iteration => inmem_finalize_iteration
     procedure :: finalize_run       => inmem_finalize_run
     procedure :: cleanup            => inmem_cleanup
+    procedure :: anneal_tail_start  => inmem_anneal_tail_start
 end type refine2D_inmem_strategy
 
 type, extends(refine2D_strategy) :: refine2D_distr_strategy
@@ -83,6 +85,7 @@ contains
     procedure :: finalize_iteration => distr_finalize_iteration
     procedure :: finalize_run       => distr_finalize_run
     procedure :: cleanup            => distr_cleanup
+    procedure :: anneal_tail_start  => distr_anneal_tail_start
 end type refine2D_distr_strategy
 
 abstract interface
@@ -123,6 +126,12 @@ abstract interface
         class(refine2D_strategy), intent(inout) :: self
         type(parameters),          intent(in)    :: params
     end subroutine cleanup_interface
+
+    !> the first iteration of the posterior draws' annealing tail (0: not started); check_conv2D sets it
+    integer function tail_start_interface(self) result(it)
+        import :: refine2D_strategy
+        class(refine2D_strategy), intent(in) :: self
+    end function tail_start_interface
 end interface
 
 contains
@@ -158,6 +167,8 @@ contains
         if( build%spproj%get_nptcls() == 0 ) THROW_HARD('no particles found!')
         call cline%set('mkdir', 'no')
         params%which_iter = max(1, params%startit)
+        ! the run's seed of the keyed draws (the probabilistic routes), before any draw of the run
+        if( params%l_prob_align_mode ) call adopt_run_seed(params, build)
         ! the halves are on disk before the references, whose class averages may seed the sigma2 state
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         call init_refine2D_refs(cline, params, build)
@@ -166,10 +177,11 @@ contains
         if( cline%defined('startit') )startit = params%startit
         if( startit == 1 )then
             call build%spproj_field%clean_entry('updatecnt', 'sampled')
+            ! the dynamic centring's state (shift_sigma > 0): a workflow's first run marks every particle as not
+            ! yet centred (the sentinel), whatever the key's state in this run
+            call build%spproj_field%set_all2single('shsig',  -1.)
+            call build%spproj_field%set_all2single('shincr',  0.)
         endif
-        ! once per refine2D invocation, before any iteration reads particles; may
-        ! fall back to cache=no on cline, which child commands inherit via their copy
-        call ptcl_cache_ensure(params, build, cline)
     end subroutine inmem_initialize
 
     subroutine inmem_execute_iteration( self, params, build, cline, converged)
@@ -183,8 +195,6 @@ contains
         logical,                         intent(out)   :: converged
         type(commander_commit_sigma2) :: xcommit_sigma2
         type(starproject) :: starproj
-        type(cmdline)     :: cline_prob_align
-        type(convergence) :: conv     !< a fresh convergence object every iteration
         real              :: update_frac_req
         logical           :: l_full_update, l_update_frac_req, l_frac
         if( L_BENCH_GLOB )then
@@ -204,14 +214,8 @@ contains
             params%l_update_frac = .false.
         endif
         if( L_BENCH_GLOB ) self%bench%rt_setup = toc(self%bench%t_tot)
-        if( params%l_prob_align_mode )then
-            cline_prob_align = cline
-            call cline_prob_align%set('prg', 'prob_align2D')
-            call cline_prob_align%set('which_iter', params%which_iter)
-            call cline_prob_align%set('startit',    params%startit)
-            if( l_full_update ) call cline_prob_align%set('update_frac', 1.0)
-            call run_prob_align2D(params, build, cline_prob_align, self%bench)
-        endif
+        ! the probabilistic modes run their pipeline inside refine2D_exec on this project (the sample, the fill, the
+        ! class draws, the polish, the class sums)
         ! main clustering/alignment step
         if( params%cc_objfun==OBJFUN_EUCLID )then
             if( L_BENCH_GLOB ) self%bench%t_sigma_prep = tic()
@@ -229,8 +233,9 @@ contains
             self%bench%rt_cavg = toc(self%bench%t)
             self%bench%t       = tic()
         endif
-        ! before update_frac is restored: check_conv2D reads params%l_update_frac
-        call check_refine2D_convergence(params, build, cline, conv, converged)
+        ! before update_frac is restored: check_conv2D reads params%l_update_frac; the strategy's convergence
+        ! object, which keeps the annealing tail's state across iterations
+        call check_refine2D_convergence(params, build, cline, self%conv, converged)
         if( L_BENCH_GLOB ) self%bench%rt_conv = toc(self%bench%t)
         if( l_full_update )then
             params%update_frac   = update_frac_req
@@ -254,7 +259,6 @@ contains
         if( L_BENCH_GLOB ) self%bench%rt_star = toc(self%bench%t)
         ! cleanup
         call starproj%kill
-        call cline_prob_align%kill
     end subroutine inmem_execute_iteration
 
     subroutine inmem_finalize_iteration( self, params, build)
@@ -312,19 +316,23 @@ contains
         if( build%spproj%get_nptcls() == 0 ) THROW_HARD('no particles found!')
         call cline%set('mkdir', 'no')
         params%which_iter = max(1, params%startit)
+        ! the run's seed of the keyed draws (the probabilistic routes), before any part is scheduled
+        if( params%l_prob_align_mode ) call adopt_run_seed(params, build)
         ! the halves are on disk before the references, whose class averages may seed the sigma2 state
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         call init_refine2D_refs(cline, params, build)
         call ensure_canonical_sigma2(params, build, cline)
         if( params%startit == 1 )then
             call build%spproj_field%clean_entry('updatecnt', 'sampled')
+            ! the dynamic centring's state (shift_sigma > 0): a workflow's first run marks every particle as not
+            ! yet centred (the sentinel), which the workers read from the project
+            call build%spproj_field%set_all2single('shsig',  -1.)
+            call build%spproj_field%set_all2single('shincr',  0.)
+            call build%spproj%write_segment_inside(params%oritype, params%projfile)
         endif
-        ! master-side, before any job is scheduled, so the workers find it ready;
-        ! must precede gen_job_descr below so a fallback to cache=no reaches the
-        ! worker command lines
-        call ptcl_cache_ensure(params, build, cline)
         call set_master_num_threads(self%nthr_master, string('REFINE2D'))
-        call self%qenv%new(params, params%nparts)
+        ! partitions balance the particles with state > 0, as in 3D
+        call self%qenv%new(params, params%nparts, l_active=build%spproj_field%included())
         call cline%gen_job_descr(self%job_descr)
     end subroutine distr_initialize
 
@@ -336,10 +344,11 @@ contains
         type(builder),                   intent(inout) :: build
         type(cmdline),                   intent(inout) :: cline
         logical,                         intent(out)   :: converged
-        type(cmdline)                     :: cline_prob_align
         integer                           :: nthr_here, nthr_glob_here
         type(string)                      :: update_frac_req
+        integer, allocatable              :: pinds_smpl(:)
         real                              :: frac_srch_space
+        integer                           :: nptcls_smpl
         logical                           :: l_full_update, l_update_frac_key
         if( L_BENCH_GLOB )then
             self%bench    = refine2D_bench_state()
@@ -367,12 +376,23 @@ contains
         endif
         if( L_BENCH_GLOB ) self%bench%rt_setup = toc(self%bench%t_tot)
         if( params%l_prob_align_mode )then
-            cline_prob_align = cline
-            call cline_prob_align%set('prg', 'prob_align2D')
-            call cline_prob_align%set('which_iter', params%which_iter)
-            call cline_prob_align%set('startit',    params%startit)
-            if( l_full_update ) call cline_prob_align%set('update_frac', 1.0)
-            call prob_align2D_master(params, build, cline_prob_align, l_full_update, self%bench)
+            ! the probabilistic modes: the master draws the iteration's sample (keyed) in its particle field (every
+            ! particle on a full update) and prints the disk set; the parts reproduce their share and run the
+            ! pipeline (one scheduling phase) with the iteration's tempering factor and, when the command line sets
+            ! no window, the master's current one, as the shared-memory matcher has them
+            if( L_BENCH_GLOB ) self%bench%t = tic()
+            call sample_ptcls4prob2D(params, build, params%l_update_frac .and. .not. l_full_update, nptcls_smpl, pinds_smpl)
+            call build%spproj%write_segment_inside(params%oritype, params%projfile)
+            if( allocated(pinds_smpl) ) deallocate(pinds_smpl)
+            call self%job_descr%set('prob_beta', real2str(params%prob_beta))
+            if( .not. cline%defined('trs') ) call self%job_descr%set('trs', real2str(params%trs))
+            if( L_BENCH_GLOB ) self%bench%rt_prestep = toc(self%bench%t)
+        else if( .not. l_full_update .and. master_draws_sample2D(params) )then
+            ! one fractional-update sample over the whole project, which the workers reproduce (the probabilistic
+            ! modes drew theirs above)
+            call sample_ptcls4update2D(params, build, [1,params%nptcls], .true., nptcls_smpl, pinds_smpl)
+            call build%spproj%write_segment_inside(params%oritype, params%projfile)
+            if( allocated(pinds_smpl) ) deallocate(pinds_smpl)
         endif
         ! The master creates one generation-scoped candidate after every
         ! project-state update and before workers read the committed state.
@@ -392,6 +412,8 @@ contains
                                                      extra_params=params)
         if( L_BENCH_GLOB ) self%bench%rt_search = toc(self%bench%t)
         call terminate_stream(params, 'SIMPLE_DISTR_REFINE2D HARD STOP 1')
+        ! the parts' readouts of the probabilistic assignment, merged in part order and reported as the owner's
+        if( params%l_prob_align_mode ) call merge_prob_readouts(params%nparts, params%numlen, params%prob_beta)
         if( l_full_update )then
             if( l_update_frac_key )then
                 call self%job_descr%set('update_frac', update_frac_req%to_char())
@@ -535,8 +557,9 @@ contains
     end subroutine restore_cavgs_inmem
 
     !> The convergence decision of a refine2D iteration in both modes, after the class averages are restored
-    !! (cavger_gen2Dclassdoc writes the particles' res that check_conv2D averages): check_conv2D's criteria, minits,
-    !! maxits and the full-assignment coverage; prints the verdict and updates the progress file
+    !! (cavger_gen2Dclassdoc writes the particles' res that check_conv2D averages): check_conv2D's criteria, minits and
+    !! maxits (counted from startit, as in 3D) and the full-assignment coverage of assign_all; prints the verdict and
+    !! updates the progress file
     subroutine check_refine2D_convergence( params, build, cline, conv, converged )
         type(parameters),  intent(inout) :: params
         type(builder),     intent(inout) :: build
@@ -546,8 +569,8 @@ contains
         integer :: n_unassigned
         logical :: l_full_assignment
         converged = conv%check_conv2D(params, cline, build%spproj_field, build%spproj_field%get_n('class'), params%msk)
-        converged = converged .and. (params%which_iter >= params%minits)
-        converged = converged .or.  (params%which_iter >= params%maxits)
+        converged = converged .and. (params%which_iter >= params%startit + params%minits - 1)
+        converged = converged .or.  (params%which_iter >= params%startit + params%maxits - 1)
         if( refine2D_requires_full_assignment(params) )then
             l_full_assignment = all_active_ptcls_2D_assigned(build%spproj_field, [params%fromp,params%top], n_unassigned)
             if( .not. l_full_assignment )then
@@ -585,7 +608,7 @@ contains
         write(fnr,'(a)') ''
         write(fnr,'(a)') '*** TIMINGS (s) ***'
         write(fnr,'(a,1x,f0.3)') 'refine2D iteration setup            :', bench%rt_setup
-        write(fnr,'(a,1x,f0.3)') 'refine2D probabilistic pre-step     :', bench%rt_prestep
+        write(fnr,'(a,1x,f0.3)') 'refine2D sample draw                :', bench%rt_prestep
         write(fnr,'(a,1x,f0.3)') 'refine2D sigma2 candidate prep      :', bench%rt_sigma_prep
         write(fnr,'(a,1x,f0.3)') 'refine2D matcher/scheduler          :', bench%rt_search
         write(fnr,'(a,1x,f0.3)') 'refine2D merge alignment documents  :', bench%rt_merge
@@ -599,63 +622,6 @@ contains
         write(fnr,'(a,1x,f0.2)') 'refine2D % accounted for            :', rt_accounted
         call fclose(fnr)
     end subroutine write_strategy_bench_report
-
-    !> prob_align2D with the project segment written before and reread after it (both master project I/O)
-    subroutine run_prob_align2D( params, build, cline_prob_align, bench )
-        use simple_commanders_prob, only: commander_prob_align2D
-        type(parameters),           intent(in)    :: params
-        type(builder),              intent(inout) :: build
-        type(cmdline),              intent(inout) :: cline_prob_align
-        type(refine2D_bench_state), intent(inout) :: bench
-        type(commander_prob_align2D) :: xprob_align2D
-        if( L_BENCH_GLOB ) bench%t = tic()
-        call build%spproj%write_segment_inside(params%oritype)
-        if( L_BENCH_GLOB )then
-            bench%rt_proj_io = bench%rt_proj_io + toc(bench%t)
-            bench%t          = tic()
-        endif
-        call xprob_align2D%execute(cline_prob_align)
-        if( L_BENCH_GLOB )then
-            bench%rt_prestep = toc(bench%t)
-            bench%t          = tic()
-        endif
-        call build%spproj%read_segment(params%oritype, params%projfile)
-        if( L_BENCH_GLOB ) bench%rt_proj_io = bench%rt_proj_io + toc(bench%t)
-    end subroutine run_prob_align2D
-
-    !> prob_align2D on the distributed master's parameters and builder: the sample is drawn in its particle field (a
-    !! full update draws every particle; the master's own update_frac is restored after), at the workers' thread count
-    !! (the master's own is restored after)
-    subroutine prob_align2D_master( params, build, cline_prob_align, l_full_update, bench )
-        use simple_prob_align_strategy, only: prob_align2D_exec
-        !$ use omp_lib,                 only: omp_get_max_threads, omp_set_num_threads
-        type(parameters),           intent(inout) :: params
-        type(builder),              intent(inout) :: build
-        type(cmdline),              intent(inout) :: cline_prob_align
-        logical,                    intent(in)    :: l_full_update
-        type(refine2D_bench_state), intent(inout) :: bench
-        real    :: update_frac_req
-        integer :: nthr_here, nthr_glob_here
-        logical :: l_update_frac_req
-        if( L_BENCH_GLOB ) bench%t = tic()
-        call cline_prob_align%set('mkdir',  'no')
-        call cline_prob_align%set('stream', 'no')
-        update_frac_req   = params%update_frac
-        l_update_frac_req = params%l_update_frac
-        if( l_full_update )then
-            params%update_frac   = 1.0
-            params%l_update_frac = .false.
-        endif
-        nthr_here      = params%nthr
-        !$ nthr_here   = omp_get_max_threads()
-        nthr_glob_here = nthr_glob
-        call prob_align2D_exec(params, build, cline_prob_align, params%nthr)
-        !$ call omp_set_num_threads(nthr_here)
-        nthr_glob            = nthr_glob_here
-        params%update_frac   = update_frac_req
-        params%l_update_frac = l_update_frac_req
-        if( L_BENCH_GLOB ) bench%rt_prestep = toc(bench%t)
-    end subroutine prob_align2D_master
 
     !> Initialize references for refine2D (used by inmem and distr modes).
     subroutine init_refine2D_refs( cline, params, build )
@@ -706,10 +672,7 @@ contains
     subroutine cleanup_distributed_iteration_artifacts( params )
         type(parameters), intent(in) :: params
         integer :: ipart
-        call del_files(DIST_FBODY,      params%nparts, ext='.dat')
-        call del_files(ASSIGNMENT_FBODY,params%nparts, ext='.dat')
-        call del_file(DIST_FBODY//'.dat')
-        call del_file(ASSIGNMENT_FBODY//'.dat')
+        call del_files('prob_readout_part', params%nparts, ext='.txt')
         ! stale current-iteration class-sum contributions; the carried set stays
         do ipart = 1, params%nparts
             call del_file(cavg_contrib_fname(ipart))
@@ -874,5 +837,15 @@ contains
         call mrc%kill
         call jpg%kill
     end subroutine gen_jpeg
+
+    integer function inmem_anneal_tail_start(self) result(it)
+        class(refine2D_inmem_strategy), intent(in) :: self
+        it = self%conv%anneal_tail_start()
+    end function inmem_anneal_tail_start
+
+    integer function distr_anneal_tail_start(self) result(it)
+        class(refine2D_distr_strategy), intent(in) :: self
+        it = self%conv%anneal_tail_start()
+    end function distr_anneal_tail_start
 
 end module simple_refine2D_strategy

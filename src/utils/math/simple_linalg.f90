@@ -13,16 +13,7 @@ public :: qr_solve
 public :: solve_real_spd_complex
 public :: cholesky, chol_forward, chol_backward, spd_inverse, spd_logdet
 public :: trace, vabs, vector_angle_norm, vox2ang, ang2vox
-public :: sparse_eigh
 public :: gemm_tn
-
-abstract interface
-    subroutine sparse_matvec_sp_proc(ctx, x, y)
-        class(*), intent(in)  :: ctx
-        real,     intent(in)  :: x(:)
-        real,     intent(out) :: y(:)
-    end subroutine sparse_matvec_sp_proc
-end interface
 
 interface eigsrt
     module procedure eigsrt_sp, eigsrt_dp
@@ -33,11 +24,11 @@ interface eigh
 end interface eigh
 
 interface euclid
-    module procedure euclid_sp_1, euclid_sp_2, euclid_dp
+    module procedure euclid_sp_1d, euclid_sp_2d, euclid_dp
 end interface euclid
 
 interface hyp
-    module procedure hyp_1, hyp_2, hyp_3, hyp_4
+    module procedure hyp_real_xy, hyp_real_xyz, hyp_int_xy, hyp_int_xyz
 end interface hyp
 
 interface jacobi
@@ -61,7 +52,7 @@ interface pythag
 end interface pythag
 
 interface rad2deg
-    module procedure rad2deg_1, rad2deg_2
+    module procedure rad2deg_sp, rad2deg_dp
 end interface rad2deg
 
 interface deg2rad
@@ -178,31 +169,6 @@ interface
         real(kind=4), intent(inout) :: a(lda,*)
         real(kind=4), intent(out) :: work(*), z(ldz,*), w(*)
     end subroutine ssyevr
-
-    subroutine ssaupd(ido, bmat, n, which, nev, tol, resid, ncv, v, ldv, &
-        iparam, ipntr, workd, workl, lworkl, info)
-        character(len=1), intent(in) :: bmat
-        character(len=2), intent(in) :: which
-        integer(kind=4), intent(in) :: n, nev, ncv, ldv, lworkl
-        integer(kind=4), intent(inout) :: ido, info
-        integer(kind=4), intent(inout) :: iparam(*), ipntr(*)
-        real(kind=4), intent(in) :: tol
-        real(kind=4), intent(inout) :: resid(*), v(ldv,*), workd(*), workl(*)
-    end subroutine ssaupd
-
-    subroutine sseupd(rvec, howmny, select, d, z, ldz, sigma, bmat, n, which, &
-        nev, tol, resid, ncv, v, ldv, iparam, ipntr, workd, workl, lworkl, info)
-        logical, intent(in) :: rvec
-        character(len=1), intent(in) :: howmny, bmat
-        character(len=2), intent(in) :: which
-        integer(kind=4), intent(in) :: n, nev, ncv, ldz, ldv, lworkl
-        integer(kind=4), intent(inout) :: iparam(*), ipntr(*)
-        integer(kind=4), intent(out) :: info
-        logical, intent(inout) :: select(*)
-        real(kind=4), intent(in) :: tol, sigma
-        real(kind=4), intent(inout) :: resid(*), v(ldv,*), workd(*), workl(*)
-        real(kind=4), intent(out) :: d(*), z(ldz,*)
-    end subroutine sseupd
 end interface
 
 contains
@@ -737,17 +703,17 @@ elemental function deg2rad_dp(deg) result(rad)
     rad = (deg / 180.0_dp) * DPI
 end function deg2rad_dp
 
-elemental function rad2deg_1(rad) result(deg)
+elemental function rad2deg_sp(rad) result(deg)
     real(kind=4), intent(in) :: rad
     real(kind=4) :: deg
     deg = (rad / PI) * 180.0_sp
-end function rad2deg_1
+end function rad2deg_sp
 
-elemental function rad2deg_2(rad) result(deg)
+elemental function rad2deg_dp(rad) result(deg)
     real(kind=8), intent(in) :: rad
     real(kind=8) :: deg
     deg = (rad / DPI) * 180.0_dp
-end function rad2deg_2
+end function rad2deg_dp
 
 elemental function ang2vox(ang, smpd) result(vox)
     real(kind=4), intent(in) :: ang, smpd
@@ -762,37 +728,37 @@ elemental function vox2ang(vox, smpd) result(ang)
     ang = (vox - 1.0_sp) * smpd
 end function vox2ang
 
-real(kind=4) pure function hyp_1(x1, x2)
+real(kind=4) pure function hyp_real_xy(x1, x2)
     real(kind=4), intent(in) :: x1, x2
-    hyp_1 = sqrt(x1*x1 + x2*x2)
-end function hyp_1
+    hyp_real_xy = sqrt(x1*x1 + x2*x2)
+end function hyp_real_xy
 
-real(kind=4) pure function hyp_2(x1, x2, x3)
+real(kind=4) pure function hyp_real_xyz(x1, x2, x3)
     real(kind=4), intent(in) :: x1, x2, x3
-    hyp_2 = sqrt(x1*x1 + x2*x2 + x3*x3)
-end function hyp_2
+    hyp_real_xyz = sqrt(x1*x1 + x2*x2 + x3*x3)
+end function hyp_real_xyz
 
-real(kind=4) pure function hyp_3(x1, x2)
+real(kind=4) pure function hyp_int_xy(x1, x2)
     integer, intent(in) :: x1, x2
-    hyp_3 = sqrt(real(x1*x1 + x2*x2, sp))
-end function hyp_3
+    hyp_int_xy = sqrt(real(x1*x1 + x2*x2, sp))
+end function hyp_int_xy
 
-real(kind=4) pure function hyp_4(x1, x2, x3)
+real(kind=4) pure function hyp_int_xyz(x1, x2, x3)
     integer, intent(in) :: x1, x2, x3
-    hyp_4 = sqrt(real(x1*x1 + x2*x2 + x3*x3, sp))
-end function hyp_4
+    hyp_int_xyz = sqrt(real(x1*x1 + x2*x2 + x3*x3, sp))
+end function hyp_int_xyz
 
-pure function euclid_sp_1(vec1, vec2) result(dist)
+pure function euclid_sp_1d(vec1, vec2) result(dist)
     real(kind=4), intent(in) :: vec1(:), vec2(:)
     real(kind=4) :: dist
     dist = sqrt(sum((vec1 - vec2)**2))
-end function euclid_sp_1
+end function euclid_sp_1d
 
-pure function euclid_sp_2(vec1, vec2) result(dist)
+pure function euclid_sp_2d(vec1, vec2) result(dist)
     real(kind=4), intent(in) :: vec1(:,:), vec2(:,:)
     real(kind=4) :: dist
     dist = sqrt(sum((vec1 - vec2)**2))
-end function euclid_sp_2
+end function euclid_sp_2d
 
 pure function euclid_dp(vec1, vec2) result(dist)
     real(kind=8), intent(in) :: vec1(:), vec2(:)
@@ -1033,130 +999,6 @@ pure subroutine spd_logdet( A, n, logdet, ok )
     end do
 end subroutine spd_logdet
 
-subroutine sparse_eigh(matvec, ctx, n, neigs, eigvals, eigvecs, tol, max_basis, info)
-    procedure(sparse_matvec_sp_proc) :: matvec
-    class(*),          intent(in)  :: ctx
-    integer,           intent(in)  :: n, neigs
-    real,              intent(out) :: eigvals(neigs)
-    real,              intent(out) :: eigvecs(n,neigs)
-    real,    optional, intent(in)  :: tol
-    integer, optional, intent(in)  :: max_basis
-    integer, optional, intent(out) :: info
-    character(len=1) :: bmat
-    character(len=2) :: which
-    logical, allocatable :: select(:)
-    real, allocatable :: resid(:), v(:,:), workd(:), workl(:)
-    real, allocatable :: dense_mat(:,:), basis_vec(:), prod_vec(:), tmp_vec(:)
-    real :: sigma, tol_loc, tmp_val
-    integer :: ido, arpack_info, ssaupd_info, ncv, lworkl, i, j, k, nvalid
-    integer :: iparam(11), ipntr(11)
-    if( present(info) ) info = 0
-    eigvals = 0.0_sp
-    eigvecs = 0.0_sp
-    if( n < 1 ) STOP 'sparse_eigh: empty matrix'
-    if( neigs < 1 .or. neigs > n ) STOP 'sparse_eigh: invalid neigs'
-    tol_loc = 1.e-5
-    if( present(tol) ) tol_loc = tol
-
-    if( neigs == n )then
-        allocate(dense_mat(n,n), basis_vec(n), prod_vec(n), source=0.0_sp)
-        do i = 1,n
-            basis_vec = 0.0_sp
-            basis_vec(i) = 1.0_sp
-            call matvec(ctx, basis_vec, prod_vec)
-            dense_mat(:,i) = prod_vec
-        end do
-        dense_mat = 0.5_sp * (dense_mat + transpose(dense_mat))
-        call eigh(n, dense_mat, neigs, eigvals, eigvecs)
-        deallocate(dense_mat, basis_vec, prod_vec)
-        return
-    endif
-
-    ncv = min(n, max(80, 4 * neigs + 40))
-    if( present(max_basis) ) ncv = min(n, max(neigs + 1, max_basis))
-    ncv = max(neigs + 1, ncv)
-    lworkl = ncv * (ncv + 8)
-    allocate(resid(n), v(n,ncv), workd(3*n), workl(lworkl), select(ncv))
-    resid = 0.0_sp
-    v = 0.0_sp
-    workd = 0.0_sp
-    workl = 0.0_sp
-    select = .false.
-    do i = 1,n
-        resid(i) = sin(real(37*i,sp)) + 0.25_sp * cos(real(17*i,sp))
-    end do
-
-    bmat = 'I'
-    which = 'LA'
-    ido = 0
-    arpack_info = 1
-    iparam = 0
-    ipntr = 0
-    iparam(1) = 1
-    iparam(3) = max(300, 10 * ncv)
-    iparam(7) = 1
-
-    do
-        call ssaupd(ido, bmat, n, which, neigs, tol_loc, resid, ncv, v, n, &
-            iparam, ipntr, workd, workl, lworkl, arpack_info)
-        if( ido == -1 .or. ido == 1 )then
-            call matvec(ctx, workd(ipntr(1):ipntr(1)+n-1), workd(ipntr(2):ipntr(2)+n-1))
-        elseif( ido == 99 )then
-            exit
-        else
-            arpack_info = -9999
-            exit
-        endif
-    end do
-
-    ssaupd_info = arpack_info
-    if( ssaupd_info < 0 )then
-        if( present(info) )then
-            info = ssaupd_info
-            deallocate(resid, v, workd, workl, select)
-            return
-        endif
-        call arpack_stop('SPARSE_EIGH', 'SSAUPD', ssaupd_info)
-    endif
-
-    sigma = 0.0_sp
-    arpack_info = 0
-    call sseupd(.true., 'A', select, eigvals, eigvecs, n, sigma, bmat, n, which, &
-        neigs, tol_loc, resid, ncv, v, n, iparam, ipntr, workd, workl, lworkl, arpack_info)
-    if( arpack_info /= 0 )then
-        if( present(info) )then
-            info = arpack_info
-            deallocate(resid, v, workd, workl, select)
-            return
-        endif
-        call arpack_stop('SPARSE_EIGH', 'SSEUPD', arpack_info)
-    endif
-
-    nvalid = min(neigs, max(0, iparam(5)))
-    if( nvalid == 0 ) nvalid = neigs
-    allocate(tmp_vec(n))
-    do i = 1,nvalid - 1
-        k = i
-        do j = i + 1,nvalid
-            if( eigvals(j) < eigvals(k) ) k = j
-        end do
-        if( k /= i )then
-            tmp_val = eigvals(i)
-            eigvals(i) = eigvals(k)
-            eigvals(k) = tmp_val
-            tmp_vec = eigvecs(:,i)
-            eigvecs(:,i) = eigvecs(:,k)
-            eigvecs(:,k) = tmp_vec
-        endif
-    end do
-    deallocate(tmp_vec)
-
-    if( present(info) )then
-        info = ssaupd_info
-    endif
-    deallocate(resid, v, workd, workl, select)
-end subroutine sparse_eigh
-
 subroutine lapack_stop(caller, routine, info)
     character(len=*), intent(in) :: caller, routine
     integer(kind=4), intent(in) :: info
@@ -1166,15 +1008,5 @@ subroutine lapack_stop(caller, routine, info)
     write(*,'(a,i8)') '  INFO = ', info
     stop
 end subroutine lapack_stop
-
-subroutine arpack_stop(caller, routine, info)
-    character(len=*), intent(in) :: caller, routine
-    integer(kind=4), intent(in) :: info
-    write(*,'(a)') ' '
-    write(*,'(a)') trim(caller) // ' - Failure!'
-    write(*,'(a)') '  ARPACK routine ' // trim(routine) // ' returned a nonzero INFO value.'
-    write(*,'(a,i8)') '  INFO = ', info
-    stop
-end subroutine arpack_stop
 
 end module simple_linalg

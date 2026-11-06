@@ -1,25 +1,44 @@
-!@descr: padded-lattice geometry and solve support shared by the PCG reconstructors (reconstructor_pcg, flex_pcg_t)
+!@descr: padded-lattice geometry, solve support and KB plane gather/scatter (flat or Ewald paraboloid) of the PCG and wave operators
+! (reconstructor_pcg and flex_pcg_t extend it; the wave operators sample the Ewald paraboloid with it)
 module simple_pcg_lattice
-use simple_core_module_api, only: cyci_1d, KBALPHA, KBWINSZ, kbinterpol, OSMPL_PAD_FAC, simple_exception
-use simple_image,           only: image
-use simple_gridding,        only: kb_stencil_envelope_1d
+use simple_core_module_api,   only: cyci_1d, fdim, KBALPHA, KBWINSZ, kbinterpol, OSMPL_PAD_FAC, simple_exception
+use simple_image,             only: image
+use simple_ftiter,            only: ftiter
+use simple_gridding,          only: kb_stencil_envelope_1d
+use simple_cartesian_fourier, only: gather_packed_window
+use, intrinsic :: iso_c_binding, only: c_float, c_float_complex
+!$ use omp_lib,               only: omp_in_parallel
 implicit none
 private
 #include "simple_local_flags.inc"
 
-public :: pcg_lattice
+public :: pcg_lattice, PCG_FFT_MEASURE_MIN_BOXPD
+public :: plane_loc, rim_free, win_wraps, win_below_fold, scatter_window, scatter_window_real, scatter_window_pair
+public :: scatter_window_nowrap, scatter_window_pair_nowrap, scatter_window_cmplx_nowrap
+public :: slab_count, slab_planes, slab_k_range
+
+!> padded boxes from here get measured FFTW plans for an operator's work image (the size from which the
+!! image threads its plans); below it the estimate heuristic keeps small fixtures run-to-run identical
+integer, parameter :: PCG_FFT_MEASURE_MIN_BOXPD = 200
 
 !> A solve whose unknown lives on the native box while every Fourier operation runs on the padf-times
 !! padded lattice (centre-pad in, centre-crop out): the KB window, the OpenMP colouring stride of the
 !! scatter, the array and period-box wrap limits, the radius below which a window cannot wrap, the wrap
 !! table, the deposition envelope, and the solve support (soft window, hard mask window > 0). The PCG
-!! operators extend it.
+!! operators extend it. A plane is the full both-sign-h disk of native frequencies (h,k), h^2+k^2 <= R^2,
+!! R = box/2; its point (h,k) sits at padf*[h,k,kz] R_i on the padded lattice, kz = curv*(h^2+k^2): the
+!! central section for curv = 0, the Ewald paraboloid of a wave model otherwise (ewald_curv). The gather
+!! reads a plane through the KB window, the scatter is its literal transpose, coloured over h for threads
+!! with a serial pass over the windows that wrap, so it is reproducible at any thread count.
 type :: pcg_lattice
     integer          :: box        = 0   !< native box: the solver unknown lives here
     integer          :: boxpd      = 0   !< padf*box: every Fourier operation happens here
     integer          :: padf       = 1   !< oversampling factor, OSMPL_PAD_FAC
     integer          :: pad_off    = 0   !< centred pad/crop offset, (boxpd-box)/2
     integer          :: Rnat       = 0   !< native Nyquist radius, box/2
+    integer          :: lims2(2,2) = 0   !< (h/k, lo/hi) plane bounds, full symmetric disk
+    integer          :: sqlp       = 0   !< squared native Nyquist radius
+    real             :: padsc      = 1.0 !< padf**3, undoes fwd_ft's 1/product(ldim)
     real             :: smpd       = 1.0
     type(kbinterpol) :: kbwin
     integer          :: iwinsz     = 0
@@ -41,45 +60,62 @@ type :: pcg_lattice
     procedure :: mask_mul
     procedure :: native_deposition_envelope
     procedure :: divide_deposition_plane
+    procedure :: ewald_curv
+    procedure :: gather_plane
+    procedure :: scatter_plane
+    procedure :: gather_cube
+    procedure :: scatter_cube
+    procedure :: fold_lattice_accum
     procedure :: kill_lattice
 end type pcg_lattice
 
 contains
 
     !> The geometry of a solve at box: KB window, colouring stride, padded box, limits, rim radius,
-    !! wrap table and deposition envelope. fft_nthreads only sizes the plans of the probe image.
-    subroutine new_lattice( self, box, smpd, fft_nthreads )
+    !! wrap table and deposition envelope. winsz is the KB window's half-width (KBWINSZ, three taps,
+    !! unless a caller needs a more accurate gather)
+    subroutine new_lattice( self, box, smpd, winsz )
         class(pcg_lattice), intent(inout) :: self
         integer,            intent(in)    :: box
         real,               intent(in)    :: smpd
-        integer, optional,  intent(in)    :: fft_nthreads
-        type(image) :: tmp
-        integer     :: lo, hi, i, nthr
-        real        :: rlim
+        real,    optional,  intent(in)    :: winsz
+        type(ftiter) :: fit
+        integer      :: lo, hi, i
+        real         :: rlim
         call self%kill_lattice
         self%box    = box
         self%smpd   = smpd
-        self%kbwin  = kbinterpol(KBWINSZ, KBALPHA)
+        if( present(winsz) )then
+            self%kbwin = kbinterpol(winsz, KBALPHA)
+        else
+            self%kbwin = kbinterpol(KBWINSZ, KBALPHA)
+        endif
         self%iwinsz = ceiling(self%kbwin%get_winsz() - 0.5)
         ! odd width centred on nint(loc): negating loc negates the window as a set,
         ! which the h>=0 folds rely on
         self%wdim   = 2*self%iwinsz + 1
-        ! same-colour h-lines stay a full window apart along one axis after rotation
-        ! (max-norm >= Euclidean norm / sqrt(3)), as in reconstructor%insert_plane_oversamp
-        self%stride = ceiling(sqrt(3.0) * real(self%wdim))
         ! oversampling: the unknown lives on the native box, every Fourier operation
         ! on the padf-times padded lattice, as in Fourier gridding
         self%padf    = OSMPL_PAD_FAC
+        ! same-colour h-lines stay a full window apart along one axis after rotation (max-norm >=
+        ! Euclidean norm / sqrt(3)); disjoint windows alone are not enough: the rows of one sweep run
+        ! concurrently, and at half this stride their windows share cache lines along the contiguous
+        ! axis for a sixth of the orientations (false sharing, three times slower, not faster)
+        self%stride  = ceiling(sqrt(3.0) * real(self%wdim))
         self%boxpd   = self%padf * box
         self%pad_off = (self%boxpd - box) / 2
         self%Rnat    = box / 2
-        nthr = 1
-        if( present(fft_nthreads) ) nthr = max(1, fft_nthreads)
-        call tmp%new([self%boxpd,self%boxpd,self%boxpd], smpd, wthreads=nthr > 1, fft_nthreads=nthr)
-        call tmp%fft()
-        self%lims3 = tmp%loop_lims(3)
-        self%cdim  = tmp%get_array_shape()
-        call tmp%kill
+        ! full symmetric (both-sign h) native disk: gather_plane/scatter_plane are then an exact
+        ! adjoint pair for any orientation; fwd_ft divides by product(ldim), padsc restores the
+        ! native scale at coincident frequencies
+        self%lims2(1,:) = [-self%Rnat, self%Rnat]
+        self%lims2(2,:) = [-self%Rnat, self%Rnat]
+        self%sqlp       = self%Rnat * self%Rnat
+        self%padsc      = real(self%padf)**3
+        ! the padded image's logical limits and packed shape, without the image
+        call fit%new([self%boxpd,self%boxpd,self%boxpd], smpd)
+        self%lims3 = fit%loop_lims(3)
+        self%cdim  = [fdim(self%boxpd), self%boxpd, self%boxpd]
         ! true period-box wrap range: lims3(1,:) spans both Friedel Nyquist mates
         ! (one longer than the period), axes 2/3 do not
         self%wlims = self%lims3(2,:)
@@ -196,6 +232,339 @@ contains
         end do
     end subroutine divide_deposition_plane
 
+    !> The curvature coefficient of the Ewald paraboloid, kz = curv*(h^2+k^2) in native Fourier voxels:
+    !! kappa*wl/(2*box), kappa = -1, +1, 0 for ewald=neg, pos, no and wl the wavelength in pixels
+    !! (ctfvars%wl). Refused when the paraboloid would carry a window past the wrap table: the padded
+    !! point must leave the Nyquist sphere by less than half a voxel, so that it rounds onto the lattice's
+    !! Nyquist index at most. gather_plane and scatter_plane take curv from here.
+    real function ewald_curv( self, kappa, wl ) result( curv )
+        class(pcg_lattice), intent(in) :: self
+        integer,            intent(in) :: kappa
+        real,               intent(in) :: wl
+        real :: kzmax, excess
+        if( abs(kappa) > 1 ) THROW_HARD('kappa must be -1, 0 or 1; ewald_curv')
+        curv   = real(kappa) * wl / (2.0 * real(self%box))
+        kzmax  = abs(curv) * real(self%sqlp)
+        excess = real(self%padf) * (sqrt(real(self%sqlp) + kzmax**2) - sqrt(real(self%sqlp)))
+        ! half a voxel less a margin for the single-precision rounding of loc
+        if( excess >= 0.49 ) THROW_HARD('the Ewald paraboloid leaves the padded lattice; ewald_curv')
+    end function ewald_curv
+
+    !> The padded-lattice location of plane point (h,k) under rotation rot: padf*[h,k,kz] rot,
+    !! kz = curv*(h^2+k^2); curv = 0 is the central section, evaluated as it always was. Module-level,
+    !! like the window helpers below: no dispatch in the ~1e8 calls of an accumulation
+    pure function plane_loc( self, h, k, rot, curv ) result( loc )
+        class(pcg_lattice), intent(in) :: self
+        integer,            intent(in) :: h, k
+        real,               intent(in) :: rot(3,3), curv
+        real :: loc(3)
+        if( curv == 0.0 )then
+            loc = real(self%padf) * matmul(real([h,k,0]), rot)
+        else
+            loc = real(self%padf) * matmul([real(h), real(k), curv * real(h*h + k*k)], rot)
+        endif
+    end function plane_loc
+
+    !> Can the KB window of plane point (h,k) provably not wrap? |loc| = padf*sqrt(h^2+k^2+kz^2) for
+    !! every rotation, so the plane point alone decides (conservative, see sq_rim)
+    pure logical function rim_free( self, h, k, curv )
+        class(pcg_lattice), intent(in) :: self
+        integer,            intent(in) :: h, k
+        real,               intent(in) :: curv
+        real :: kz
+        if( curv == 0.0 )then
+            rim_free = h*h + k*k <= self%sq_rim
+        else
+            kz       = curv * real(h*h + k*k)
+            rim_free = real(h*h + k*k) + kz*kz <= real(self%sq_rim)
+        endif
+    end function rim_free
+
+    !> G_i: gathers the plane of rotation rot (and curvature curv) from cmat, the padded lattice's packed
+    !! transform; padsc restores the native scale. Threaded over the plane
+    subroutine gather_plane( self, cmat, rot, curv, plane )
+        class(pcg_lattice), intent(in)  :: self
+        complex,            intent(in)  :: cmat(:,:,:)
+        real,               intent(in)  :: rot(3,3), curv
+        complex,            intent(out) :: plane(self%lims2(1,1):self%lims2(1,2),&
+                                                &self%lims2(2,1):self%lims2(2,2))
+        real    :: loc(3), w(self%wdim,self%wdim,self%wdim)
+        integer :: h, k, i0(3)
+        plane = cmplx(0.,0.)
+        ! threaded over the plane unless a caller's particle loop already is
+        !$omp parallel do collapse(2) default(shared) private(h,k,loc,i0,w) &
+        !$omp schedule(static) proc_bind(close) if(.not. omp_in_parallel())
+        do k = self%lims2(2,1), self%lims2(2,2)
+            do h = self%lims2(1,1), self%lims2(1,2)
+                if( h*h + k*k > self%sqlp ) cycle
+                loc = plane_loc(self, h, k, rot, curv)
+                i0  = nint(loc) - self%iwinsz
+                call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                plane(h,k) = self%padsc*gather_packed_window(cmat,lbound(self%wrap,1),self%wrap,i0,w)
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine gather_plane
+
+    !> G_i^dagger, accumulate form: the literal transpose of gather_plane, replicated over the rotations
+    !! rots(:,:,g) (R_i S_g for a point group), into the full-range accumulator. h-strided colouring keeps
+    !! the windows of one sweep disjoint (rows a stride apart stay a window apart under any rotation and
+    !! curvature, since |loc_1 - loc_2| >= padf |h_1 - h_2|), the windows that wrap go in a serial pass
+    subroutine scatter_plane( self, plane, rots, curv, vol_accum )
+        class(pcg_lattice), intent(in)    :: self
+        complex,            intent(in)    :: plane(self%lims2(1,1):self%lims2(1,2),&
+                                                  &self%lims2(2,1):self%lims2(2,2))
+        real,               intent(in)    :: rots(:,:,:), curv
+        complex,            intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                      &self%lims3(2,1):self%lims3(2,2),&
+                                                      &self%lims3(3,1):self%lims3(3,2))
+        real    :: loc(3), w(self%wdim,self%wdim,self%wdim)
+        integer :: h, k, l, g, i0(3)
+        !$omp parallel default(shared) private(h,k,l,g,loc,i0,w) proc_bind(close)
+        do g = 1, size(rots,3)
+            do l = 0, self%stride-1
+                !$omp do schedule(static,1)
+                do h = self%lims2(1,1)+l, self%lims2(1,2), self%stride
+                    do k = self%lims2(2,1), self%lims2(2,2)
+                        if( h*h + k*k > self%sqlp ) cycle
+                        if( plane(h,k) == cmplx(0.,0.) ) cycle
+                        loc = plane_loc(self, h, k, rots(:,:,g), curv)
+                        i0  = nint(loc) - self%iwinsz
+                        if( win_wraps(self, i0) ) cycle   ! rim: deferred to the serial pass
+                        call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                        call scatter_window_cmplx_nowrap(self, i0, w, self%padsc * plane(h,k), vol_accum)
+                    end do
+                end do
+                !$omp end do
+            end do
+        end do
+        !$omp end parallel
+        call scatter_rim(self, plane, rots, curv, vol_accum)
+    end subroutine scatter_plane
+
+    !> the serial pass of a plane over the wrapping rim (see win_wraps): confined to the outermost shell,
+    !! reproducible unlike an atomic; each row visits only its two segments outside the free middle |k| < kb
+    subroutine scatter_rim( self, plane, rots, curv, vol_accum )
+        class(pcg_lattice), intent(in)    :: self
+        complex,            intent(in)    :: plane(self%lims2(1,1):self%lims2(1,2),&
+                                                  &self%lims2(2,1):self%lims2(2,2))
+        real,               intent(in)    :: rots(:,:,:), curv
+        complex,            intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                      &self%lims3(2,1):self%lims3(2,2),&
+                                                      &self%lims3(3,1):self%lims3(3,2))
+        real    :: loc(3), w(self%wdim,self%wdim,self%wdim)
+        integer :: h, k, g, i0(3), kb, iseg, klo, khi
+        do g = 1, size(rots,3)
+            do h = self%lims2(1,1), self%lims2(1,2)
+                kb = rim_row_start(self, h, curv)
+                do iseg = 1, 2
+                    if( iseg == 1 )then
+                        klo = self%lims2(2,1)
+                        khi = min(-kb, self%lims2(2,2))
+                    else
+                        klo = max(kb, -kb + 1, self%lims2(2,1))
+                        khi = self%lims2(2,2)
+                    endif
+                    do k = klo, khi
+                        if( h*h + k*k > self%sqlp ) cycle
+                        if( rim_free(self, h, k, curv) ) cycle
+                        if( plane(h,k) == cmplx(0.,0.) ) cycle
+                        loc = plane_loc(self, h, k, rots(:,:,g), curv)
+                        i0  = nint(loc) - self%iwinsz
+                        if( .not. win_wraps(self, i0) ) cycle
+                        call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                        call scatter_window(self, i0, w, self%padsc * plane(h,k), vol_accum)
+                    end do
+                end do
+            end do
+        end do
+    end subroutine scatter_rim
+
+    !> the first k >= 0 of row h that rim_free does not exempt: |k| < kb is free
+    pure integer function rim_row_start( self, h, curv ) result( kb )
+        class(pcg_lattice), intent(in) :: self
+        integer,            intent(in) :: h
+        real,               intent(in) :: curv
+        ! rim_free needs h^2 + k^2 <= sq_rim, the curvature only shrinks the free disk
+        kb = isqrt(self%sq_rim - h*h)
+        do while( kb >= 0 )
+            if( rim_free(self, h, kb, curv) ) exit
+            kb = kb - 1
+        end do
+        kb = kb + 1
+    end function rim_row_start
+
+    !> floor(sqrt(n)), -1 for n < 0
+    pure integer function isqrt( n ) result( r )
+        integer, intent(in) :: n
+        if( n < 0 )then
+            r = -1
+            return
+        endif
+        r = int(sqrt(real(n)))
+        do while( (r + 1) * (r + 1) <= n )
+            r = r + 1
+        end do
+        do while( r * r > n )
+            r = r - 1
+        end do
+    end function isqrt
+
+    !> The native spectrum of the volume rotated by rot, the cube cube(h,k,l) = padsc * gather(padf [h,k,l] rot)
+    !! on the native sphere h^2+k^2+l^2 <= R^2 with |l| < R (the plane disk lims2 times l = -(R-1):(R-1); a
+    !! z sampled at N points has one Nyquist value, which the sphere holds only at the origin of the plane, so
+    !! it is left out), zero elsewhere: the rotated cube of multislice, the planes l = 0 its central section.
+    !! Threaded over the cube unless a caller's particle loop already is
+    subroutine gather_cube( self, cmat, rot, cube )
+        class(pcg_lattice), intent(in)  :: self
+        complex,            intent(in)  :: cmat(:,:,:)
+        real,               intent(in)  :: rot(3,3)
+        complex,            intent(out) :: cube(self%lims2(1,1):self%lims2(1,2),self%lims2(2,1):self%lims2(2,2),&
+                                               &-(self%lims2(1,2)-1):self%lims2(1,2)-1)
+        real    :: loc(3), w(self%wdim,self%wdim,self%wdim)
+        integer :: h, k, l, i0(3), rl
+        rl   = self%lims2(1,2) - 1
+        cube = cmplx(0.,0.)
+        !$omp parallel do collapse(2) default(shared) private(h,k,l,loc,i0,w) &
+        !$omp schedule(static) proc_bind(close) if(.not. omp_in_parallel())
+        do l = -rl, rl
+            do k = self%lims2(2,1), self%lims2(2,2)
+                do h = self%lims2(1,1), self%lims2(1,2)
+                    if( h*h + k*k + l*l > self%sqlp ) cycle
+                    loc = real(self%padf) * matmul(real([h,k,l]), rot)
+                    i0  = nint(loc) - self%iwinsz
+                    call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                    cube(h,k,l) = self%padsc*gather_packed_window(cmat,lbound(self%wrap,1),self%wrap,i0,w)
+                end do
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine gather_cube
+
+    !> The literal transpose of gather_cube, replicated over rots(:,:,g), accumulated into the full-range
+    !! accumulator: the coloured scatter of scatter_plane (points of different h stay padf |h_1 - h_2| apart
+    !! under any rotation), the windows that wrap in a serial pass
+    subroutine scatter_cube( self, cube, rots, vol_accum )
+        class(pcg_lattice), intent(in)    :: self
+        complex,            intent(in)    :: cube(self%lims2(1,1):self%lims2(1,2),self%lims2(2,1):self%lims2(2,2),&
+                                                 &-(self%lims2(1,2)-1):self%lims2(1,2)-1)
+        real,               intent(in)    :: rots(:,:,:)
+        complex,            intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                      &self%lims3(2,1):self%lims3(2,2),&
+                                                      &self%lims3(3,1):self%lims3(3,2))
+        real    :: loc(3), w(self%wdim,self%wdim,self%wdim)
+        integer :: h, k, l, m, g, i0(3), rl, hb, iseg, hlo, hhi
+        rl = self%lims2(1,2) - 1
+        !$omp parallel default(shared) private(h,k,l,m,g,loc,i0,w) proc_bind(close)
+        do g = 1, size(rots,3)
+            do m = 0, self%stride-1
+                !$omp do schedule(static,1)
+                do h = self%lims2(1,1)+m, self%lims2(1,2), self%stride
+                    do l = -rl, rl
+                        do k = self%lims2(2,1), self%lims2(2,2)
+                            if( h*h + k*k + l*l > self%sqlp ) cycle
+                            if( cube(h,k,l) == cmplx(0.,0.) ) cycle
+                            loc = real(self%padf) * matmul(real([h,k,l]), rots(:,:,g))
+                            i0  = nint(loc) - self%iwinsz
+                            if( win_wraps(self, i0) ) cycle   ! rim: deferred to the serial pass
+                            call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                            call scatter_window_cmplx_nowrap(self, i0, w, self%padsc * cube(h,k,l), vol_accum)
+                        end do
+                    end do
+                end do
+                !$omp end do
+            end do
+        end do
+        !$omp end parallel
+        ! the wrapping rim, serial (|loc| = padf |[h,k,l]| decides, as rim_free does for a flat plane);
+        ! each row visits only its two segments outside the free middle |h| <= hb
+        do g = 1, size(rots,3)
+            do l = -rl, rl
+                do k = self%lims2(2,1), self%lims2(2,2)
+                    hb = isqrt(self%sq_rim - k*k - l*l)
+                    do iseg = 1, 2
+                        if( iseg == 1 )then
+                            hlo = self%lims2(1,1)
+                            hhi = min(-hb - 1, self%lims2(1,2))
+                        else
+                            hlo = max(hb + 1, -hb, self%lims2(1,1))
+                            hhi = self%lims2(1,2)
+                        endif
+                        do h = hlo, hhi
+                            if( h*h + k*k + l*l > self%sqlp ) cycle
+                            if( h*h + k*k + l*l <= self%sq_rim ) cycle
+                            if( cube(h,k,l) == cmplx(0.,0.) ) cycle
+                            loc = real(self%padf) * matmul(real([h,k,l]), rots(:,:,g))
+                            i0  = nint(loc) - self%iwinsz
+                            if( .not. win_wraps(self, i0) ) cycle
+                            call self%kbwin%apod_mat_3d_fast(loc, self%iwinsz, self%wdim, w)
+                            call scatter_window(self, i0, w, self%padsc * cube(h,k,l), vol_accum)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+    end subroutine scatter_cube
+
+    !> The real volume of a full-range accumulator: laid on the half-complex lattice of the work image
+    !! wimg (boxpd^3, the caller's, so that its plans persist), inverse transformed and cropped to the
+    !! native box. l_hermitian = .false. takes the h >= 0 half as it is, exact for the accumulator of
+    !! Hermitian planes (the PCG backend's, the central section of real images); .true. lays
+    !! (A(q) + conj(A(-q)))/2 instead, which makes the result the real part of the full complex inverse
+    !! transform, as the two-cap planes of a curved wave model need. A caller that extends the lattice
+    !! passes its parent component as self and its own work image, disjoint subobjects
+    function fold_lattice_accum( self, vol_accum, wimg, l_hermitian ) result( z )
+        class(pcg_lattice), intent(in)    :: self
+        complex,            intent(in)    :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                      &self%lims3(2,1):self%lims3(2,2),&
+                                                      &self%lims3(3,1):self%lims3(3,2))
+        class(image),       intent(inout) :: wimg
+        logical,            intent(in)    :: l_hermitian
+        real, allocatable :: z(:,:,:)
+        complex(c_float_complex), pointer :: cptr(:,:,:)
+        real(c_float),            pointer :: rptr(:,:,:)
+        integer :: h, hh, k, m, pk, pm, n2, n3, o, j
+        ! every packed element (h >= 0, all k and m) is written in place through the image's pointer
+        ! (get_cmat_ptr states the contract): a set_cmat_at call per element and the copies of
+        ! get_rmat/center_crop were most of the fold; physical addresses as comp_addr_phys
+        call wimg%get_cmat_ptr(cptr)
+        call wimg%set_ft(.true.)
+        n2 = self%boxpd
+        n3 = self%boxpd
+        !$omp parallel do collapse(2) default(shared) private(h,hh,k,m,pk,pm) &
+        !$omp schedule(static) proc_bind(close)
+        do m = self%lims3(3,1), self%lims3(3,2)
+            do k = self%lims3(2,1), self%lims3(2,2)
+                pm = m + 1; if( m < 0 ) pm = pm + n3
+                pk = k + 1; if( k < 0 ) pk = pk + n2
+                if( l_hermitian )then
+                    do h = 0, self%lims3(1,2)
+                        hh = self%wrap(h)
+                        cptr(h+1,pk,pm) = 0.5 * (vol_accum(hh,k,m) + &
+                            &conjg(vol_accum(self%wrap(-h),self%wrap(-k),self%wrap(-m))))
+                    end do
+                else
+                    do h = 0, self%lims3(1,2)
+                        cptr(h+1,pk,pm) = vol_accum(self%wrap(h),k,m)
+                    end do
+                endif
+            end do
+        end do
+        !$omp end parallel do
+        call wimg%ifft()
+        ! back to the native lattice: the unknown never leaves box^3
+        call wimg%get_rmat_ptr(rptr)
+        o = self%pad_off
+        allocate(z(self%box,self%box,self%box))
+        !$omp parallel do collapse(2) default(shared) private(j,k) schedule(static) proc_bind(close)
+        do k = 1, self%box
+            do j = 1, self%box
+                z(:,j,k) = rptr(o+1:o+self%box,o+j,o+k)
+            end do
+        end do
+        !$omp end parallel do
+    end function fold_lattice_accum
+
     subroutine kill_lattice( self )
         class(pcg_lattice), intent(inout) :: self
         if( allocated(self%wrap)   ) deallocate(self%wrap)
@@ -204,8 +573,227 @@ contains
         if( allocated(self%window) ) deallocate(self%window)
         self%l_mask = .false.
         self%box = 0; self%boxpd = 0; self%padf = 1; self%pad_off = 0; self%Rnat = 0
+        self%lims2 = 0; self%sqlp = 0; self%padsc = 1.0
         self%iwinsz = 0; self%wdim = 0; self%stride = 0; self%lims3 = 0; self%cdim = 0
         self%wlims = 0; self%sq_rim = 0
     end subroutine kill_lattice
+
+    !> does the window straddle the periodic wrap boundary? The h-strided colouring
+    !! separates same-colour h-lines by more than a window only in unwrapped
+    !! coordinates; after folding two such windows can overlap at the Nyquist rim
+    !! and the sum becomes thread-order dependent. Callers scatter the interior in
+    !! the coloured parallel pass and the wrapping rim serially. Module-level, not
+    !! type-bound (no dispatch, ~1e8 calls per accumulation), like the scatters
+    pure logical function win_wraps( self, i0 )
+        class(pcg_lattice),       intent(in) :: self
+        integer,                  intent(in) :: i0(3)
+        win_wraps = any(i0 < self%wlims(1)) .or. any(i0 + self%wdim - 1 > self%wlims(2))
+    end function win_wraps
+
+    !> does the window lie wholly in the h < 0 half, clear of the wrapped Nyquist mate at wlims(1)?
+    !! The accumulator of Hermitian planes is read as its h >= 0 half (fold_lattice_accum with
+    !! l_hermitian = .false.), so such a window deposits nothing that is ever read: the Friedel
+    !! mate of its plane point deposits the conjugate at the mirrored window. Not for the
+    !! two-cap planes of a wave model, whose fold reads both halves
+    pure logical function win_below_fold( self, i0 )
+        class(pcg_lattice),       intent(in) :: self
+        integer,                  intent(in) :: i0(3)
+        win_below_fold = i0(1) + self%wdim - 1 < 0 .and. i0(1) > self%wlims(1)
+    end function win_below_fold
+
+    ! SLAB OWNERSHIP: the alternative to colouring for a scatter of flat planes. The third axis of the
+    ! accumulator (its slowest in memory) is cut into slabs wdim planes thick and a window belongs to the
+    ! slab its first plane i0(3) lies in; the slabs are scattered in two phases, even-numbered then odd,
+    ! and within a phase each slab by one thread, so concurrent windows are a whole plane apart (no race,
+    ! no shared cache line) and every element receives its windows in a fixed order whatever the thread
+    ! count. A thread visits only the k-intervals of each plane row that fall into its slabs (slab_k_range)
+
+    !> the number of slabs of the period box, wdim planes each (the last may be thinner)
+    pure integer function slab_count( self )
+        class(pcg_lattice), intent(in) :: self
+        slab_count = (self%wlims(2) - self%wlims(1) + self%wdim) / self%wdim
+    end function slab_count
+
+    !> the planes [slo, shi] a window's first plane i0(3) lies in to belong to slab islab (0-based)
+    pure subroutine slab_planes( self, islab, slo, shi )
+        class(pcg_lattice), intent(in)  :: self
+        integer,            intent(in)  :: islab
+        integer,            intent(out) :: slo, shi
+        slo = self%wlims(1) + islab * self%wdim
+        shi = min(slo + self%wdim - 1, self%wlims(2))
+    end subroutine slab_planes
+
+    !> the k-interval [klo, khi] of plane row h (flat section at rot, loc = padf [h,k,0] rot) whose
+    !! windows start in the planes [slo, shi]: nint(loc(3)) - iwinsz in [slo, shi]. The interval is
+    !! widened by one sample at either end (the caller applies the exact test) and clipped to the
+    !! disk; klo > khi when the row misses the slab
+    pure subroutine slab_k_range( self, h, rot, slo, shi, klo, khi )
+        class(pcg_lattice), intent(in)  :: self
+        integer,            intent(in)  :: h, slo, shi
+        real,               intent(in)  :: rot(3,3)
+        integer,            intent(out) :: klo, khi
+        real    :: a, b, lo, hi, t1, t2, tmax
+        integer :: kmax
+        klo = 1
+        khi = 0
+        if( h*h > self%sqlp ) return
+        kmax = int(sqrt(real(self%sqlp - h*h)))
+        a    = real(self%padf) * real(h) * rot(1,3)
+        b    = real(self%padf) * rot(2,3)
+        lo   = real(slo + self%iwinsz) - 0.5
+        hi   = real(shi + self%iwinsz) + 0.5
+        if( b == 0.0 )then
+            ! the whole row lies in one plane
+            if( a < lo - 0.5 .or. a > hi + 0.5 ) return
+            klo = -kmax
+            khi =  kmax
+            return
+        endif
+        tmax = real(kmax) + 2.0
+        t1   = max(-tmax, min(tmax, (lo - a) / b))
+        t2   = max(-tmax, min(tmax, (hi - a) / b))
+        klo  = max(-kmax, floor(min(t1, t2)) - 1)
+        khi  = min( kmax, ceiling(max(t1, t2)) + 1)
+    end subroutine slab_k_range
+
+    !> KB-weighted scatter of one complex value into the full-range accumulator
+    pure subroutine scatter_window( self, i0, w, val, vol_accum )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
+        complex,                  intent(in)    :: val
+        complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                            &self%lims3(2,1):self%lims3(2,2),&
+                                                            &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, hh, kk, mm
+        do dk = 1, self%wdim
+            mm = self%wrap(i0(3)+dk-1)
+            do dj = 1, self%wdim
+                kk = self%wrap(i0(2)+dj-1)
+                do di = 1, self%wdim
+                    hh = self%wrap(i0(1)+di-1)
+                    vol_accum(hh,kk,mm) = vol_accum(hh,kk,mm) + w(di,dj,dk) * val
+                end do
+            end do
+        end do
+    end subroutine scatter_window
+
+    !> real-valued counterpart for the density accumulator
+    pure subroutine scatter_window_real( self, i0, w, val, vol_accum )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), val
+        real,                     intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                            &self%lims3(2,1):self%lims3(2,2),&
+                                                            &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, hh, kk, mm
+        do dk = 1, self%wdim
+            mm = self%wrap(i0(3)+dk-1)
+            do dj = 1, self%wdim
+                kk = self%wrap(i0(2)+dj-1)
+                do di = 1, self%wdim
+                    hh = self%wrap(i0(1)+di-1)
+                    vol_accum(hh,kk,mm) = vol_accum(hh,kk,mm) + w(di,dj,dk) * val
+                end do
+            end do
+        end do
+    end subroutine scatter_window_real
+
+    !> B and D through one wrapped KB-window traversal
+    pure subroutine scatter_window_pair( self, i0, w, bval, dval, bacc, dacc )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), dval
+        complex,                  intent(in)    :: bval
+        complex,                  intent(inout) :: bacc(self%lims3(1,1):self%lims3(1,2),&
+                                                       &self%lims3(2,1):self%lims3(2,2),&
+                                                       &self%lims3(3,1):self%lims3(3,2))
+        real,                     intent(inout) :: dacc(self%lims3(1,1):self%lims3(1,2),&
+                                                       &self%lims3(2,1):self%lims3(2,2),&
+                                                       &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, hh, kk, mm
+        do dk = 1, self%wdim
+            mm = self%wrap(i0(3)+dk-1)
+            do dj = 1, self%wdim
+                kk = self%wrap(i0(2)+dj-1)
+                do di = 1, self%wdim
+                    hh = self%wrap(i0(1)+di-1)
+                    bacc(hh,kk,mm) = bacc(hh,kk,mm) + w(di,dj,dk) * bval
+                    dacc(hh,kk,mm) = dacc(hh,kk,mm) + w(di,dj,dk) * dval
+                end do
+            end do
+        end do
+    end subroutine scatter_window_pair
+
+    !> interior-only scatter for windows proven not to wrap: self%wrap is the
+    !! identity there, so direct indexing is bit-identical and the inner run contiguous
+    pure subroutine scatter_window_nowrap( self, i0, w, val, vol_accum )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
+        real,                     intent(in)    :: val
+        real,                     intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                            &self%lims3(2,1):self%lims3(2,2),&
+                                                            &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, h0, kk, mm
+        h0 = i0(1)
+        do dk = 1, self%wdim
+            mm = i0(3) + dk - 1
+            do dj = 1, self%wdim
+                kk = i0(2) + dj - 1
+                do di = 1, self%wdim
+                    vol_accum(h0+di-1,kk,mm) = vol_accum(h0+di-1,kk,mm) + w(di,dj,dk) * val
+                end do
+            end do
+        end do
+    end subroutine scatter_window_nowrap
+
+    !> B and D through one non-wrapping, contiguous KB-window traversal
+    pure subroutine scatter_window_pair_nowrap( self, i0, w, bval, dval, bacc, dacc )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim), dval
+        complex,                  intent(in)    :: bval
+        complex,                  intent(inout) :: bacc(self%lims3(1,1):self%lims3(1,2),&
+                                                       &self%lims3(2,1):self%lims3(2,2),&
+                                                       &self%lims3(3,1):self%lims3(3,2))
+        real,                     intent(inout) :: dacc(self%lims3(1,1):self%lims3(1,2),&
+                                                       &self%lims3(2,1):self%lims3(2,2),&
+                                                       &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, h0, kk, mm
+        h0 = i0(1)
+        do dk = 1, self%wdim
+            mm = i0(3) + dk - 1
+            do dj = 1, self%wdim
+                kk = i0(2) + dj - 1
+                do di = 1, self%wdim
+                    bacc(h0+di-1,kk,mm) = bacc(h0+di-1,kk,mm) + w(di,dj,dk) * bval
+                    dacc(h0+di-1,kk,mm) = dacc(h0+di-1,kk,mm) + w(di,dj,dk) * dval
+                end do
+            end do
+        end do
+    end subroutine scatter_window_pair_nowrap
+
+    !> complex counterpart of scatter_window_nowrap, for the RHS scatter
+    pure subroutine scatter_window_cmplx_nowrap( self, i0, w, val, vol_accum )
+        class(pcg_lattice),       intent(in)    :: self
+        integer,                  intent(in)    :: i0(3)
+        real,                     intent(in)    :: w(self%wdim,self%wdim,self%wdim)
+        complex,                  intent(in)    :: val
+        complex,                  intent(inout) :: vol_accum(self%lims3(1,1):self%lims3(1,2),&
+                                                            &self%lims3(2,1):self%lims3(2,2),&
+                                                            &self%lims3(3,1):self%lims3(3,2))
+        integer :: di, dj, dk, h0, kk, mm
+        h0 = i0(1)
+        do dk = 1, self%wdim
+            mm = i0(3) + dk - 1
+            do dj = 1, self%wdim
+                kk = i0(2) + dj - 1
+                do di = 1, self%wdim
+                    vol_accum(h0+di-1,kk,mm) = vol_accum(h0+di-1,kk,mm) + w(di,dj,dk) * val
+                end do
+            end do
+        end do
+    end subroutine scatter_window_cmplx_nowrap
 
 end module simple_pcg_lattice

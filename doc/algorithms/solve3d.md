@@ -70,23 +70,33 @@ low-pass (as in 2D) rather than by an FSC filter.
 **Sampling grid.** Each stage crops to `smpd_target = max(2, lp/3)` at the
 ends and interpolates the box in between, always preserving
 `box * smpd = box_crop * smpd_crop`; the shift bound is `min(8, max(2, 12 A /
-smpd_crop))` pixels. The downscaled particle cache is 2D-only; `solve3D`
-rejects `cache` and `cache_dir`.
+smpd_crop))` pixels. Supplying a positive `trs` replaces `trslim` in every
+planned stage before the scale information is printed; omitting it or setting
+`trs=0` keeps the automatic ladder. Particle stages 1 and 2 still disable shift
+search when their commands are emitted. The class-average, chunked, and add-on
+interfaces do not expose this override. The downscaled particle cache is
+2D-only; `solve3D` rejects `cache` and `cache_dir`.
 
-**Search stochasticity.** Stages 1 and 2 use the stochastic direct
-neighborhood (first-improvement over a random subset of directions);
-stages 3 to 5 use the full probabilistic table with balanced assignment;
-stages 6 to 8 restrict the table to pooled coarse-peak neighborhoods so the
-late search is local and exhaustive within it. The coarse subspace is
-rescaled with `nspace` so its granularity stays constant. Independent
-multi-state runs use plain first-improvement hill climbing for the first two
-stages.
+**Search stochasticity.** Every stage commits, per particle, one draw from
+the tempered posterior over the references it scored
+([sampling](sampling_and_fractional_updates.md)). Stages 1 and 2 score the
+stochastic direct neighborhood (a random subset of directions up to the
+first that beats the current pose, the current pose among the candidates);
+stages 3 to 5 score the full probabilistic table; stages 6 to 8 restrict
+the table to pooled coarse-peak neighborhoods so the late search is local
+and exhaustive within it. The coarse subspace is rescaled with `nspace` so
+its granularity stays constant. Independent multi-state runs use plain
+first-improvement hill climbing for the first two stages. Every stage
+searches at `prob_beta` (not a user input). The last stage
+anneals its draws to the physical posterior once its resolution stops
+gaining (`prob_beta_end=1`, the annealing tail of
+[refine3D](refine3d.md)).
 
 **Particle subset.** A fixed target `nsample` (default 10 000 per state)
 gives `update_frac = nsample * nstates / N_active`, capped at 0.9 so that
 fractional updates stay on; if `nsample` exceeds 90 percent of the active set,
 the run switches to full updates and disables trailing. The subset is drawn
-over sampling units built from the selected 2D class averages (`balance=cavg`
+over sampling units built from the selected 2D class averages (`balance=class`
 by default; see [sampling](sampling_and_fractional_updates.md)). Until stage 5
 (stage 4 for independent multi-state runs), each iteration takes the
 top-scoring particles of every unit by their 2D score, so the early stages

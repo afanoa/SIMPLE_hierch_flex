@@ -33,6 +33,10 @@ type convergence
     real    :: cont_stable_pct        = 0. !< refine=cont: stable particles of the least stable state (%)
     real    :: cont_coverage_pct      = 0. !< refine=cont: active particles sampled during the streak (%)
     real    :: progress               = 0. !< progress estimation
+    integer :: prob_beta_tail_start   = 0  !< the probability tables' annealing tail to prob_beta_end: its first iteration (0: the run still searches at prob_beta); set when the resolution stops gaining or at the budget's end
+    integer :: res_hist_iter(2)       = 0  !< the iterations of the last two checks (the latest first; 0: none), for the gain test two iterations back
+    real    :: res05_hist(2)          = 0. !< their FSC=0.5 resolutions
+    real    :: res143_hist(2)         = 0. !< their FSC=0.143 resolutions
   contains
     procedure :: check_conv2D
     procedure, nopass :: print_verdict
@@ -44,6 +48,9 @@ type convergence
     procedure :: calc_polish_stats
     procedure :: check_cont_conv
     procedure :: get
+    procedure :: anneal_tail_start
+    procedure, private :: res_two_back
+    procedure, private :: record_res
 end type convergence
 
 contains
@@ -59,6 +66,7 @@ contains
 
     function check_conv2D( self, params, cline, os, ncls, msk ) result( converged )
         use simple_parameters, only: parameters
+        use simple_defs,       only: PROB_BETA_TAIL
         class(convergence), intent(inout) :: self
         class(parameters),  intent(inout) :: params
         class(cmdline),     intent(inout) :: cline
@@ -69,10 +77,11 @@ contains
         type(string) :: s_ratio, cont_ratio, numstr
         real,    allocatable :: updatecnts(:), states(:), scores(:), sampled(:)
         logical, allocatable :: mask(:)
+        character(len=96) :: beta_str
         integer :: n, nptcls, nsampled, nactive
         real    :: overlap_lim, fracsrch_lim, realized_update_frac
         real    :: percen_sampled, percen_updated, percen_avg, sampled_lb
-        logical :: converged, chk4conv, cont_stats_available
+        logical :: converged, chk4conv, cont_stats_available, l_tail_run
         601 format(A,1X,F12.3)
         602 format(A,1X,F12.3,1X,A)
         604 format(A,1X,F12.3,1X,F12.3,1X,F12.3,1X,F12.3)
@@ -128,6 +137,21 @@ contains
         write(logfhandle,604) '>>> SCORE [0,1]              AVG/SDEV/MIN/MAX:', self%score%avg, self%score%sdev, self%score%minv, self%score%maxv
         write(logfhandle,609) '>>> -------------------- SETTINGS --------------------'
         write(logfhandle,609) '>>> | REFINEMENT MODE               | '//trim(params%refine)
+        if( params%l_prob_align_mode )then
+        ! the probability tables' posterior draws: the tempering factor of this iteration, and the annealing tail
+        ! once the class overlap converges (exec_refine2D sets the factor; the tail as in check_conv3D)
+        if( self%prob_beta_tail_start > 0 )then
+        write(beta_str,'(F6.3,A,I0,A,I0,A,F6.3,A)') params%prob_beta, ' (annealing tail ',&
+            &min(PROB_BETA_TAIL, params%which_iter - self%prob_beta_tail_start + 1), '/', PROB_BETA_TAIL,&
+            &' to ', params%prob_beta_end, ')'
+        else if( params%prob_beta_end > TINY .and. abs(params%prob_beta_end - params%prob_beta) > TINY )then
+        write(beta_str,'(F6.3,A,F6.3,A)') params%prob_beta, ' (annealing to ', params%prob_beta_end,&
+            &' once the class overlap converges)'
+        else
+        write(beta_str,'(F6.3,A)') params%prob_beta, ' (flat)'
+        endif
+        write(logfhandle,609) '>>> | POSTERIOR DRAW BETA           | '//trim(adjustl(beta_str))
+        endif
         if( trim(params%gauref).eq.'yes' )then
         write(logfhandle,609) '>>> | GAU REGULARIZATION            | on'
         else
@@ -206,6 +230,34 @@ contains
                 converged = self%dist_inpl%avg < 0.5
             endif
         endif
+        ! The annealing tail of the probability tables' posterior draws, as check_conv3D's: a run with prob_beta_end searches at prob_beta until its class overlap converges past
+        ! minits, then exec_refine2D ramps the draws to prob_beta_end over the PROB_BETA_TAIL iterations from
+        ! self%prob_beta_tail_start
+        ! and the run ends; a budget (maxits iterations from startit, which check_refine2D_convergence enforces) too
+        ! short for that starts the tail so that it completes within it. The state is this object's, which the
+        ! strategies keep across iterations. The 2D runs had no tail before 2026-10-27: a run at prob_beta 0.3 wrote
+        ! its last class averages from draws at 0.3
+        l_tail_run = params%l_prob_align_mode .and. params%prob_beta_end > TINY .and. &
+            &abs(params%prob_beta_end - params%prob_beta) > TINY
+        if( l_tail_run .or. self%prob_beta_tail_start > 0 )then
+            if( self%prob_beta_tail_start == 0 )then
+                if( converged .and. params%which_iter >= params%startit + params%minits - 1 )then
+                    self%prob_beta_tail_start = params%which_iter + 1
+                    write(logfhandle,'(A,I0,A)') '>>> CLASS OVERLAP CONVERGED: annealing the posterior draws over the next ',&
+                        &PROB_BETA_TAIL, ' iterations'
+                else if( params%which_iter + PROB_BETA_TAIL >= params%startit + params%maxits - 1 )then
+                    self%prob_beta_tail_start = params%which_iter + 1
+                    write(logfhandle,'(A,I0,A)') '>>> BUDGET END: annealing the posterior draws over the last ',&
+                        &PROB_BETA_TAIL, ' iterations'
+                endif
+                converged = .false.
+            else if( params%which_iter >= self%prob_beta_tail_start + PROB_BETA_TAIL - 1 )then
+                write(logfhandle,'(A)') '>>> ANNEALING TAIL COMPLETE'
+                converged = .true.
+            else
+                converged = .false.
+            endif
+        endif
         ! stats
         call ostats%new(1, is_ptcl=.false.)
         call ostats%set(1,'ITERATION',                params%which_iter)
@@ -244,6 +296,7 @@ contains
 
     function check_conv3D( self, params, cline, os, msk ) result( converged )
         use simple_parameters, only: parameters
+        use simple_defs,       only: PROB_BETA_TAIL
         class(convergence), intent(inout) :: self
         class(parameters),  intent(inout) :: params
         class(cmdline),     intent(inout) :: cline
@@ -260,8 +313,9 @@ contains
         type(string) :: numstr
         character(len=KEYLEN) :: res_key
         character(len=len('>>> RESOLUTION @ FSC=0.143   AVG/SDEV/MIN/MAX:')) :: res_state_label
-        real    :: res05_now, res05_prev
-        logical :: converged, cont_stats_available, pose_stats_available
+        character(len=96) :: beta_str
+        real    :: res05_now, res05_prev, res143_now, res143_prev, res05_prev2, res143_prev2, lpexit_eff
+        logical :: converged, cont_stats_available, pose_stats_available, l_stalled, l_margin
         integer :: iptcl, istate, n, nptcls, nsampled, nactive, ucnt
         integer :: nupdated_state, nsampled_state
         601 format(A,1X,F12.3)
@@ -399,14 +453,34 @@ contains
         endif
         deallocate(state_mask)
         ! best resolved populated state, the quantity the lpexit rule and STATS_FILE carry
-        res05_now = 0.
-        if( any(res05_state_avg > TINY) ) res05_now = minval(res05_state_avg, mask=res05_state_avg > TINY)
+        res05_now  = 0.
+        res143_now = 0.
+        if( any(res05_state_avg > TINY) ) res05_now  = minval(res05_state_avg, mask=res05_state_avg > TINY)
+        if( any(res_state_avg   > TINY) ) res143_now = minval(res_state_avg,   mask=res_state_avg   > TINY)
+        ! the weighted insertion's margin on the resolution-based exits (the stall test of the annealing tail
+        ! and the stage resolution exit): a shell and an iteration more than the single draw's
+        l_margin = params%l_prob_align_mode .and. params%topk > 1
         ! score
         write(logfhandle,604) '>>> SCORE [0,1]              AVG/SDEV/MIN/MAX:', self%score%avg, self%score%sdev, self%score%minv, self%score%maxv
         write(logfhandle,609) '>>> -------------------- SETTINGS --------------------'
         write(logfhandle,609) '>>> | REFINEMENT MODE               | '//trim(params%refine)
         write(logfhandle,609) '>>> | PROB NEIGH MODE               | '//trim(params%prob_neigh_mode)
         write(logfhandle,609) '>>> | NSPACE PROJECTION DIRECTIONS  | '//trim(int2str(params%nspace))
+        if( params%l_prob_align_mode )then
+        ! the probability tables' posterior draws: the tempering factor of this iteration, and the annealing to
+        ! prob_beta_end once the resolution stops gaining (the tail; exec_refine3D sets the factor)
+        if( self%prob_beta_tail_start > 0 )then
+        write(beta_str,'(F6.3,A,I0,A,I0,A,F6.3,A)') params%prob_beta, ' (annealing tail ',&
+            &min(PROB_BETA_TAIL, params%which_iter - self%prob_beta_tail_start + 1), '/', PROB_BETA_TAIL,&
+            &' to ', params%prob_beta_end, ')'
+        else if( params%prob_beta_end > TINY .and. abs(params%prob_beta_end - params%prob_beta) > TINY )then
+        write(beta_str,'(F6.3,A,F6.3,A)') params%prob_beta, ' (annealing to ', params%prob_beta_end,&
+            &' once the resolution stops gaining)'
+        else
+        write(beta_str,'(F6.3,A)') params%prob_beta, ' (flat)'
+        endif
+        write(logfhandle,609) '>>> | POSTERIOR DRAW BETA           | '//trim(adjustl(beta_str))
+        endif
         if( trim(params%gauref).eq.'yes' )then
         write(logfhandle,609) '>>> | GAU REGULARIZATION            | on'
         else
@@ -417,12 +491,6 @@ contains
         write(logfhandle,609) '>>> | ML  REGULARIZATION            | on, TAU: '//numstr%to_char()
         else
         write(logfhandle,609) '>>> | ML  REGULARIZATION            | off'
-        endif
-        if( params%l_icm )then
-        numstr = string(params%lambda)
-        write(logfhandle,609) '>>> | ICM REGULARIZATION            | on, LAMBDA: '//numstr%to_char()
-        else
-        write(logfhandle,609) '>>> | ICM REGULARIZATION            | off'
         endif
         if( trim(params%automsk).ne.'no' )then
         write(logfhandle,609) '>>> | AUTOMASKING                   | on, MODE: '//trim(params%automsk)
@@ -520,23 +588,83 @@ contains
         ! a Cartesian pass reports frac = 100 and an overlap any small motion meets: its own rule
         if( params%l_cart_refine ) &
             &converged = self%check_cont_conv(params, os, sampled > sampled_lb .and. states > 0.5, states, sampled)
+        ! the probability tables' posterior draws (refine=prob and prob_neigh): the committed pose is a draw from
+        ! the tempered row posterior and sits near the posterior's own stability from a stage's first iterations,
+        ! so the pose-overlap rule would end the stage at once and cannot tell a frozen assignment from
+        ! convergence; the stage ends on the resolution exit below, on its annealing tail, or on its iteration
+        ! budget
+        if( .not. params%l_cart_refine .and. (trim(params%refine) == 'prob' .or. trim(params%refine) == 'prob_neigh') )then
+            if( converged ) write(logfhandle,'(A)') '>>> POSE-OVERLAP CONVERGENCE BYPASSED (posterior draw): the stage ends on the resolution exit, its annealing tail or its budget'
+            converged = .false.
+            ! the annealing tail (prob_beta_end differs from prob_beta): the run searches flat at prob_beta until
+            ! neither FSC=0.5 nor FSC=0.143 gained on the previous iteration, then exec_refine3D ramps the draws to
+            ! prob_beta_end over the PROB_BETA_TAIL iterations from self%prob_beta_tail_start and the run ends; a
+            ! budget too short for a stall starts the tail so that it completes within it. The state is this
+            ! object's: the in-memory strategy rebuilds params from the command line every iteration. The
+            ! streptavidin tally of 2026-10-24 had the ramp spread over the last stage's budget run 26 iterations
+            ! where the resolution was reached at the second
+            if( (params%l_prob_align_mode .and. params%prob_beta_end > TINY .and. &
+                &abs(params%prob_beta_end - params%prob_beta) > TINY) .or. &
+                &self%prob_beta_tail_start > 0 )then
+                if( self%prob_beta_tail_start == 0 )then
+                    l_stalled = .false.
+                    if( params%which_iter > params%startit .and. res05_now > TINY .and. res143_now > TINY )then
+                        res05_prev  = prev_iter_res(params, 'RESOLUTION_FSC05_STATE')
+                        res143_prev = prev_iter_res(params, 'RESOLUTION_STATE')
+                        l_stalled   = res05_prev > TINY .and. res143_prev > TINY .and. &
+                            &res05_now >= res05_prev - TINY .and. res143_now >= res143_prev - TINY
+                        ! the weighted insertion (topk > 1) makes the halves agree a shell earlier than the single
+                        ! draw's noise allows, so a stall is two iterations without gain, not one (l_margin)
+                        if( l_stalled .and. l_margin )then
+                            call self%res_two_back(params, res05_prev2, res143_prev2)
+                            l_stalled = res05_prev2 > TINY .and. res143_prev2 > TINY .and. &
+                                &res05_prev >= res05_prev2 - TINY .and. res143_prev >= res143_prev2 - TINY
+                        endif
+                    endif
+                    if( l_stalled )then
+                        self%prob_beta_tail_start = params%which_iter + 1
+                        write(logfhandle,'(A,I0,A)') '>>> RESOLUTION NO LONGER GAINING: annealing the posterior draws over the next ',&
+                            &PROB_BETA_TAIL, ' iterations'
+                    else if( params%which_iter + 1 >= params%startit + params%maxits - PROB_BETA_TAIL )then
+                        self%prob_beta_tail_start = params%which_iter + 1
+                        write(logfhandle,'(A,I0,A)') '>>> BUDGET END: annealing the posterior draws over the last ',&
+                            &PROB_BETA_TAIL, ' iterations'
+                    endif
+                else if( params%which_iter >= self%prob_beta_tail_start + PROB_BETA_TAIL - 1 )then
+                    write(logfhandle,'(A)') '>>> ANNEALING TAIL COMPLETE'
+                    converged = .true.
+                endif
+            endif
+        endif
         ! lpexit holds the next stage's planned limit: once the halves resolve past it the
         ! remaining iterations at this crop buy nothing the next stage will not do better.
         ! A stage still gaining resolution is productive whatever the threshold says, so the
         ! exit also requires the gain to have stopped: on PfCRT latest9 every restart left
         ! the NU stage mid-climb and the two that left coarsest gave the two worst maps.
         ! The comparison is within the stage, so never at its first iteration.
-        ! Only ever adds convergence.
+        ! Only ever adds convergence. Under the weighted insertion (topk > 1, l_margin) the
+        ! halves agree a shell earlier (the draw's noise is averaged out of each half while
+        ! both are matched against the same reference in solve3D's stages), so the exit
+        ! wants the FSC a shell past the limit and no gain over two iterations, not one
         if( params%lpexit > TINY .and. .not.converged .and. res05_now > TINY )then
-            if( res05_now < params%lpexit .and. params%which_iter > params%startit )then
-                res05_prev = prev_stage_res05(params)
-                if( res05_prev > TINY .and. res05_now >= res05_prev - TINY )then
+            lpexit_eff = params%lpexit
+            if( l_margin ) lpexit_eff = calc_lowpass_lim(calc_fourier_index(params%lpexit, params%box, params%smpd) + 1, &
+                &params%box, params%smpd)
+            if( res05_now < lpexit_eff .and. params%which_iter > params%startit )then
+                res05_prev = prev_iter_res(params, 'RESOLUTION_FSC05_STATE')
+                l_stalled  = res05_prev > TINY .and. res05_now >= res05_prev - TINY
+                if( l_stalled .and. l_margin )then
+                    call self%res_two_back(params, res05_prev2, res143_prev2)
+                    l_stalled = res05_prev2 > TINY .and. res05_prev >= res05_prev2 - TINY
+                endif
+                if( l_stalled )then
                     write(logfhandle,'(A,F7.3,A,F7.3,A)') '>>> STAGE RESOLUTION EXIT: FSC=0.5 AT ',&
-                        &res05_now, ' A IS PAST THE NEXT STAGE LIMIT (', params%lpexit, ' A) AND NO LONGER GAINING'
+                        &res05_now, ' A IS PAST THE NEXT STAGE LIMIT (', lpexit_eff, ' A) AND NO LONGER GAINING'
                     converged = .true.
                 endif
             endif
         endif
+        call self%record_res(params, res05_now, res143_now)
         if( converged .and. params%minits > 0 )then
             if( params%which_iter < params%startit + params%minits - 1 )then
                 write(logfhandle,'(A,I0,A,I0,A)') '>>> CONVERGED: yes, continuing until minimum iteration count (', &
@@ -570,7 +698,7 @@ contains
         do istate = 1, params%nstates
             write(res_key,'(A,I2.2)') 'RESOLUTION_STATE', istate
             call ostats%set(1, trim(res_key),            res_state_avg(istate))
-            write(res_key,'(A,I2.2)') 'RESOLUTION_FSC05_STATE', istate ! read back by prev_stage_res05
+            write(res_key,'(A,I2.2)') 'RESOLUTION_FSC05_STATE', istate ! read back by prev_iter_res
             call ostats%set(1, trim(res_key),            res05_state_avg(istate))
         end do
         if( params%l_update_frac .and. params%nstates > 1 )then
@@ -598,10 +726,6 @@ contains
         else
             call ostats%set(1,'ML_REGULARIZATION',                    0.0)
         endif
-        if( params%l_icm )then
-            call ostats%set(1,'ICM_REGULARIZATION',                   1.0)
-            call ostats%set(1,'ICM_REGULARIZATION_LAMBDA',  params%lambda)
-        endif
         if( params%l_update_frac )then
             call ostats%set(1,'TRAIL_REC_UPDATE_FRACTION', trail_rec_ufrac)
         endif
@@ -618,11 +742,48 @@ contains
         call ostats%kill
     end function check_conv3D
 
-    !> the lpexit rule's res05_prev: best populated state's FSC=0.5 resolution in STATS_FILE, read
+    !> the resolutions of the iteration two before this one, from this object's history of its last two checks
+    !! (record_res), the same quantities prev_iter_res reads for the previous one; 0. when the history does not
+    !! reach that iteration of this stage (the object is the strategy's and lives through the run's iterations)
+    subroutine res_two_back( self, params, res05_prev2, res143_prev2 )
+        use simple_parameters, only: parameters
+        class(convergence), intent(in)  :: self
+        class(parameters),  intent(in)  :: params
+        real,               intent(out) :: res05_prev2, res143_prev2
+        integer :: k
+        res05_prev2  = 0.
+        res143_prev2 = 0.
+        do k = 1,2
+            if( self%res_hist_iter(k) /= params%which_iter - 2 ) cycle
+            if( self%res_hist_iter(k) < params%startit ) cycle
+            res05_prev2  = self%res05_hist(k)
+            res143_prev2 = self%res143_hist(k)
+            return
+        enddo
+    end subroutine res_two_back
+
+    !> this check's iteration and resolutions into the history, the latest first
+    subroutine record_res( self, params, res05_now, res143_now )
+        use simple_parameters, only: parameters
+        class(convergence), intent(inout) :: self
+        class(parameters),  intent(in)    :: params
+        real,               intent(in)    :: res05_now, res143_now
+        if( self%res_hist_iter(1) == params%which_iter ) return ! the same iteration checked twice: the first stands
+        self%res_hist_iter(2) = self%res_hist_iter(1)
+        self%res05_hist(2)    = self%res05_hist(1)
+        self%res143_hist(2)   = self%res143_hist(1)
+        self%res_hist_iter(1) = params%which_iter
+        self%res05_hist(1)    = res05_now
+        self%res143_hist(1)   = res143_now
+    end subroutine record_res
+
+    !> the previous iteration's best populated state's resolution in STATS_FILE (key_prefix RESOLUTION_FSC05_STATE
+    !! for FSC=0.5, RESOLUTION_STATE for FSC=0.143), read
     !! before check_conv3D overwrites it; 0. unless the file is from an earlier iteration of this stage
-    real function prev_stage_res05( params ) result( res05_prev )
+    real function prev_iter_res( params, key_prefix ) result( res05_prev )
         use simple_parameters, only: parameters
         class(parameters), intent(in) :: params
+        character(len=*),  intent(in) :: key_prefix
         type(oris)            :: ostats
         character(len=KEYLEN) :: res_key
         real    :: res05
@@ -635,7 +796,7 @@ contains
         if( ostats%isthere('ITERATION') ) iter_prev = nint(ostats%get(1,'ITERATION'))
         if( iter_prev >= params%startit .and. iter_prev < params%which_iter )then
             do istate = 1, params%nstates
-                write(res_key,'(A,I2.2)') 'RESOLUTION_FSC05_STATE', istate
+                write(res_key,'(A,I2.2)') key_prefix, istate
                 if( .not. ostats%isthere(trim(res_key)) ) cycle
                 res05 = ostats%get(1, trim(res_key))
                 if( res05 <= TINY ) cycle
@@ -643,7 +804,7 @@ contains
             end do
         endif
         call ostats%kill
-    end function prev_stage_res05
+    end function prev_iter_res
 
 
     !> refine=cont: the sample (mask) passes when cont_conv_frac of every populated state is stable
@@ -944,6 +1105,12 @@ contains
         call exec_cmdline(ps2pdf_cmd, suppress_errors=.true., exitstat=iostat)
         if( iostat == 0 ) call del_file(fname_eps)
     end subroutine plot_projdirs
+
+    !> the first iteration of the annealing tail (0: none yet)
+    integer function anneal_tail_start( self ) result( it )
+        class(convergence), intent(in) :: self
+        it = self%prob_beta_tail_start
+    end function anneal_tail_start
 
     real function get( self, which )
         class(convergence), intent(in) :: self

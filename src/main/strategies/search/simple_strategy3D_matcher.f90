@@ -9,9 +9,13 @@ use simple_binoris_io,                 only: binwrite_oritab
 use simple_builder,                    only: builder
 use simple_eo_partition,               only: ensure_field_halves
 use simple_eul_prob_tab,               only: eul_prob_tab
+use simple_eul_prob_tab_neigh,         only: eul_prob_tab_neigh
 use simple_matcher_3Drec,              only: calc_3Drec
+use simple_eul_prob_tab_utils,         only: prob_insert_poses, insert_cone_from_fsc, prob_readout, prob_readout_fname, &
+    &prob_fill_profile, write_fill_profile_bench, &
+    &write_prob_readout, PROB_READOUT_3D_DENSE, PROB_READOUT_3D_NEIGH
 use simple_rec3D_pcg_strategy,         only: execute_rec3D_pcg_worker
-use simple_matcher_smpl_and_lplims,    only: sample_ptcls4iter3D, master_draws_sample3D
+use simple_matcher_smpl_and_lplims,    only: sample_ptcls4iter3D, master_draws_sample3D, sample_ptcls4prob3D
 use simple_qsys_funs,                  only: qsys_declare_part_finished
 use simple_bench_io,                   only: open_bench_report
 use simple_syslib,                     only: get_peak_rss_bytes, get_current_rss_bytes, get_node_mem_in_use_bytes
@@ -27,8 +31,10 @@ use simple_strategy3D_cont,            only: strategy3D_cont
 use simple_cartft_pose_opt,            only: cartft_pose_work
 use simple_strategy3D_shc,             only: strategy3D_shc
 use simple_strategy3D_srch,            only: strategy3D_spec
+use simple_shiftmap_srch,              only: setup_shiftmap_srch
+use simple_matcher_2Dprep,             only: ptcl_on_disk
 use simple_strategy3D,                 only: strategy3D
-use simple_type_defs,                  only: OBJFUN_EUCLID
+use simple_type_defs,                  only: OBJFUN_EUCLID, ptcl_ref
 implicit none
 
 public :: refine3D_exec
@@ -45,6 +51,7 @@ type :: refine3D_ctrl
     logical :: do_write_oris
     logical :: do_bench
     logical :: do_buffer_records
+    logical :: do_pipeline   !< the probabilistic pipeline: the fill and the selection per batch, in this process
   contains
     procedure :: print_flags
 end type refine3D_ctrl
@@ -60,7 +67,8 @@ contains
         logical,                   intent(in) :: l_write_partial_recs
         class(parameters), pointer :: p_ptr => null()
         class(builder),    pointer :: b_ptr => null()
-        type(eul_prob_tab), target :: eulprob_obj_part
+        class(eul_prob_tab), allocatable, target :: eulprob_obj_part !< the part's assignment (a neighbourhood table on the pipeline's prob_neigh route)
+        type(prob_insert_poses), target :: extra_poses  !< the weighted insertion's poses of this part (topk > 1)
         type :: strategy3D_per_ptcl
             class(strategy3D), pointer :: ptr => null()
         end type strategy3D_per_ptcl
@@ -75,6 +83,7 @@ contains
         integer             :: nbatches, batchsz_max, batch_start, batch_end, batchsz
         integer             :: iptcl, fnr, ithr, iptcl_batch, iptcl_map, ibatch, nptcls2update
         logical             :: has_been_searched
+        logical             :: l_map_classic
         ! benchmarking
         integer(int64) :: peak_rss, rss_after_teardown, rss_after_reconstruction
         real(real64)    :: peak_rss_gib, rss_after_teardown_gib, rss_after_reconstruction_gib
@@ -95,10 +104,22 @@ contains
         type(cartft_pose_work)  :: cont_work_sum
         real(dp),   allocatable :: ts_thr(:)
         real(dp)                :: ts_search, wall_search, t_region, t_ptcl
-        integer(int64)          :: cart_ref_bytes
+        integer(int64)          :: cart_ref_bytes, pipeline_bytes, pipeline_budget
         integer                 :: nthr_team
+        real(timer_int_kind)    :: rt_fill_tab, rt_assign
+        type(prob_fill_profile) :: fill_prof
+        integer(timer_int_kind) :: t_fill_tab, t_assign
+        real                    :: lp_cone
+        integer, allocatable    :: pinds_glob(:)
+        integer                 :: neff_nglob, neff_rank0
         p_ptr => params
         b_ptr => build
+        call check_pass_team('refine3D_exec')
+        ! the weighted insertion's cone bounds its rim displacement by the matching low-pass limit when the command
+        ! line sets one (the stage entries); without one the pre-step's own parameters held the default limit, which
+        ! never bound a cone, while the strategy's lp at a later iteration is the previous iteration's adopted band
+        lp_cone = 0.
+        if( cline%defined('lp') ) lp_cone = cline%get_rarg('lp')
         rss_after_teardown      = -1_int64
         rss_after_reconstruction = -1_int64
         rt_cart_refs   = 0.
@@ -148,6 +169,8 @@ contains
             call maybe_write_orientations()
             if( ctrl%do_write_partial_recs .and. trim(params%rec_backend) == 'pcg' ) &
                 &call write_partial_recs(params, build, cline, 0, pinds)
+            ! the master merges every part's readout record: an empty part's is zero
+            if( ctrl%do_pipeline .and. p_ptr%l_distr_worker ) call write_empty_readout()
             converged = .true.
             call b_ptr%cftc%kill
             call qsys_declare_part_finished(p_ptr, string('simple_strategy3D_matcher :: refine3D_exec'))
@@ -170,25 +193,24 @@ contains
         endif
         call prepare_refs_sigmas_and_pftc()
         if( ctrl%do_bench ) t_memoize_refs = tic()
-        ! Probabilistic assignment skips discrete correlation here, but its
-        ! continuous polish still evaluates the memoized reference terms.
-        if( .not. p_ptr%l_cart_refine .and. &
-            &(.not. ctrl%do_prob_align .or. trim(p_ptr%inpl_cont) == 'yes') ) &
-            &call build%pftc%memoize_refs(eulspace=build%eulspace)
+        ! the memoized reference terms: the fill of the pipeline scores with them
+        if( .not. p_ptr%l_cart_refine ) call build%pftc%memoize_refs(eulspace=build%eulspace)
         if( ctrl%do_bench )then
             rt_memoize_refs = toc(t_memoize_refs)
             t_prep_orisrch  = tic()
         endif
         call prep_strategy3D(p_ptr, b_ptr)
+        ! the polar shift map of the classic modes under the key (ruling 20)
+        l_map_classic = p_ptr%l_centring .and. p_ptr%l_doshift .and. .not. str_has_substr(p_ptr%refine, 'prob')
+        if( l_map_classic ) call setup_shiftmap_srch(p_ptr, b_ptr)
         allocate(strategy3Dspecs(batchsz_max), strategy3Dsrch(batchsz_max))
-        if( ctrl%do_prob_align )then
-            call eulprob_obj_part%new_assignment(p_ptr, b_ptr, pinds)
-            call eulprob_obj_part%read_assignment(string(ASSIGNMENT_FBODY)//'.dat')
-        endif
+        if( ctrl%do_pipeline ) call begin_pipeline()
         if( ctrl%do_bench )then
             rt_prep_orisrch     = toc(t_prep_orisrch)
             rt_build_batch_ptcls= 0.0
             rt_align            = 0.0
+            rt_fill_tab         = 0.0
+            rt_assign           = 0.0
         endif
         ! per-thread counters of the team the search runs on
         nthr_team = omp_get_max_threads()
@@ -227,6 +249,7 @@ contains
             batchsz     = batch_end - batch_start + 1
             incr_shifts(:,1:batchsz) = 0.0
             call build_batch_particles_local()
+            if( ctrl%do_pipeline ) call pipeline_batch()
             if( ctrl%do_bench ) t_align = tic()
             t_region = omp_get_wtime()
             ! a particle's cost varies, so the schedule is dynamic: a particle is searched whole by one thread, so the
@@ -241,7 +264,10 @@ contains
                 cnt_all(ithr) = cnt_all(ithr) + 1
                 strategy3Dspecs(iptcl_batch)%iptcl     = iptcl
                 strategy3Dspecs(iptcl_batch)%iptcl_map = iptcl_map
-                if( ctrl%do_prob_align ) strategy3Dspecs(iptcl_batch)%eulprob_obj_part => eulprob_obj_part
+                if( ctrl%do_prob_align )then
+                    strategy3Dspecs(iptcl_batch)%eulprob_obj_part => eulprob_obj_part
+                    if( extra_poses%nptcls > 0 ) strategy3Dspecs(iptcl_batch)%extra_poses => extra_poses
+                endif
                 call choose_and_run_strategy(iptcl, iptcl_batch, ithr, has_been_searched)
                 if( ctrl%do_emit_sigma .and. .not. p_ptr%l_cart_refine )then
                     call b_ptr%spproj_field%get_ori(iptcl, orientation)
@@ -258,6 +284,10 @@ contains
         do ithr = 1, nthr_team
             call cont_work_sum%add(cont_work(ithr))
         enddo
+        if( ctrl%do_pipeline )then
+            call eulprob_obj_part%close_assignment
+            if( ctrl%do_bench ) fill_prof = eulprob_obj_part%get_fill_profile()
+        endif
         call reads%kill
         call seal_record_buffer
         if( ctrl%do_bench ) reads_srch = ptcl_read_counts_since(reads0)
@@ -279,7 +309,10 @@ contains
         enddo
         deallocate(strategy3Dsrch, strategy3Dspecs, batches)
         deallocate(cnt_greedy, cnt_all, incr_shifts, cont_work, ts_thr)
-        call eulprob_obj_part%kill
+        if( allocated(eulprob_obj_part) )then
+            call eulprob_obj_part%kill
+            deallocate(eulprob_obj_part)
+        endif
         call clean_strategy3D
         call b_ptr%kill_strategy3D_tbox
         call b_ptr%vol%kill
@@ -297,12 +330,13 @@ contains
                 t_rec  = tic()
                 reads0 = ptcl_read_counts_now()
             endif
-            call write_partial_recs(params, build, cline, nptcls2update, pinds)
+            call write_partial_recs(params, build, cline, nptcls2update, pinds, extra_poses)
             if( ctrl%do_bench )then
                 rt_rec_write = rt_rec_write + toc(t_rec)
                 reads_rec    = ptcl_read_counts_since(reads0)
             endif
         endif
+        call extra_poses%kill
         call release_pass_buffer
         call b_ptr%esig%kill
         if( ctrl%do_bench ) rss_after_reconstruction = get_current_rss_bytes()
@@ -370,6 +404,13 @@ contains
             write(fnr,'(a,1x,f0.2)') 'match3D particle preparation       :', &
                 &rt_build_batch_ptcls + rt_alloc_ptcl_imgs - reads_srch%rt_read
             write(fnr,'(a,1x,f0.2)') 'match3D reference preparation      :', rt_prep_refs + rt_memoize_refs + rt_cart_refs
+            if( ctrl%do_pipeline )then
+                write(fnr,'(a,i0)') 'match3D pipeline context (bytes)    : ', pipeline_bytes
+                write(fnr,'(a,i0)') 'match3D pipeline budget (bytes)     : ', pipeline_budget
+                write(fnr,'(a,1x,f0.2)') 'match3D table fill                 :', rt_fill_tab
+                write(fnr,'(a,1x,f0.2)') 'match3D assignment                 :', rt_assign
+                call write_fill_profile_bench(fnr, 'match3D', fill_prof, p_ptr%nstates)
+            endif
             write(fnr,'(a,1x,f0.2)') 'match3D orientation search         :', rt_prep_orisrch + rt_align
             write(fnr,'(a,1x,f0.2)') 'match3D project metadata I/O       :', rt_projio
             write(fnr,'(a,1x,f0.2)') 'match3D partial reconstruction     :', rt_rec
@@ -380,7 +421,8 @@ contains
             write(fnr,'(a,1x,f0.2)') 'match3D total thread-s             :', rt_tot * real(p_ptr%nthr, kind(rt_tot))
             write(fnr,'(a,1x,f0.2)') 'match3D % accounted for            :', &
                 &((rt_startup + rt_fill + rt_build_batch_ptcls + rt_alloc_ptcl_imgs + rt_prep_refs + rt_cart_refs + &
-                &  rt_memoize_refs + rt_prep_orisrch + rt_align + rt_projio + rt_rec + rt_sigma2_write) / rt_tot) * 100.
+                &  rt_memoize_refs + rt_prep_orisrch + rt_fill_tab + rt_assign + rt_align + rt_projio + rt_rec + &
+                &  rt_sigma2_write) / rt_tot) * 100.
             write(fnr,'(a)') ''
             write(fnr,'(a)') '*** THREAD-SECONDS (summed over threads; not wall time) ***'
             write(fnr,'(a,1x,f0.2)') 'match3D search                     :', ts_search
@@ -413,12 +455,23 @@ contains
             ! the polar batches make the cropped reconstruction's observations from their own transforms
             ctrl%do_buffer_records = ctrl%do_write_partial_recs .and. p_ptr%box_crop < p_ptr%box .and. &
                 &.not. p_ptr%l_cart_refine
+            ! the probabilistic pipeline runs on the caller's project, in shared memory and in every distributed part
+            ! alike (the master draws the sample, a part reproduces its share and publishes its readouts)
+            ctrl%do_pipeline = ctrl%do_prob_align
         end subroutine init_ctrl
 
         !> a worker stops without halves; shared memory makes the project's partition
         subroutine ensure_even_odd_partition()
             call ensure_field_halves(b_ptr%spproj, p_ptr%oritype, p_ptr%projfile)
         end subroutine ensure_even_odd_partition
+
+        !> a part without a sampled particle publishes a zero readout record (the master merges every part's and takes
+        !! the reference count and topk from the parts that assigned)
+        subroutine write_empty_readout()
+            type(prob_readout) :: rec
+            rec%route = merge(PROB_READOUT_3D_NEIGH, PROB_READOUT_3D_DENSE, trim(ctrl%refine_mode) == 'prob_neigh')
+            call write_prob_readout(rec, prob_readout_fname(p_ptr%part, p_ptr%numlen))
+        end subroutine write_empty_readout
 
         subroutine sample_particles_for_update( pinds_local, nptcls )
             integer, allocatable, intent(out) :: pinds_local(:)
@@ -432,8 +485,22 @@ contains
                 if( p_ptr%l_update_missing )then
                     THROW_HARD('update_missing requires matcher-owned assignment; use a non-probabilistic refine mode')
                 endif
-                call b_ptr%spproj_field%sample4update_reprod([p_ptr%fromp,p_ptr%top], nptcls, pinds_local, &
-                    &allow_empty=p_ptr%l_distr_worker)
+                if( p_ptr%l_distr_worker )then
+                    ! the distributed master drew this iteration's sample over the whole project (keyed); the part
+                    ! reproduces its share (a partition may hold none of it) and notes its place in the sample for
+                    ! the n_eff readout's rows, chosen by global rank
+                    call b_ptr%spproj_field%sample4update_reprod([p_ptr%fromp,p_ptr%top], nptcls, pinds_local, &
+                        &allow_empty=.true.)
+                    call b_ptr%spproj_field%sample4update_reprod([1,p_ptr%nptcls], neff_nglob, pinds_glob, &
+                        &allow_empty=.true.)
+                    neff_rank0 = count(pinds_glob < p_ptr%fromp)
+                    deallocate(pinds_glob)
+                else
+                    ! the project owner draws the iteration's sample (keyed) and prints the disk set
+                    call sample_ptcls4prob3D(p_ptr, b_ptr, nptcls, pinds_local)
+                    neff_nglob = nptcls
+                    neff_rank0 = 0
+                endif
             else if( p_ptr%l_distr_worker .and. master_draws_sample3D(p_ptr) )then
                 ! the distributed master drew this iteration's sample over the whole project
                 call b_ptr%spproj_field%sample4update_reprod([p_ptr%fromp,p_ptr%top], nptcls, pinds_local, &
@@ -455,7 +522,13 @@ contains
         subroutine prepare_refs_sigmas_and_pftc()
             if( ctrl%do_bench ) t_prep_refs = tic()
             ! a Cartesian pass read its references at entry (build%cftc) and builds no polar data
-            if( .not. p_ptr%l_cart_refine ) call read_reprojection_model(p_ptr, b_ptr, batchsz_max)
+            if( .not. p_ptr%l_cart_refine )then
+                if( ctrl%do_pipeline )then
+                    call read_reprojection_model(p_ptr, b_ptr, batchsz_max, diag_halves=p_ptr%l_prob_post_diag)
+                else
+                    call read_reprojection_model(p_ptr, b_ptr, batchsz_max)
+                endif
+            endif
             call prep_sigmas_objfun(p_ptr, b_ptr)
             if( ctrl%do_bench ) rt_prep_refs = toc(t_prep_refs)
             if( ctrl%do_bench ) t_alloc_ptcl_imgs = tic()
@@ -467,6 +540,65 @@ contains
             call build%vol_odd%kill
             call build%vol2%kill
         end subroutine prepare_refs_sigmas_and_pftc
+
+        !> the alignment context of the probabilistic pipeline: the part's table (dense or neighbourhood), the
+        !! iteration's model from the complete incoming field, the weighted insertion's cone (topk > 1), the
+        !! assignment opened; the context's memory against the budget, reported in the bench file
+        subroutine begin_pipeline()
+            if( trim(ctrl%refine_mode) == 'prob_neigh' )then
+                allocate(eul_prob_tab_neigh :: eulprob_obj_part)
+                select type( tab => eulprob_obj_part )
+                    type is( eul_prob_tab_neigh )
+                        call tab%new_neigh_pipeline(p_ptr, b_ptr, pinds)
+                end select
+            else
+                allocate(eul_prob_tab :: eulprob_obj_part)
+                call eulprob_obj_part%new_pipeline(p_ptr, b_ptr, pinds)
+            endif
+            call eulprob_obj_part%set_model_from_field
+            if( p_ptr%topk > 1 ) call eulprob_obj_part%set_insert_cone(insert_cone_from_fsc(p_ptr%nstates, &
+                &p_ptr%box, p_ptr%smpd, p_ptr%mskdiam, lp_cone, l_report=.not. p_ptr%l_distr_worker))
+            call eulprob_obj_part%open_assignment(nglob=neff_nglob, rank0=neff_rank0)
+            pipeline_budget = ptcl_buffer_budget(p_ptr, b_ptr)
+            pipeline_bytes  = pipeline_context_bytes()
+            if( pipeline_bytes > pipeline_budget )then
+                write(logfhandle,'(A,I0,A,I0,A)') 'WARNING: the alignment context (', pipeline_bytes, &
+                    &' bytes) exceeds the memory budget (', pipeline_budget, ' bytes); refine3D_exec'
+            endif
+        end subroutine begin_pipeline
+
+        !> the context's memory, its dominant terms in checked 64-bit arithmetic: the polar references of both halves
+        !! and their memoized transforms, the batch's polar particles with their CTF terms and memos, the batch's
+        !! rows and refined entries, the part's assignment map
+        integer(int64) function pipeline_context_bytes() result( nbytes )
+            integer(int64), parameter :: CSZ = 8_int64 !< a single-precision complex
+            type(ptcl_ref) :: entry
+            integer(int64) :: nrefs, pftsz, nk, kfromto(2)
+            nrefs   = int(b_ptr%pftc%get_nrefs(), int64)
+            pftsz   = int(b_ptr%pftc%get_pftsz(), int64)
+            kfromto = int(b_ptr%pftc%get_kfromto(), int64)
+            nk      = kfromto(2) - kfromto(1) + 1_int64
+            nbytes = 2_int64 * nrefs * pftsz * nk * CSZ                 ! the references, even and odd
+            nbytes = nbytes + 4_int64 * nrefs * (pftsz + 1_int64) * nk * CSZ  ! their memoized transforms, two per half
+            nbytes = nbytes + 3_int64 * int(batchsz_max,int64) * (pftsz + 1_int64) * nk * CSZ ! the batch's particles and memos
+            nbytes = nbytes + int(batchsz_max,int64) * nrefs * 8_int64  ! the batch's rows (distance, in-plane index)
+            nbytes = nbytes + int(batchsz_max,int64) * int(max(1,eulprob_obj_part%projs_ns_model),int64) * 24_int64
+            nbytes = nbytes + int(nptcls2update,int64) * int(storage_size(entry)/8,int64)
+        end function pipeline_context_bytes
+
+        !> the batch's fill and selection: its rows filled on the prepared batch, each particle's pose drawn from its
+        !! row, the extras laid out for the search to resolve
+        subroutine pipeline_batch()
+            if( ctrl%do_bench ) t_fill_tab = tic()
+            call eulprob_obj_part%fill_tab_range(batch_start, batch_end)
+            if( ctrl%do_bench )then
+                rt_fill_tab = rt_fill_tab + toc(t_fill_tab)
+                t_assign    = tic()
+            endif
+            call eulprob_obj_part%assign_batch(batch_start, batch_end)
+            if( p_ptr%topk > 1 ) call extra_poses%setup_range(eulprob_obj_part%insert_tab, pinds, batch_start, batch_end)
+            if( ctrl%do_bench ) rt_assign = rt_assign + toc(t_assign)
+        end subroutine pipeline_batch
 
         subroutine build_batch_particles_local()
             if( ctrl%do_bench ) t_build_batch_ptcls = tic()
@@ -489,7 +621,8 @@ contains
             else
                 select case(ctrl%refine_mode)
                     case('shc')
-                        if( .not. has_been_searched )then
+                        ! under the key a particle that needs the disk scores every reference
+                        if( .not. has_been_searched .or. on_disk_classic(iptcl) )then
                             allocate(strategy3D_greedy :: strategy3Dsrch(iptcl_batch)%ptr)
                             cnt_greedy(ithr) = cnt_greedy(ithr) + 1
                         else
@@ -545,6 +678,14 @@ contains
             endif
         end subroutine choose_and_run_strategy
 
+        logical function on_disk_classic( iptcl )
+            integer, intent(in) :: iptcl
+            on_disk_classic = .false.
+            if( l_map_classic ) on_disk_classic = ptcl_on_disk(p_ptr, b_ptr, iptcl)
+        end function on_disk_classic
+
+
+
         subroutine maybe_write_orientations()
             if( .not. ctrl%do_write_oris ) return
             if( ctrl%do_bench ) t_projio = tic()
@@ -582,26 +723,27 @@ contains
 
     !> This part's partial reconstructions of the updated particles: by hard state labels, or with
     !! m_estimator=flex by the frozen weights of the project's state weight set
-    subroutine write_partial_recs( params, build, cline, nptcls, pinds )
+    subroutine write_partial_recs( params, build, cline, nptcls, pinds, extra )
         use simple_state_weight_set, only: state_weight_set
-        class(parameters), intent(inout) :: params
-        class(builder),    intent(inout) :: build
-        class(cmdline),    intent(inout) :: cline
-        integer,           intent(in)    :: nptcls, pinds(:)
+        class(parameters),               intent(inout) :: params
+        class(builder),                  intent(inout) :: build
+        class(cmdline),                  intent(inout) :: cline
+        integer,                         intent(in)    :: nptcls, pinds(:)
+        type(prob_insert_poses), optional, intent(in)  :: extra  !< the weighted insertion's poses (topk > 1)
         type(state_weight_set) :: wset
         if( params%l_m_estimator_flex )then
             call wset%new(build%spproj, build%spproj_field)
             if( trim(params%rec_backend) == 'pcg' )then
-                call execute_rec3D_pcg_worker(params, build, cline, pinds, wset)
+                call execute_rec3D_pcg_worker(params, build, cline, pinds, wset, extra=extra)
             else
-                call calc_3Drec(params, build, nptcls, pinds, wset)
+                call calc_3Drec(params, build, nptcls, pinds, wset, extra=extra)
             endif
             call wset%kill
         else
             if( trim(params%rec_backend) == 'pcg' )then
-                call execute_rec3D_pcg_worker(params, build, cline, pinds)
+                call execute_rec3D_pcg_worker(params, build, cline, pinds, extra=extra)
             else
-                call calc_3Drec(params, build, nptcls, pinds)
+                call calc_3Drec(params, build, nptcls, pinds, extra=extra)
             endif
         endif
     end subroutine write_partial_recs

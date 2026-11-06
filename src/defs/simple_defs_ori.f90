@@ -56,15 +56,19 @@ enum, bind(c)
     enumerator :: I_CORR_CART           = 51 ! score of the last Cartesian pass (cc or exp(-L); C14, O8)
     enumerator :: I_POSE_CONT_IMPROVED  = 52 ! 1 when the last Cartesian pass improved the pose (O8)
     enumerator :: I_CFAR                = 53 ! conical FSC area ratio of the state's latest half-map pair
-    enumerator :: I_CONTRAST            = 54
+    enumerator :: I_SHINCR              = 54 ! polar shift map: the magnitude of the last shift increment
+    enumerator :: I_SHSIG               = 55 ! polar shift map: the particle's prior width for its next shift search (below zero: not yet centred in this workflow)
+    enumerator :: I_FRAME               = 56 ! time series: the particle's frame in its trajectory (0: none)
+    enumerator :: I_CONTRAST            = 57 ! per-particle contrast scaling the CTF in polar scoring and reconstruction
 end enum
 
-! A particle carries the named slots in memory (ori%pparms); its N_PTCL_RECORD_REALS-wide record pads with zeros, reserved
+! A particle carries the named slots 1-57 in memory (ori%pparms).
+! On disk its record is N_PTCL_RECORD_REALS wide: slots 58-64 are zero padding reserved
 ! for later fields, so adding a field does not change the project file's record width,
 ! while resident particles pay only for the named slots. Projects written by earlier
 ! releases (narrower records) still read, with zeros in the missing slots
 ! (simple_binoris). A spare slot has no flag and is never "there".
-integer, parameter :: N_PTCL_ORIPARAMS      = 54
+integer, parameter :: N_PTCL_ORIPARAMS      = 57
 integer, parameter :: N_PTCL_RECORD_REALS   = 64
 integer, parameter :: I_LAST_NAMED_ORIPARAM = I_CONTRAST
 
@@ -180,6 +184,12 @@ contains
                 get_oriparam_ind = I_POSE_CONT_IMPROVED
             case('pose_cont_status')
                 get_oriparam_ind = I_POSE_CONT_STATUS
+            case('shincr')
+                get_oriparam_ind = I_SHINCR
+            case('shsig')
+                get_oriparam_ind = I_SHSIG
+            case('frame')
+                get_oriparam_ind = I_FRAME
         end select
     end function get_oriparam_ind
 
@@ -291,6 +301,12 @@ contains
                 flag = 'res05'
             case(I_CFAR)
                 flag = 'cfar'
+            case(I_SHINCR)
+                flag = 'shincr'
+            case(I_SHSIG)
+                flag = 'shsig'
+            case(I_FRAME)
+                flag = 'frame'
             case(I_CONTRAST)
                 flag = 'contrast'
             case DEFAULT
@@ -320,6 +336,8 @@ contains
             case(I_FRAC)
                 oriparam_isthere = abs(val) > TINY
             case(I_INDSTK)
+                oriparam_isthere = abs(val) > TINY
+            case(I_FRAME)
                 oriparam_isthere = abs(val) > TINY
             case(I_INPL)
                 oriparam_isthere = abs(val) > TINY

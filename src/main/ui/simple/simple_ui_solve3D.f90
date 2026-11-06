@@ -3,7 +3,7 @@ module simple_ui_solve3D
 use simple_ui_modules
 implicit none
 
-type(category_descriptor), parameter :: UI_CATEGORY = category_descriptor('solve3d', 'De Novo 3D Map Determination', 50)
+type(category_descriptor), parameter :: UI_CATEGORY = category_descriptor('solve3d', 'Solve 3D Map Determination', 50)
 type(ui_program), target :: solve3D
 type(ui_program), target :: solve3D_cavgs
 type(ui_program), target :: solve3D_addon
@@ -35,7 +35,7 @@ contains
         &'couples ab initio 3D reconstruction with initial 3D refinement',&                ! help
         &'simple_exec',&                                                                   ! executable
         &.true.,&                                                                          ! requires sp_project
-        &visibility=UI_VIS_STANDARD, display_name='De Novo 3D Map Determination')
+        &visibility=UI_VIS_STANDARD, display_name='Solve 3D Map Determination')
         ! INPUT PARAMETER SPECIFICATIONS
         call add_solve3D_base_inputs(solve3D, l_stream_compatible=.false., l_include_nsample=.true., l_include_pcg=.true.)
         ! add to ui_hash
@@ -108,22 +108,51 @@ contains
         if( l_include_nsample )then
             call prg%add_input(UI_SRCH, nsample, group="search", visibility=UI_VIS_STANDARD)
         endif
+        if( .not. l_stream_compatible )then
+            call prg%add_input(UI_SRCH, trs, &
+                &help_override='Translation-search half-width in pixels replacing the planned trslim for every stage; '//&
+                &'0 uses the automatic stage-dependent limits; particle stages 1 and 2 still do not search shifts', &
+                &group="search", visibility=UI_VIS_ADVANCED)
+        endif
         call prg%add_input(UI_SRCH, 'balance', 'multi', 'Fractional-update sampling units', &
         &'Units every fractional-update sample is balanced over: none draws globally from the lowest update-count '//&
-        &'particles; class gives every selected 2D class the same share; cavg first gives every group of similar '//&
-        &'class averages the same share, then every class inside a group, so a preferred view spread over many '//&
-        &'classes no longer dominates the sample and classes of one view keep equal footing(none|class|cavg){cavg}', &
-        &'', .false., 'cavg', group="search", choices=ui_choices([character(len=5) :: 'none', 'class', 'cavg']), &
-        &visibility=UI_VIS_ADVANCED)
+        &'particles; class shares every sample over the selected 2D classes in proportion to the square root of '//&
+        &'their populations, so rare views are sampled more often without one small class dominating; cavg first '//&
+        &'shares it the same way over groups of similar class averages, then over the classes inside a '//&
+        &'group(none|class|cavg){class}', &
+        &'', .false., 'class', group="search", choices=ui_choices([character(len=5) :: 'none', 'class', 'cavg']), &
+        &visibility=UI_VIS_ADVANCED, preserve_default=.true.)
         call prg%add_input(UI_SRCH, 'nclust', 'num', 'Number of class-average groups', &
         &'Number of groups of similar class averages formed with balance=cavg, by average linkage on their aligned '//&
-        &'correlation; with no more selected classes than this, every class is its own group{20}', '# groups{20}', &
+        &'correlation; a group with fewer than 2.5% of the particles joins its nearest group; with no more selected '//&
+        &'classes than this, none that small, every class is its own group{20}', '# groups{20}', &
         &.false., 20., group="search", visibility=UI_VIS_ADVANCED, &
         &activation=ui_activation_equals_any('balance', [character(len=4) :: 'cavg']))
         call prg%add_input(UI_SRCH, 'nstages', 'num', 'Last solve3D stage to run',&
             &'Last solve3D stage to run; default is 5 for nstates>1 and 8 otherwise; &
             &a multi-state run writes final volumes at its last stage',&
             &'last stage', .false., 8., group="search", visibility=UI_VIS_ADVANCED)
+        call prg%add_input(UI_SRCH, 'topk', 'num', 'Poses per particle in the reconstruction', &
+        &'Probabilistic modes (refine=prob|prob_neigh): the poses a particle enters each iteration''s reconstruction at, '//&
+        &'its committed draw and up to topk-1 extras, the refined entries of its row of highest posterior at the '//&
+        &'particle''s own temperature within the cone about the committed pose where a rotation and shift move the '//&
+        &'rim by less than the map''s FSC=0.5 resolution, each with its share of that posterior (an extra below 1% is '//&
+        &'not inserted); the search and the final reconstruction use the committed pose alone; 1 is the committed '//&
+        &'pose alone, the single-draw run; gridding backend{1}', 'poses{1}', .false., 1., group="search", visibility=UI_VIS_ADVANCED)
+        call prg%add_input(UI_SRCH, 'shift_prior', 'binary', 'Shift prior in the probability tables', &
+        &'The tables'' shift refinements and seed estimates carry a Gaussian prior on the shift''s distance from the '//&
+        &'seed, with the previous iteration''s shift variance as its width and the particle''s temperature converting '//&
+        &'it to loss units; the row holds the MAP loss, so a refinement does not wander onto a noise optimum far '//&
+        &'from its seed(yes|no){yes}', '', .false., 'yes', group="search", &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
+        &visibility=UI_VIS_ADVANCED)
+        call prg%add_input(UI_SRCH, 'shift_sigma', 'num', 'Polar shift map prior width', &
+        &'Sigma (in A) of the Gaussian prior on each particle''s shift from its current origin (the picking error''s width); in every stage '//&
+        &'with shifts the probability tables centre each particle as it needs: one not yet centred in this workflow, '//&
+        &'or whose shift posterior is wider than a third of the stage''s window, locates its likely directions over the '//&
+        &'disk of 3 sigma with a coarse polar shift map under the box''s mask and polishes from the map''s optimum, the '//&
+        &'others polish from the map over the window; 0 is the window search in every stage{10}', &
+        &'sigma in A{10}', .false., 10., group="search", visibility=UI_VIS_ADVANCED)
         call prg%add_input(UI_SRCH, nstates, group="search", visibility=UI_VIS_STANDARD)
         if( .not. l_stream_compatible )then
             call prg%add_input(UI_SRCH, 'state', 'num', 'Continuation state label', &
@@ -165,14 +194,15 @@ contains
             &NU frontier into an explicit merged-reference LP-set matching run','', .false., 'nonuniform', &
             &group="filter", visibility=UI_VIS_ADVANCED, &
         &choices=ui_choices([character(len=16) :: 'none', 'nonuniform', 'nonuniform_lpset']))
+        call prg%add_input(UI_FILT, 'gold_standard', 'binary', 'Gold-standard refinement from stage 6', &
+            &'Use half-specific references from the first executed stage at or beyond 6; single state only. '//&
+            &'NU selects the matching band; use lpstop for an explicit ceiling(yes|no){no}', &
+            &'', .false., 'no', group="filter", visibility=UI_VIS_ADVANCED, &
+            &choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call prg%add_input(UI_FILT, 'nu_stage', 'num', 'Stage NU filtering starts at', &
             &'solve3D stage that switches on NU filtering (0: the built-in default); &
             &5 is the earliest that works, tested on PfCRT and streptavidin', &
             &'NU start stage', .false., 0., group="filter", visibility=UI_VIS_ADVANCED)
-        call prg%add_input(UI_FILT, envfsc, group="filter", &
-        &visibility=UI_VIS_ADVANCED)
-        call prg%add_input(UI_FILT, envmsklp, group="filter", &
-        &visibility=UI_VIS_ADVANCED)
         call prg%add_input(UI_FILT, 'lpstart_ini3D',     'num', 'Starting low-pass limit ini3D', 'Starting low-pass limit ini3D',&
             &'low-pass limit for the initial stage of ini3D in Angstroms',  .false., 20., group="filter", &
         &visibility=UI_VIS_ADVANCED)
@@ -181,11 +211,6 @@ contains
         &visibility=UI_VIS_ADVANCED)
         ! mask controls
         call prg%add_input(UI_MASK, mskdiam, group="mask", visibility=UI_VIS_STANDARD)
-        call prg%add_input(UI_MASK, 'automsk', 'multi', 'Refinement envelope mode', &
-            &'Use the density envelope, or prefer the lag-one NU-evidence envelope with density fallback, '//&
-            &'from the staged automasking point(yes|nu|no){no}', &
-            &'', .false., 'no', group="mask", visibility=UI_VIS_STANDARD, &
-        &choices=ui_choices([character(len=3) :: 'yes', 'nu', 'no']))
         ! computer controls
         call prg%add_input(UI_COMP, nparts, required_override=.false., group="compute", visibility=UI_VIS_STANDARD)
         call prg%add_input(UI_COMP, nthr,                                 group="compute", visibility=UI_VIS_STANDARD)
@@ -209,7 +234,7 @@ contains
         &'against a frozen solve3D solution whose particles contribute unsearched; '//&
         &'when the run completes, its project replaces the superset project file',&            ! help
         &'simple_exec',&                                                                       ! executable
-        &.true., visibility=UI_VIS_ADVANCED, display_name='Extend De Novo 3D Map')             ! requires sp_project
+        &.true., visibility=UI_VIS_ADVANCED, display_name='Extend Solve 3D Map')             ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
         call solve3D_addon%add_input(UI_FILE, projfile, &
@@ -234,7 +259,7 @@ contains
         &'Units every fractional-update sample of the searched particles is balanced over (see solve3D); '//&
         &'default is the frozen run''s value; none needs no 2D solution in the superset project, class and cavg '//&
         &'need its 2D classes(none|class|cavg)', &
-        &'', .false., 'cavg', group="search", choices=ui_choices([character(len=5) :: 'none', 'class', 'cavg']), &
+        &'', .false., 'class', group="search", choices=ui_choices([character(len=5) :: 'none', 'class', 'cavg']), &
         &visibility=UI_VIS_ADVANCED)
         call solve3D_addon%add_input(UI_SRCH, 'nclust', 'num', 'Number of class-average groups', &
         &'Number of groups of similar class averages formed with balance=cavg; default is the frozen run''s value', &
@@ -321,7 +346,7 @@ contains
         &'is a distributed workflow for de novo map determination from class averages that '//&
         &'couples ab initio 3D reconstruction with initial 3D refinement',&                     ! help
         &'simple_exec',&                                                                        ! executable
-        &.true., visibility=UI_VIS_STANDARD, display_name='De Novo 3D Map from Class Averages') ! requires sp_project
+        &.true., visibility=UI_VIS_STANDARD, display_name='Solve 3D Map from Class Averages') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
         ! <empty>

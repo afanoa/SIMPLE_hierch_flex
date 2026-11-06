@@ -10,9 +10,9 @@ simple_exec prg=flex_pca ...        # projection-aware low-rank covariance (PCA)
 The `flex_analysis` diffusion-map pipeline that used to live here was removed;
 its embedding never produced usable states, and so was the diffusion-map
 `cls_expansion` (2026-10-01: it split on background and density, not structure).
-The shared diffusion-map engines (`../pca/simple_diff_map_graphs.f90`,
-`../pca/simple_diff_map_denoise.f90`, `../pca/simple_diffusion_maps.f90`)
-remain, because `denoise_project` and other applications still depend on them.
+The shared diffusion-map engines and the rest of `src/main/pca` followed on
+2026-11-02, with their last users (`ppca_denoise`, `ppca_denoise_classes`, the
+non-flex modes of `trajectory_denoise`, `tseries_prep4tracking`).
 
 ## Layout
 
@@ -38,10 +38,11 @@ the production-module layers, and runs before the fast test gate.
 - the folder root: shared helpers (`util`), figures (`plot`, `umap`) and the
   fast-gate testers.
 
-There are 43 source files: 32 production modules, the probe fit's four
+There are 45 source files: 32 production modules, the probe fit's four
 submodule files, the self-test submodules of the PCG operator and of the
-`cls_expansion` kernel route, three testers and `cls_expansion` with its kernel
-route (`simple_flex_cls_kernel`, both outside the layering). `scripts/check_flex_dag.py`
+`cls_expansion` kernel route, four testers, `cls_expansion` with its kernel
+route (`simple_flex_cls_kernel`) and `trajectory_denoise`
+(`simple_flex_traj_denoise`), the last three outside the layering. `scripts/check_flex_dag.py`
 rejects multiple module units in one source as well as layering violations and
 cycles. CMake discovers `src/main` through a recursive glob without
 `CONFIGURE_DEPENDS`; reconfigure once before building after adding or restoring
@@ -160,7 +161,8 @@ clustering). There is no `doc/policies/flex_pca_policy.md`.
    magic and part naming are in `simple_flex_pca_artifacts.f90`.
 8. The embedding artifact (`simple_flex_pca_embedding_io`) is written to a
    `.part` name and renamed into place, and registered in the out segment of
-   the run's project copy as imgkind `flex_embedding`; a resumed run reads its
+   the run's project (the `mkdir=yes` copy, or the caller's under `mkdir=no`) as
+   imgkind `flex_embedding`; a resumed run reads its
    noise scale from the artifact.
 9. `simple_flex_pca_polar.f90` (the allocatable per-fit polar E-step bank),
    `simple_flex_pca_pcg.f90` (the coupled PCG operator of the M-step, on the
@@ -193,9 +195,9 @@ clustering). There is no `doc/policies/flex_pca_policy.md`.
 
 Alongside the state weight set, the application writes the hard state label of every
 embedded particle into `ptcl3D/state` of the run's own project, leaving
-unassigned particles at state 0. `mkdir=yes` already gave the master a private
-copy of the project, so this rewrites that copy inside the job directory and
-never the project the user pointed at. Only `ptcl3D` is written, as refine3D does
+unassigned particles at state 0. Under `mkdir=yes` the master works on a private
+copy of the project in the job directory; under `mkdir=no`, as `refine3D_states`
+runs flex, it writes the caller's project, which the controller reads back. Only `ptcl3D` is written, as refine3D does
 for `nstates>1`. This lets the embedding and its state assignment be judged with a
 plain `simple_exec prg=reconstruct3D projfile=<projfile> nstates=<n>`.
 
@@ -226,3 +228,13 @@ through `transform_ptcls(keep_ft=.true.)`, owns the part files, the merge and th
 writes; the commander (`../commanders/simple/simple_commanders_denoise.f90`) runs the one pass.
 Method and
 benchmarks: `doc/implementation_notes/completed/flex_cls_expansion_2026_10_01.md`.
+
+## `trajectory_denoise`
+
+`simple_flex_traj_denoise.f90`: every frame of a trajectory the kernel pre-image of the frames that
+look like it (the latents of class models on the fit band's two coefficient sets) and lie near it in
+time, with rank, latent bandwidth and temporal bandwidth chosen by coefficient-split
+cross-validation; frames as given (no alignment), the whole trajectory or windows (`halfwin`), only
+frames of the same row parity pooled (`eo_pool`). It reuses `flex_cls_fit`; arrays in, arrays out;
+the commander (`../commanders/single/single_commanders_trajectory.f90`) does the stack I/O. Design,
+toy and validation: `doc/implementation_notes/completed/trajectory_denoise_flex.md`.

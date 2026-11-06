@@ -28,10 +28,10 @@ type, extends(commander_base) :: commander_postprocess
    procedure :: execute      => exec_postprocess
 end type commander_postprocess
 
-type, extends(commander_base) :: commander_sharpvol
+type, extends(commander_base) :: commander_postprocess_pdb
   contains
-    procedure :: execute      => exec_sharpvol
-end type commander_sharpvol
+    procedure :: execute      => exec_postprocess_pdb
+end type commander_postprocess_pdb
 
 type, extends(commander_base) :: commander_symaxis_search
   contains
@@ -153,25 +153,29 @@ contains
         call simple_end('**** SIMPLE_CENTER NORMAL STOP ****')
     end subroutine exec_centervol
 
-    ! Sharpening protocol for raw volumes using even/odd volume pairs
-    subroutine exec_sharpvol( self, cline )
-        !use simple_sp_project, only: sp_project
+    ! PDB-envelope postprocessing for raw volumes with even/odd volume pairs
+    subroutine exec_postprocess_pdb( self, cline )
+        use simple_imghead,      only: find_img_smpd
         use simple_atoms,        only: atoms
         use simple_segmentation, only: otsu_img
-        class(commander_sharpvol), intent(inout) :: self
-        class(cmdline),            intent(inout) :: cline
+        class(commander_postprocess_pdb), intent(inout) :: self
+        class(cmdline),                 intent(inout) :: cline
         real,             allocatable :: fsc(:), optlp(:), res(:)
-        type(string)          :: fname_vol, fname_even, fname_odd, fname_pdb, fname_pproc, fname_lp, fname_mirr, pdbout_fname
+        type(string)          :: fname_vol, fname_even, fname_odd, fname_pdb, fname_pdb_docked
+        type(string)          :: fname_pproc, fname_lp, fname_mirr, pdbout_fname, fname_fsc
         type(parameters)      :: params
-        type(image)           :: vol_bfac, vol_no_bfac, vol_pdb, cos_img
+        type(image)           :: vol_bfac, vol_no_bfac, vol_pdb, cos_img, vol_even, vol_odd
         type(image_bin)       :: vol_pdbin
         type(atoms)           :: pdb
+        type(dock_vols)        :: docker
         real    :: fsc0143, fsc05, lplim, lp_min=0., lp_max=20.
-        integer :: ldim(3), ifoo
-        logical :: has_fsc
+        real    :: dock_eul(3), dock_shift(3), dock_cc
+        real, parameter :: DOCK_HP=100.
+        integer :: ldim(3), ldim_half(3), ifoo
         integer, parameter :: EDGE=6
         ! set defaults
-        ! parse commad-line
+        if( .not. cline%defined('mirr') ) call cline%set('mirr', 'x')
+        ! parse command-line
         call params%new(cline)
         ! check volume, get correct smpd & box
         fname_vol = params%vols(1)
@@ -180,11 +184,14 @@ contains
         endif
         ! generate file names
         fname_pdb   = add2fbody(fname_vol, params%ext, '_pdb')
+        fname_pdb_docked = add2fbody(fname_vol, params%ext, '_pdb_docked')
         fname_even  = add2fbody(fname_vol, params%ext, '_even')
         fname_odd   = add2fbody(fname_vol, params%ext, '_odd' )
         fname_pproc = basename(add2fbody(fname_vol,   params%ext, PPROC_SUFFIX))
         fname_mirr  = basename(add2fbody(fname_pproc, params%ext, MIRR_SUFFIX))
         fname_lp    = basename(add2fbody(fname_vol,   params%ext, LP_SUFFIX))
+        fname_fsc   = basename(swap_suffix(fname_vol, string('_fsc.bin'), params%ext))
+        if( cline%defined('fsc') ) fname_fsc = params%fsc
         if( .not.file_exists(fname_even) )then
             THROW_HARD('volume: '//fname_even%to_char()//' does not exist')
         endif
@@ -195,6 +202,36 @@ contains
         call find_ldim_nptcls(fname_vol, ldim, ifoo)
         call vol_bfac%new(ldim, params%smpd)
         call vol_bfac%read(fname_vol)
+        call find_ldim_nptcls(fname_even, ldim_half, ifoo)
+        if( any(ldim_half /= ldim) ) THROW_HARD('Even half-map dimensions differ from the input map; exec_postprocess_pdb')
+        call find_ldim_nptcls(fname_odd, ldim_half, ifoo)
+        if( any(ldim_half /= ldim) ) THROW_HARD('Odd half-map dimensions differ from the input map; exec_postprocess_pdb')
+        if( abs(find_img_smpd(fname_even) - params%smpd) > 1.e-3 )then
+            THROW_HARD('Even half-map sampling differs from the input map; exec_postprocess_pdb')
+        endif
+        if( abs(find_img_smpd(fname_odd) - params%smpd) > 1.e-3 )then
+            THROW_HARD('Odd half-map sampling differs from the input map; exec_postprocess_pdb')
+        endif
+        call vol_even%new(ldim, params%smpd)
+        call vol_odd%new(ldim, params%smpd)
+        call vol_even%read(fname_even)
+        call vol_odd%read(fname_odd)
+        ! Measure the independent halves before applying the model-derived mask.
+        call vol_even%fft()
+        call vol_odd%fft()
+        allocate(fsc(vol_even%get_filtsz()))
+        call vol_even%fsc(vol_odd, fsc)
+        call vol_even%kill()
+        call vol_odd%kill()
+        call arr2file(fsc, fname_fsc)
+        res = vol_bfac%get_res()
+        call get_resolution(fsc, res, fsc05, fsc0143)
+        lplim = fsc0143
+        if( lplim < TINY ) lplim = res(1)
+        optlp = fsc2optlp(fsc)
+        where( res < TINY ) optlp = 0.
+        write(logfhandle,'(A,A)') '>>> HALF-MAP FSC WRITTEN: ', fname_fsc%to_char()
+        write(logfhandle,'(A,F8.2,A,F8.2,A)') '>>> HALF-MAP FSC 0.5/0.143 RESOLUTION: ', fsc05, '/', fsc0143, ' A'
         ! generate & apply pdb mask from pdb
         call pdb%new(params%pdbfile)
         if( pdb%check_center() .or. params%center_pdb .eq. 'yes' )then
@@ -203,41 +240,24 @@ contains
         else 
             call pdb%pdb2mrc(params%pdbfile, fname_pdb, params%smpd, vol_dim=ldim)
         endif
+        ! Keep the experimental map fixed; align the model density before deriving its envelope.
+        call docker%new(fname_vol, fname_pdb, params%smpd, DOCK_HP, lp_max, params%mskdiam)
+        call docker%srch()
+        call docker%get_dock_info(dock_eul, dock_shift, dock_cc)
+        call docker%rotate_target(fname_pdb, fname_pdb_docked)
+        call docker%kill()
+        write(logfhandle,'(A,3F10.3)') '>>> PDB DOCKING EULER ANGLES (DEGREES): ', dock_eul
+        write(logfhandle,'(A,3F10.3)') '>>> PDB DOCKING SHIFT (PIXELS): ', dock_shift
+        write(logfhandle,'(A,F10.5)') '>>> PDB DOCKING CORRELATION: ', dock_cc
         call vol_pdb%new(ldim, params%smpd)
-        call vol_pdb%read(fname_pdb)
+        call vol_pdb%read(fname_pdb_docked)
         call vol_pdb%bp(lp_min, lp_max)
         call otsu_img(vol_pdb)
         call vol_pdbin%transfer2bimg(vol_pdb)
         call vol_pdbin%grow_bins(1)
-        call vol_bfac%mul(vol_pdbin)
+        ! Apply only the soft mask so its outward cosine taper retains map density.
         call vol_pdbin%cos_edge(EDGE, cos_img)
         call vol_bfac%mul(cos_img)
-        ! filtered function & apply Bfactor
-        ! check fsc filter & determine resolution
-        has_fsc = .false.        
-        if( cline%defined('fsc') )then
-            if( .not.file_exists(params%fsc) ) THROW_HARD('FSC file: '//params%fsc%to_char()//' not found')
-            has_fsc = .true.
-        else
-            if( file_exists(params%fsc) )then
-                has_fsc = .true.
-            else
-                THROW_WARN('FSC file: '//params%fsc%to_char()//' not found')
-                has_fsc = .false.
-                if( .not. cline%defined('lp') ) THROW_HARD('no method for low-pass filtering defined; give fsc|lp on command line; exec_sharpvol')
-            endif 
-        endif
-        if( has_fsc )then
-            ! resolution & optimal low-pass filter from FSC
-            res   = vol_bfac%get_res()
-            fsc   = file2rarr(params%fsc)
-            optlp = fsc2optlp(fsc)
-            call get_resolution(fsc, res, fsc05, fsc0143)
-            where( res < TINY ) optlp = 0.
-            lplim = fsc0143
-        else
-            lplim = params%lp
-        endif
         if( cline%defined('bfac') )then
             ! already in params%bfac
         else
@@ -252,19 +272,12 @@ contains
         call vol_bfac%fft()
         call vol_no_bfac%copy(vol_bfac)
         call vol_bfac%apply_bfac(params%bfac)
-        ! low-pass filter    
-        if( has_fsc )then
-            ! optimal low-pass filter of unfiltered volumes from FSC
-            call vol_bfac%apply_filter(optlp)
-            call vol_no_bfac%apply_filter(optlp)
-            ! final low-pass filtering for smoothness
-            call vol_bfac%bp(0., fsc0143)
-            call vol_no_bfac%bp(0., fsc0143)
-        else
-            call vol_bfac%bp(0., lplim)
-            call vol_no_bfac%bp(0., lplim)
-        endif
-        ! write low-pass filtered without B-factor or mask & read the original back in
+        ! FSC weighting followed by low-pass filtering at its 0.143 cutoff.
+        call vol_bfac%apply_filter(optlp)
+        call vol_no_bfac%apply_filter(optlp)
+        call vol_bfac%bp(0., lplim)
+        call vol_no_bfac%bp(0., lplim)
+        ! Write the model-masked low-pass map without B-factor sharpening.
         call vol_no_bfac%ifft
         call vol_no_bfac%write(fname_lp)
         ! mask
@@ -281,10 +294,11 @@ contains
         call pdb%kill
         call vol_bfac%kill
         call vol_pdb%kill
+        call cos_img%kill
         call vol_pdbin%kill_bimg
         call vol_no_bfac%kill
-        call simple_end('**** SIMPLE_SHARPVOL NORMAL STOP ****', print_simple=.false.)
-    end subroutine exec_sharpvol
+        call simple_end('**** SIMPLE_POSTPROCESS_PDB NORMAL STOP ****', print_simple=.false.)
+    end subroutine exec_postprocess_pdb
 
     !> Isotropic postprocess: cutoff = FSC=0.143 (FSC file, else the _unfil pair); Guinier B (lp < 5 A) from
     !! the _unfil pair average, capped at the cutoff shell; sqrt(2FSC/(1+FSC)) unless provenance says ML-shrunk;
@@ -310,7 +324,8 @@ contains
         integer :: ldim(3), ldim_unfil(3), nptcls_unfil, lp_find
         logical :: has_fsc, do_envfsc, msk_exists, msk_compatible, l_unfil_pair
         logical :: l_support_at_source, l_prov_constrained, l_prov_found, l_prov_kind, l_ml_shrunk
-        character(len=32) :: prov_solve_kind
+        character(len=32) :: prov_solve_kind, prov_support_kind
+        character(len=32) :: res05_text, res143_text, cutoff_text, bfac_text, gain_text
         if( .not.file_exists(fname_vol) )then
             THROW_HARD('volume: '//fname_vol%to_char()//' does not exist')
         endif
@@ -358,8 +373,10 @@ contains
             fsc = file2rarr(params%fsc)
             call get_resolution(fsc, res, fsc05, fsc0143)
             has_fsc = .true.
-            write(logfhandle,'(A,F6.2,A,F6.2,A)') '>>> POSTPROCESS: FSC from '//params%fsc%to_char()//&
-                &', 0.5/0.143 at ', fsc05, '/', fsc0143, ' A'
+            write(res05_text,'(F32.2)') fsc05
+            write(res143_text,'(F32.2)') fsc0143
+            write(logfhandle,'(A)') '>>> POSTPROCESS: FSC 0.5/0.143 at '//trim(adjustl(res05_text))//'/'//&
+                &trim(adjustl(res143_text))//' A, from '//params%fsc%to_char()
         else if( l_unfil_pair )then
             call vol_unfil%fft()
             call vol_unfil_odd%fft()
@@ -368,8 +385,10 @@ contains
             call vol_unfil_odd%ifft()
             call get_resolution(fsc, res, fsc05, fsc0143)
             has_fsc = .true.
-            write(logfhandle,'(A,F6.2,A,F6.2,A)') '>>> POSTPROCESS: no FSC file; FSC of the unfiltered pair, 0.5/0.143 at ', &
-                &fsc05, '/', fsc0143, ' A'
+            write(res05_text,'(F32.2)') fsc05
+            write(res143_text,'(F32.2)') fsc0143
+            write(logfhandle,'(A)') '>>> POSTPROCESS: no FSC file; FSC of the unfiltered pair, 0.5/0.143 at '//&
+                &trim(adjustl(res05_text))//'/'//trim(adjustl(res143_text))//' A'
         else
             THROW_WARN('FSC file: '//params%fsc%to_char()//' not found and no unfiltered pair beside the volume')
             if( .not. cline%defined('lp') )then
@@ -420,7 +439,7 @@ contains
         ! an ML-regularized map (provenance solve_kind) already carries ~FSC shrinkage per shell from its prior
         prov_solve_kind = ''
         call read_support_provenance(fname_vol, l_prov_constrained, l_prov_found, &
-            &solve_kind=prov_solve_kind, l_kind_found=l_prov_kind)
+            &solve_kind=prov_solve_kind, l_kind_found=l_prov_kind, support_kind=prov_support_kind)
         l_ml_shrunk = l_prov_kind .and. (trim(prov_solve_kind) == 'regularized' .or. &
             &trim(prov_solve_kind) == 'gridding_regularized')
         call vol_bfac%fft()
@@ -446,23 +465,31 @@ contains
         call vol_bfac%apply_filter(bwfilter)
         call vol_no_bfac%apply_filter(bwfilter)
         deallocate(bwfilter)
-        if( params%bfac < 0. ) write(logfhandle,'(A,F8.2,A,F6.2,A,I0,A)') '>>> POSTPROCESS: B ', params%bfac, &
-            &' capped at the cutoff shell: gain ', cap_gain, ' from shell ', lp_find, ' to Nyquist'
+        write(bfac_text,'(F32.2)') params%bfac
+        write(cutoff_text,'(F32.2)') lplim
+        if( params%bfac < 0. )then
+            write(gain_text,'(F32.2)') cap_gain
+            write(logfhandle,'(A,I0,A)') '>>> POSTPROCESS: sharpening gain capped at '//trim(adjustl(gain_text))//&
+                &' from shell ', lp_find, ' to Nyquist'
+        endif
         if( has_fsc .and. l_ml_shrunk )then
-            write(logfhandle,'(A)') '>>> POSTPROCESS: ML-regularized map (solve_kind='//trim(prov_solve_kind)//&
-                &'), its prior already FSC-weighted it: no FSC weighting'
-            write(logfhandle,'(A,F6.2,A)') '>>> POSTPROCESS: B-sharpened, then Butterworth low-pass at ', lplim, ' A'
+            write(logfhandle,'(A)') '>>> POSTPROCESS: ML-regularized map ('//trim(prov_solve_kind)//&
+                &'), FSC weighting carried by the prior'
+            write(logfhandle,'(A)') '>>> POSTPROCESS: B-factor '//trim(adjustl(bfac_text))//&
+                &' A^2, Butterworth low-pass at '//trim(adjustl(cutoff_text))//' A'
         else if( has_fsc )then
-            write(logfhandle,'(A,F6.2,A)') '>>> POSTPROCESS: B-sharpened, FSC-weighted (sqrt(2FSC/(1+FSC))), '//&
-                &'Butterworth low-pass at ', lplim, ' A'
+            write(logfhandle,'(A)') '>>> POSTPROCESS: B-factor '//trim(adjustl(bfac_text))//&
+                &' A^2, FSC-weighted, Butterworth low-pass at '//trim(adjustl(cutoff_text))//' A'
         else
-            write(logfhandle,'(A,F6.2,A)') '>>> POSTPROCESS: B-sharpened, then Butterworth low-pass at ', lplim, ' A'
+            write(logfhandle,'(A)') '>>> POSTPROCESS: B-factor '//trim(adjustl(bfac_text))//&
+                &' A^2, Butterworth low-pass at '//trim(adjustl(cutoff_text))//' A'
         endif
         ! write low-pass filtered without B-factor or mask & read the original back in
         call vol_no_bfac%ifft
         call vol_no_bfac%write(fname_lp)
-        ! no post-hoc mask when the support is already in the map (PCG, or a support-provenance record)
-        l_support_at_source = trim(params%rec_backend) == 'pcg' .or. l_prov_found
+        ! An explicit unmasked record overrides the backend's usual support convention.
+        l_support_at_source = trim(params%rec_backend) == 'pcg'
+        if( l_prov_found ) l_support_at_source = trim(prov_support_kind) /= 'none'
         call vol_bfac%ifft()
         if( l_support_at_source )then
             ! no post-hoc mask: the support is already in the map

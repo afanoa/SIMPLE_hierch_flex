@@ -20,13 +20,13 @@ type(lp_crop_inf), allocatable :: lpinfo(:)
 logical          :: l_srch4symaxis    = .false., l_symran = .false.
 logical          :: l_ini3D           = .false.
 logical          :: l_cavg_ini        = .false. !< particle stages of a cavg_ini run: the entry stage runs its full budget
-logical          :: l_automsk         = .false.
-logical          :: l_automsk_off     = .false.
 logical          :: l_nonuniform      = .false.
 logical          :: l_state_continue_mode = .false.
 logical          :: l_refine3D_mode_override   = .false.
 logical          :: l_refine3D_lp_override     = .false.
 logical          :: l_refine3D_lpstop_override = .false.
+logical          :: l_refine3D_trs_override    = .false. !< the user set a positive solve3D shift limit
+logical          :: l_prob_beta_end_override   = .false. !< the user set prob_beta_end: the stages keep it
 logical          :: l_cavgs_mode = .false.
 type(sym)        :: se1, se2
 type(cmdline)    :: cline_refine3D, cline_symmap, cline_reconstruct3D, cline_reproject
@@ -145,9 +145,10 @@ interface
         logical :: l_skip
     end function solve3D_stage_skipping
 
-    module function solve3D_stage_behind_fsc05( params, istage ) result( l_behind )
-        class(parameters), intent(in) :: params
-        integer,           intent(in) :: istage
+    module function solve3D_stage_behind_fsc05( params, istage, projfile ) result( l_behind )
+        class(parameters),       intent(in) :: params
+        integer,                 intent(in) :: istage
+        class(string), optional, intent(in) :: projfile
         logical :: l_behind
     end function solve3D_stage_behind_fsc05
 
@@ -200,6 +201,10 @@ contains
         cline_symmap        = cline
         cline_reconstruct3D = cline
         cline_reproject     = cline
+        call cline_refine3D%delete('gold_standard')
+        call cline_symmap%delete('gold_standard')
+        call cline_reconstruct3D%delete('gold_standard')
+        call cline_reproject%delete('gold_standard')
         call strip_sampling_keys(cline_refine3D)
         call strip_sampling_keys(cline_symmap)
         call strip_sampling_keys(cline_reconstruct3D)
@@ -207,6 +212,8 @@ contains
         l_refine3D_mode_override   = cline%defined('refine')
         l_refine3D_lp_override     = cline%defined('lp')
         l_refine3D_lpstop_override = cline%defined('lpstop')
+        l_refine3D_trs_override    = cline%defined('trs') .and. params%trs >= 0.01
+        l_prob_beta_end_override   = cline%defined('prob_beta_end')
         if( l_refine3D_mode_override ) refine3D_mode_override = trim(params%refine)
         if( l_refine3D_mode_override ) write(logfhandle,'(A,A)') &
             &'>>> SOLVE3D REFINE MODE OVERRIDE: ', refine3D_mode_override%to_char()
@@ -270,8 +277,7 @@ contains
         call child_cline%delete('smpd_crop')
     end subroutine strip_refine3D_planning_keys
 
-    !> the sampling units are formed once by solve3D; child command lines do not carry its keys and
-    !! the stage controller sets them on every refine3D stage line
+    !> solve3D owns the sampling units; the stage controller emits child values
     subroutine strip_sampling_keys( child_cline )
         class(cmdline), intent(inout) :: child_cline
         call child_cline%delete('balance')
@@ -480,8 +486,11 @@ contains
         type(class_frcs) :: clsfrcs
         real             :: lpfinal
         real             :: lpstart_bounds(2), lpstop_bounds(2)
+        real             :: trslim_override
         integer          :: filtsz, nstages, imarch
         l_cavgs_mode = l_cavgs
+        trslim_override = 0.
+        if( l_refine3D_trs_override .and. .not. l_cavgs ) trslim_override = params%trs
         nstages = active_lp_schedule_nstages()
         if( trim(params%force_lp_range).eq.'yes' )then
             if( .not.(present(lpstart) .and. present(lpstop)) )then
@@ -489,7 +498,8 @@ contains
             endif
             if( allocated(lpinfo) ) deallocate(lpinfo)
             allocate(lpinfo(nstages))
-            call lpstages_fast(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo, force_lpstart=.true.)
+            call lpstages_fast(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo, force_lpstart=.true., &
+                &trslim_override=trslim_override)
             return
         endif
         ! retrieve FRC info
@@ -510,10 +520,11 @@ contains
         if( present(lpstop) ) lpfinal = max(lpstop,lpfinal)
         if( present(lpstart) )then
             call lpstages(params%box, nstages, frcs_avg, params%smpd,&
-            &lpstart, lpstart, lpfinal, lpinfo, l_cavgs, verbose=.true.)
+            &lpstart, lpstart, lpfinal, lpinfo, l_cavgs, verbose=.true., trslim_override=trslim_override)
         else
             call lpstages(params%box, nstages, frcs_avg, params%smpd,&
-            &lpstart_bounds(1), lpstart_bounds(2), lpfinal, lpinfo, l_cavgs, verbose=.true.)
+            &lpstart_bounds(1), lpstart_bounds(2), lpfinal, lpinfo, l_cavgs, verbose=.true., &
+            &trslim_override=trslim_override)
         endif
         if( .not. l_cavgs .and. params%l_freq_march_aggressive )then
             ! aggressive frequency marching (doc/policies/3D/solve3D_policy.md sec. 4): the global stages
@@ -525,7 +536,7 @@ contains
                 write(logfhandle,'(A,I0,A,F6.2,A,F6.2,A)') '>>> SOLVE3D AGGRESSIVE FREQUENCY MARCHING FROM STAGE ', imarch, ': ', &
                     &solve3D_lpstart_aggressive(), ' -> ', lpfinal, ' A, rungs linear in spatial frequency'
                 call lpstages_aggressive(params%box, nstages, params%smpd, solve3D_lpstart_aggressive(), lpfinal, lpinfo, &
-                    &verbose=.true., first_stage=imarch)
+                    &verbose=.true., first_stage=imarch, trslim_override=trslim_override)
             else
                 write(logfhandle,'(A,I0,A)') '>>> SOLVE3D AGGRESSIVE FREQUENCY MARCHING: no stage at or past ', imarch, &
                     &', the planned ladder stands'
@@ -556,14 +567,19 @@ contains
         real,              intent(in)    :: lpstart, lpstop
         integer, optional, intent(in)    :: first_stage
         integer :: nstages
+        real    :: trslim_override
         l_cavgs_mode = .false.
+        trslim_override = 0.
+        if( l_refine3D_trs_override ) trslim_override = params%trs
         nstages = active_lp_schedule_nstages()
         if( allocated(lpinfo) ) deallocate(lpinfo)
         allocate(lpinfo(nstages))
         if( present(first_stage) )then
-            call lpstages_setlims(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo, first_stage=first_stage)
+            call lpstages_setlims(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo, first_stage=first_stage, &
+                &trslim_override=trslim_override)
         else
-            call lpstages_setlims(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo)
+            call lpstages_setlims(params%box, nstages, params%smpd, lpstart, lpstop, lpinfo, &
+                &trslim_override=trslim_override)
         endif
     end subroutine set_lplims_from_input
 
@@ -610,10 +626,6 @@ contains
         real         :: lp_snapshot
         call cline_refine3D%delete('endit')
         call xrefine3D%execute(cline_refine3D)
-        call del_files(DIST_FBODY,      params%nparts,ext='.dat')
-        call del_files(ASSIGNMENT_FBODY,params%nparts,ext='.dat')
-        call del_file(DIST_FBODY//'.dat')
-        call del_file(ASSIGNMENT_FBODY//'.dat')
         stage = '_stage'//int2str_pad(istage,2)
         do state = 1, params%nstates
             vol_name  = refine3D_state_vol_fname(state)

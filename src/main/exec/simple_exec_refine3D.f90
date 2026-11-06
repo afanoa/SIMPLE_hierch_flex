@@ -5,8 +5,8 @@ use simple_string,               only: string
 use simple_exec_helpers,         only: restarted_exec
 use simple_commanders_mask,      only: commander_automask
 use simple_commanders_volops,    only: commander_postprocess
-use simple_commanders_rec,       only: commander_rec3D
-use simple_commanders_refine3D,  only: commander_refine3D, commander_refine3D_auto, commander_refine3D_states, &
+use simple_commanders_rec,       only: commander_rec3D, commander_rec3D_wave
+use simple_commanders_refine3D,  only: commander_refine3D, commander_refine3D_auto, commander_refine3D_local, commander_refine3D_states, &
     &commander_refine3D_states_cavgs, commander_classify3D_refs, commander_bootstrap_rec3D, commander_state_tree, &
     &commander_state_mergeup, commander_state_split, commander_site_rank, commander_hetero_tree, commander_landscape_compare, &
     &commander_site_discover, commander_landscape_sample
@@ -18,8 +18,10 @@ private
 type(commander_automask)              :: xautomask
 type(commander_postprocess)           :: xpostprocess
 type(commander_rec3D)                 :: xrec3D
+type(commander_rec3D_wave)            :: xrec3D_wave
 type(commander_bootstrap_rec3D)       :: xbootstrap_rec3D
 type(commander_refine3D_auto)         :: xrefine3D_auto
+type(commander_refine3D_local)        :: xrefine3D_local
 type(commander_refine3D_states)       :: xrefine3D_states
 type(commander_refine3D_states_cavgs) :: xrefine3D_states_cavgs
 type(commander_classify3D_refs)       :: xclassify3D_refs
@@ -50,6 +52,8 @@ contains
                 call xpostprocess%execute(cline)
             case( 'reconstruct3D' )
                 call xrec3D%execute(cline)
+            case( 'reconstruct3D_wave' )
+                call xrec3D_wave%execute(cline)
             case( 'bootstrap_rec3D' )
                 call xbootstrap_rec3D%execute(cline)
             case( 'refine3D' )
@@ -63,6 +67,12 @@ contains
                     call restarted_exec(cline, string('refine3D_auto'), string('simple_exec'))
                 else
                     call xrefine3D_auto%execute(cline)
+                endif
+            case( 'refine3D_local' )
+                if( cline%defined('nrestarts') )then
+                    call restarted_exec(cline, string('refine3D_local'), string('simple_exec'))
+                else
+                    call xrefine3D_local%execute(cline)
                 endif
             case( 'refine3D_states' )
                 if( cline%defined('nrestarts') )then

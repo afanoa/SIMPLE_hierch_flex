@@ -6,8 +6,8 @@
 ! requirements and CLI summaries; the registered test programs; and the phase-shift contract
 ! of the five CTF-fitting programs (fit_phshift binary, default no; phshift_min/max/step);
 ! N21, the continuous-pose surface of section 6.5 of the pose_cont refactoring plan: refine3D
-! offers refine=cont and pose_cont=yes|no, refine3D_auto offers pose_cont=no|yes|only and no
-! refine, both offer athres_cont, and pose_cont_route, pose_cont_mode and the program
+! offers refine=cont and pose_cont=yes|no, refine3D_auto offers pose_cont=no|yes and no
+! refine; refine3D_local selects continuous refinement directly; all offer athres_cont, and pose_cont_route, pose_cont_mode and the program
 ! refine3D_pose_cont are gone.
 module simple_ui_visibility_tester
 use simple_test_utils
@@ -18,6 +18,7 @@ use simple_ui_param,      only: UI_PLACEHOLDER_MAX_LEN, ui_param
 use simple_ui_program,    only: UI_DISPLAY_NAME_MAX_LEN, UI_FILE, UI_PARM, UI_SUMMARY_MAX_LEN, &
     &category_descriptor, ui_cli_param_choices, ui_cli_param_summary, ui_program, ui_program_input, &
     &ui_activation_equals_any
+use simple_ui_default_values, only: get_ui_default
 use simple_ui_descriptor_types, only: ui_choices
 use simple_ui_visibility, only: UI_VIS_STANDARD, UI_VIS_ADVANCED, UI_VIS_DEVELOPER, &
                                &ui_visibility_is_valid, ui_visibility_name
@@ -37,9 +38,12 @@ contains
         call test_param_descriptors()
         call test_program_descriptor()
         call test_registered_programs()
+        call test_particle_storage_contract()
         call test_registered_test_programs()
         call test_phshift_contract()
         call test_cont_surface_contract()
+        call test_solve3D_trs_contract()
+        call test_refine_motion_model_contract()
     end subroutine run_all_ui_visibility_tests
 
     subroutine test_visibility_levels()
@@ -75,6 +79,14 @@ contains
         call param%set_param('walltime', 'num', 'Walltime', 'Maximum execution time in seconds', 'e.g. 1', .false., 1.)
         call assert_char('seconds', param%units%to_char(), 'time unit is inferred from descriptor text')
         call assert_char('e.g. 10 seconds', param%placeholder%to_char(), 'time placeholder includes its unit')
+        call param%set_param('min_nbrs', 'num', 'Neighbours a weak atom needs', &
+            &'Already found neighbours required in the second residual stage', '# neighbours', .false., 3.)
+        call param%set_generated_default('3', .true.)
+        call assert_char('', param%units%to_char(), 'an ordinal stage does not imply time units')
+        call assert_char('e.g. 3', param%placeholder%to_char(), 'neighbour-count example has no time unit')
+        cli_text = ui_cli_param_summary(param)
+        call assert_char('Neighbours a weak atom needs; e.g. 3', cli_text%to_char(), &
+            &'CLI neighbour-count summary retains the numeric default without seconds')
         call param%set_param('bfac', 'num', 'B-factor', 'B-factor in Angstroms^2', 'e.g. 1', .false., 1.)
         call assert_char('Angstroms^2', param%units%to_char(), 'squared Angstrom unit is inferred from descriptor text')
         call assert_char('e.g. 10 Angstroms^2', param%placeholder%to_char(), 'squared Angstrom placeholder includes its unit')
@@ -189,7 +201,6 @@ contains
         write(*,'(A)') 'test_registered_programs'
         call make_ui
         call assert_registered_requirement('binarize', 'input', 1, 1)
-        call assert_registered_category('icm2D', 'denoise', 'Denoising', 70)
         call assert_registered_category('refine3D', 'refine3d', 'Refine 3D Workflows', 60)
         call assert_registered_category('flex_pca', 'heterogeneity', 'Heterogeneity Analysis', 65)
         call assert_registered_category('refine3D_states', 'heterogeneity', 'Heterogeneity Analysis', 65)
@@ -207,10 +218,16 @@ contains
         call assert_int(13, count_prgs_in_category('heterogeneity'), 'heterogeneity program count')
         call assert_registered_category('reconstruct3D', 'reconstruct3d', 'Reconstruct 3D Workflows', 68)
         call assert_registered_category('bootstrap_rec3D', 'reconstruct3d', 'Reconstruct 3D Workflows', 68)
-        call assert_int(2, count_prgs_in_category('reconstruct3d'), 'reconstruct3d program count')
+        call assert_registered_category('reconstruct3D_wave', 'reconstruct3d', 'Reconstruct 3D Workflows', 68)
+        call assert_int(3, count_prgs_in_category('reconstruct3d'), 'reconstruct3d program count')
         call assert_registered_category('postprocess', 'postprocess', 'Post-processing', 69)
         call assert_registered_category('postprocess_nu', 'postprocess', 'Post-processing', 69)
-        call assert_int(2, count_prgs_in_category('postprocess'), 'postprocess program count')
+        call assert_registered_category('enhance', 'postprocess', 'Post-processing', 69)
+        call assert_registered_required_keys('enhance', &
+            &[character(len=15) :: 'vol_even', 'vol_odd', 'outvol', 'nthr'])
+        call assert_registered_category('postprocess_pdb', 'postprocess', 'Post-processing', 69)
+        call assert_registered_required_keys('postprocess_pdb', [character(len=7) :: 'vol1', 'pdbfile', 'nthr'])
+        call assert_int(4, count_prgs_in_category('postprocess'), 'postprocess program count')
         call assert_registered_category('automask', 'mask', 'Masking', 100)
         call assert_registered_category('cls_expansion', 'refine2d', 'Refine 2D Workflows', 30)
         call assert_registered_category('reimport_particles', 'project', 'Project Management', 10)
@@ -224,6 +241,10 @@ contains
         call assert_registered_category('measure_projspace_angres', 'ori', 'Orientation Processing', 110)
         call assert_program_not_registered('ppca_volvar')
         call assert_program_not_registered('export_manifoldem_starproject')
+        call assert_program_not_registered('ppca_denoise')
+        call assert_program_not_registered('ppca_denoise_classes')
+        call assert_program_not_registered('tseries_prep4tracking')
+        call assert_program_not_registered('tseries_extractor')
         call assert_registered_category('atoms_stats', 'atom', 'Atom Analysis', 50)
         call assert_registered_category('pool2D', 'stream', 'Stream Workflows', 10)
         call assert_registered_category('solve2D', 'refine2d', 'Refine 2D Workflows', 30)
@@ -234,13 +255,23 @@ contains
         call assert_registered_cli_summary('import_movies', 'cs', 'Spherical aberration; e.g. 2.7 mm')
         call assert_registered_cli_summary('import_movies', 'fraca', 'Amplitude contrast fraction; e.g. 0.1')
         call assert_registered_cli_summary('import_movies', 'kv', 'Acceleration voltage; e.g. 300 kV')
-        call assert_registered_cli_summary('extract', 'wfloat16', 'Write float16 particle stacks (yes|no){no}')
-        call assert_registered_cli_summary('refine_motion_model', 'wfloat16', 'Write float16 particle stacks (yes|no){no}')
-        call assert_registered_cli_summary('reextract', 'wfloat16', 'Write float16 particle stacks (yes|no){no}')
         call assert_registered_cli_summary('extract_subproj', 'subprojname', 'Subproject name; e.g. myproject.simple')
         call assert_registered_search_cli_summary('ctf_estimate', 'dfmin', 'Expected minimum defocus; e.g. 0.2 microns')
         call assert_registered_search_cli_summary('ctf_estimate', 'dfmax', 'Expected maximum defocus; e.g. 5.0 microns')
     end subroutine test_registered_programs
+
+    !> Storage is selectable for extraction, but fixed for motion-model fractions.
+    subroutine test_particle_storage_contract()
+        write(*,'(A)') 'test_particle_storage_contract'
+        call make_ui
+        call assert_registered_cli_summary('extract', 'wfloat16', 'Write float16 particle stacks (yes|no){no}')
+        call assert_registered_cli_summary('reextract', 'wfloat16', 'Write float16 particle stacks (yes|no){no}')
+        program_name = 'refine_motion_model'
+        call get_prg_ptr(program_name, registered_prg)
+        call assert_true(associated(registered_prg), 'refine_motion_model is registered')
+        if( associated(registered_prg) ) call assert_false(program_has_key(registered_prg, 'wfloat16'), &
+            &'refine_motion_model does not offer a particle-stack format switch')
+    end subroutine test_particle_storage_contract
 
     !> the registered test programs
     subroutine test_registered_test_programs()
@@ -289,8 +320,10 @@ contains
 
     !> N21: the continuous-pose surface (section 6.5, O7)
     subroutine test_cont_surface_contract()
-        character(len=13), parameter :: REFINE3D_PROGRAMS(2) = [character(len=13) :: 'refine3D', 'refine3D_auto']
+        character(len=14), parameter :: REFINE3D_PROGRAMS(3) = &
+            &[character(len=14) :: 'refine3D', 'refine3D_auto', 'refine3D_local']
         type(string) :: choices
+        character(len=16) :: default_value
         logical      :: found
         integer      :: i
         write(*,'(A)') 'test_cont_surface_contract'
@@ -312,8 +345,31 @@ contains
         if( associated(registered_prg) )then
             call find_ui_param(registered_prg%srch_ctrls, 'pose_cont', found, choices)
             call assert_true(found, 'refine3D_auto offers pose_cont')
-            call assert_char('|no|yes|only', choices%to_char(), 'refine3D_auto pose_cont choices')
+            call assert_char('|no|yes', choices%to_char(), 'refine3D_auto pose_cont choices')
             call assert_false(program_has_key(registered_prg, 'refine'), 'refine3D_auto does not offer refine')
+        endif
+        call get_ui_default('simple_exec', 'refine3D_auto', 'autoscale', found, default_value)
+        call assert_true(found, 'auto autoscale display default is resolved')
+        call assert_char('yes', trim(default_value), 'auto keeps autoscale=yes')
+        call get_ui_default('simple_exec', 'refine3D_local', 'autoscale', found, default_value)
+        call assert_true(found, 'local autoscale display default is resolved')
+        call assert_char('no', trim(default_value), 'local defaults to native sampling')
+        program_name = 'refine3D_local'
+        call get_prg_ptr(program_name, registered_prg)
+        call assert_true(associated(registered_prg), 'refine3D_local is registered')
+        if( associated(registered_prg) )then
+            call assert_false(program_has_key(registered_prg, 'pose_cont'), 'local selects continuous refinement directly')
+            call assert_false(program_has_key(registered_prg, 'refine'), 'local derives refine')
+            call assert_false(program_has_key(registered_prg, 'regpass'), 'local offers no registration pass')
+            call assert_false(program_has_key(registered_prg, 'ref_pose_init'), 'local offers no pose acquisition')
+            call find_ui_param(registered_prg%filt_ctrls, 'filt_mode', found, choices)
+            call assert_true(found, 'local offers filtering mode')
+            call assert_true(program_has_key(registered_prg, 'lpstop'), 'local offers a half-specific band cap')
+            call assert_char('|none|nonuniform', choices%to_char(), 'local offers only half-specific filtering modes')
+            call assert_true(program_has_key(registered_prg, 'trs'), 'local offers the shift bound')
+            call assert_true(program_has_key(registered_prg, 'cont_conv_rot'), 'local offers rotation convergence')
+            call assert_true(program_has_key(registered_prg, 'cont_conv_shift'), 'local offers shift convergence')
+            call assert_true(program_has_key(registered_prg, 'cont_conv_frac'), 'local offers stable fraction')
         endif
         do i = 1, size(REFINE3D_PROGRAMS)
             program_name = trim(REFINE3D_PROGRAMS(i))
@@ -329,6 +385,58 @@ contains
         call assert_program_not_registered('refine3D_pose_cont')
         call choices%kill
     end subroutine test_cont_surface_contract
+
+    subroutine test_solve3D_trs_contract()
+        character(len=16), parameter :: OTHER_PROGRAMS(3) = &
+            &[character(len=16) :: 'solve3D_cavgs', 'solve3D_addon', 'solve3D_chunks']
+        character(len=16) :: default_value
+        logical :: found
+        integer :: i
+        write(*,'(A)') 'test_solve3D_trs_contract'
+        call make_ui
+        program_name = 'solve3D'
+        call get_prg_ptr(program_name, registered_prg)
+        call assert_true(associated(registered_prg), 'solve3D is registered')
+        if( associated(registered_prg) )then
+            call assert_true(program_has_key(registered_prg, 'trs'), 'solve3D offers the shift bound')
+        endif
+        call assert_registered_search_cli_summary('solve3D', 'balance', &
+            &'Fractional-update sampling units (none|class|cavg){class}')
+        call get_ui_default('simple_exec', 'solve3D', 'trs', found, default_value)
+        call assert_true(found, 'solve3D trs display default is resolved')
+        call assert_char('0.', trim(default_value), 'solve3D trs=0 keeps automatic stage limits')
+        do i = 1, size(OTHER_PROGRAMS)
+            program_name = trim(OTHER_PROGRAMS(i))
+            call get_prg_ptr(program_name, registered_prg)
+            call assert_true(associated(registered_prg), trim(OTHER_PROGRAMS(i))//' is registered')
+            if( associated(registered_prg) ) call assert_false(program_has_key(registered_prg, 'trs'), &
+                &trim(OTHER_PROGRAMS(i))//' does not offer the particle shift override')
+        enddo
+        call assert_registered_search_cli_summary('solve3D_chunks', 'balance', &
+            &'Fractional-update sampling units (none|class|cavg){class}')
+    end subroutine test_solve3D_trs_contract
+
+    subroutine test_refine_motion_model_contract()
+        character(len=16) :: default_value
+        logical :: found
+        write(*,'(A)') 'test_refine_motion_model_contract'
+        call make_ui
+        program_name = 'refine_motion_model'
+        call get_prg_ptr(program_name, registered_prg)
+        call assert_true(associated(registered_prg), 'refine_motion_model is registered')
+        if( .not. associated(registered_prg) ) return
+        call assert_ui_param(registered_prg%parm_ios, 'stepf', 'refine_motion_model', expected_type='num')
+        call assert_input_placeholder(registered_prg%parm_ios, 'stepf', 'e.g. 3')
+        call assert_ui_param(registered_prg%srch_ctrls, 'pgrp', 'refine_motion_model', expected_type='str')
+        call assert_input_visibility(registered_prg%srch_ctrls, 'pgrp', UI_VIS_STANDARD)
+        call assert_ui_param(registered_prg%mask_ctrls, 'mskdiam', 'refine_motion_model', expected_type='num')
+        call assert_input_visibility(registered_prg%mask_ctrls, 'mskdiam', UI_VIS_STANDARD)
+        call get_ui_default('simple_exec', 'refine_motion_model', 'stepf', found, default_value)
+        call assert_true(found, 'refine_motion_model fraction-width display default is resolved')
+        call assert_char('3', trim(default_value), 'refine_motion_model defaults to three fractions per interval')
+        call assert_registered_required_keys('refine_motion_model', &
+            &[character(len=7) :: 'pgrp', 'mskdiam', 'nparts', 'nthr'])
+    end subroutine test_refine_motion_model_contract
 
     !> whether any input list of the program holds `key`
     logical function program_has_key( prg, key )

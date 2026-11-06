@@ -43,7 +43,7 @@ When unset, it supplies:
 - `filt_mode=nonuniform`
 - `automsk=no`
 - `gauref=yes`
-- `balance=cavg` (`class` with input volumes, which bring random classes and
+- `balance=class` (also with input volumes, which bring random classes and
   no class averages, `cavg` being rejected there; `none` for a project
   without a 2D solution)
 
@@ -80,6 +80,10 @@ Stage policy includes:
     (`PROB_NEIGH_REFINE_STAGE`, the single-state switch), so the default
     five-stage multi-state run uses no `prob_neigh`; the class-average route
     switches at the same stage (section 6)
+- the tempering of the draws is not a user input: every stage searches at
+  `prob_beta` (the parameter's default, the stage command does not carry the
+  key) and the last stage anneals to `prob_beta_end=1`, which the controller
+  sets (`prob_beta_ini`, the stages 1-2 override, was removed 2026-10-29)
 - the multi-state direction cap: with `nstates > 1` no stage exceeds 2,500
   directions, so stages 7 and 8 (5,000 in single state) run at 2,500
 - the multi-state stage-2 exit: stage 2 of a multi-state particle run (`shc`)
@@ -97,7 +101,8 @@ Stage policy includes:
 - early Gaussian reference filtering
 - optional trailing reconstruction by stage and state count
 - staged NU filtering from `NU_FILTER_STAGE`
-- staged automasking only from `AUTOMSK_STAGE`
+- optional single-state gold-standard matching from stage 6 (`gold_standard=yes`)
+- spherical support throughout, with `automsk=no` and `envfsc=no`
 - an explicitly requested PCG solvent prior from `PCG_SOLVENT_START_STAGE`
   (stage 8, the final stage), so the NU label field the prior'd pair receives
   has settled over stages 5-7 without the prior
@@ -126,15 +131,22 @@ sampling setup is bypassed in favor of all-active sampling.
 
 ### Sampling units
 
-Every stage runs with the run's `balance` (default `cavg`). Below the
+Every stage runs with the run's `balance` (default `class`). Below the
 full-sampling switch, `solve3D` writes the class sampling file `clssmp.bin`
 once at startup: one unit per selected 2D class, and under `cavg` each unit's
 group among `nclust` (default 20) groups of similar class averages, formed by
-average linkage on their aligned correlation, so a preferred view spread over
-many classes no longer dominates the sample. Every fractional update shares
-its target equally over the groups, then equally over the classes of a group,
-each capped at its population, then lowest `updatecnt` first inside a class.
-Under `class` every class is its own group; under `none` the stages sample the
+average linkage on their aligned correlation between 30 and 6 A, a group with
+fewer than 2.5% of the particles merged into its nearest group, so a preferred
+view spread over many classes no longer dominates the sample and an odd class
+does not become a group of its own. Every fractional update shares
+its target over the groups in proportion to the square root of their
+populations, then over the classes of a group the same way, each capped at its
+population, then lowest `updatecnt` first inside a class. Under `class` every
+class is its own group, so a rare view is sampled more often than its
+population alone would give, without one small class taking a large part of
+every draw (equal shares did: on a small membrane protein with six one-class
+groups of odd class averages, `cavg` with equal shares drew 80% of every sample
+from 18% of the particles); under `none` the stages sample the
 global lowest `updatecnt` tiers, and the file holds class units only for the
 initial greedy sample. The groups are written
 as `view_partitionNN_cavgs` stacks with the table `view_partition.txt`. The
@@ -208,6 +220,24 @@ every run seeds and owns its sigmas in its own directory.
 `lpinfo(istage)%lp` controls staged search/reference scheduling. Stage limits
 are derived from class FRCs by default, with `lpstart`/`lpstop` overrides and a
 `force_lp_range=yes` path that uses the requested range directly.
+
+The same ladder plans a stage-dependent residual translation-search half-width.
+On the main particle `solve3D` interface, an explicitly positive `trs` replaces
+`trslim` in every planned stage before the existing scale-information rows are
+printed; it has no separate planner banner. Omission and `trs=0` retain the
+automatic limits. The stage controller still emits `trs=0` for stages 1 and 2,
+which do not search shifts. The class-average and chunked interfaces do not
+expose the override. `shift_sigma` (the polar shift map, `refine3D_policy.md`)
+is on by default (the parameter's 10 A; `shift_sigma=0` is the window search
+in every stage) for solve3D and for solve3D_cavgs, solve3D_addon,
+solve3D_chunks and solve3D_pyramid alike, and goes to every stage with a shift
+search (3-8, dense and neighbourhood tables alike), where the tables centre
+each particle as it needs: the disk of 3 sigma for one not yet centred in the
+workflow or whose shift posterior is wider than a third of the stage's window,
+the window otherwise (the dynamic centring, `refine3D_policy.md`). No stage's
+half-width is raised and no stage ends on the centring. A run manifest records the planned per-stage half-width so
+an add-on replays the frozen solution's search policy without acquiring a
+separate public control.
 
 Where the ladder is planned by `lpstages` or `lpstages_fast`, stage 1 of
 `solve3D` never runs with a low-pass limit finer than 20 A: both apply this
@@ -400,8 +430,8 @@ only resolutions measured in the run itself advance the band. The advanced
 value
 is the printed stage limit and, in non-NU stages, the `lpstop` ceiling. The
 decision is taken once per stage boundary and never per iteration:
-`solve3D` runs without gold-standard halves, so an FSC crossing is
-trustworthy only where it lies beyond the band that produced the alignments.
+In LP-set stages the halves share alignment references, so an FSC crossing is
+interpreted relative to the band that produced the alignments.
 The crossing at the end of the previous stage lies beyond that stage's band
 and is clean; a per-iteration rule would ratchet on noise fitted inside the
 newly opened band. An explicit command-line `lp` (with `ml_reg=yes`) disables
@@ -475,7 +505,10 @@ consolidates those residuals for the first Euclidean stage, and reconstructs a
 data-derived checkpoint. Particles outside the capped cohort retain their
 image-bootstrap partition records until later refinement updates them. The
 external maps remain fixed during the CC pass and are not blended into the
-checkpoint.
+checkpoint. The helper copies the planned stage command line but removes its
+explicit `shift_sigma` before the `objfun=cc` pose pass: the polar shift map is
+a Euclidean objective feature, and an explicit key is invalid under CC. The
+stage command line keeps `shift_sigma` for the subsequent Euclidean stages.
 
 Normal particle-based starts treat `solve3D` as the producer of new
 `ptcl3D` orientation and multi-state information. The workflow resets `ptcl3D`
@@ -625,50 +658,42 @@ without a shell above the origin (2026-10-15).
 After symmetry handling, the selected maps are injected back into the staged
 `refine3D` command line and reference-section files are invalidated.
 
-## 8. Filtering and Automasking
+## 8. Filtering and Gold-Standard Matching
 
-Staged `solve3D` uses the one generated-ladder nonuniform competition
-when `filt_mode` is NU-enabled (2026-09-16; the same competition as
-`refine3D_auto`, the `nu_refine` shell walk is retired). NU always computes its objective over the full spherical
-`mskdiam` support. With the default `automsk=no`, no envelope constrains the
-static local-resolution field. `automsk=yes` fixes the filter field outside the
-density envelope and masks `_nu_filt` references with it. `automsk=nu` uses a
-valid current NU-evidence envelope for those roles and density as fallback;
-early FSC/PCG consumers use the previous iteration's evidence artifact.
+Staged `solve3D` uses the same static-ladder NU competition as
+`refine3D_auto`. Its objective and reconstruction support remain spherical
+(`mskdiam`). The workflow forces `automsk=no` and `envfsc=no` in every stage
+and in the final reconstruction; it generates no density or NU-evidence
+envelope for masking. The UI offers no envelope controls for this workflow.
+Solvent-prior development is separate from this matching-policy change.
 
-`solve3D` has no gold-standard stage; gold-standard refinement belongs to
-`refine3D_auto`. `envfsc` defaults to `no`. `automsk=yes` implies
-`envfsc=yes` (policy 2026-09-09), so the two engage together at
-`AUTOMSK_STAGE`/`ENVFSC_STAGE`; the controller forces `envfsc=no` before
-`ENVFSC_STAGE`, forces it off for the cavgs route, and forwards the requested
-or implied value at and after that boundary. With `envfsc=yes`, volume
-assembly generates a density envelope from the current merged half maps for
-phase-randomized FSC correction and cFAR on gridding (PCG applies no phase
-randomization), using `envmsklp` as its smoothing low-pass. With an active
-`automsk` the PCG backend uses the same envelope as the support of both solves;
-with `automsk=no` it stays on the `mskdiam` sphere whatever `envfsc` says. The
-controller forwards `envmsklp` to staged and final reconstruction commands; its default is `ENVMSKLP_DEFAULT` (20 A). The
-density-mask dilation is no longer injected as a layer count: every program
-applies the shared physical minimum `ENVMSKWIDTH_A_MIN` (7.5 A) at the
-sampling the envelope is built at, so the envelope keeps the same physical
-width across the autoscaled stages. The controller keeps a scheduled
-`lp` on the refine3D command line. From `NU_FILTER_STAGE`, staged
-`nonuniform` is promoted to `nonuniform_lpset`, so the NU frontier can feed an
-explicit merged-reference LP-set matching run, bounded at the high-resolution
-end by the current `lpstages` limit.
+`gold_standard=no` is the default. NU-enabled stages use
+`nonuniform_lpset`, a merged registration reference and the scheduled `lp`.
+The FSC=0.5 stage-boundary advance in section 4 is preserved. NU matching
+updates retain their existing bandwidth policy, with no added ceiling at the
+planned stage limit; an explicit user `lpstop` is still respected.
 
-Phase randomization corrects mask-induced correlation; it does not make the
-non-independent solve3D half maps a gold-standard validation pair. FSC-derived
-resolution metadata in this workflow must be interpreted accordingly.
+With `gold_standard=yes`, particle runs with `nstates=1` use half-specific
+references in every executed stage numbered 6 or later. Skipping is unchanged:
+if stage 6 is omitted, stage 7 starts the half-specific matching. The
+controller switches either NU mode to plain `nonuniform`, deletes scheduled
+`lp`, and removes the stage-derived ceiling. NU chooses the matching band,
+subject to crop Nyquist and explicit user `lpstop`; without NU, the existing
+half-map FSC policy chooses it. Explicit `lp` is refused with this option;
+use `lpstop` for a ceiling.
 
-Automasking is opt-in at the public interface and defaults to `no`. Even when
-enabled, staged NU-evidence envelope generation starts only once both
-`AUTOMSK_STAGE` and the NU filtering stage are active.
-Selecting `automsk=nu` therefore requires an NU `filt_mode`; `automsk=tight`
-is rejected. Once staged automasking is active, `yes` uses density and `nu`
-uses current evidence for assembled references plus the lagged evidence
-artifact for early consumers, with density fallback. There is no separate
-reference-mask control, so early stages remain spherical.
+Fractional sampling, trailing accumulators and early stopping continue under
+their existing rules. The transition adds no full alignment or reconstruction
+pass and does not reset the trailing chain. The particle even/odd partition
+is preserved. Frequencies already used with shared references retain their
+initialization history; enabling the option does not retroactively validate
+the earlier FSCs.
+
+Multi-state runs cannot enable `gold_standard=yes`; an extended multi-state
+schedule keeps LP-set matching. The class-average route never switches.
+The manifest records the option, and add-on runs replay it as part of the
+frozen solution's policy. Their initial registration pass retains its existing
+planned-band matching; the stage proper follows the recorded policy.
 
 NU filtering starts at `NU_FILTER_STAGE` = 5 (6 until 2026-10-18),
 overridable from the command line by `nu_stage` for testing (0 = the built-in
@@ -690,10 +715,9 @@ The default multi-state (`nstates > 1`) stage limit is stage 5
 (`NSTAGES_INDEPENDENT`), so **that final stage is now an NU stage**; before
 2026-10-18 default multi-state ran no NU-filtered stage at all. Applied to
 multi-state deliberately, for the quality the filtered reference is expected
-to give. The envfsc and automasking boundaries are unaffected: both are
-`NSTAGES` (8) and remain outside the default multi-state schedule, as does
-`TRAILREC_STAGE_MULTI`. Users who override `nstages` past stage 5 re-enter the
-rest of the staged NU policy described here.
+to give. `TRAILREC_STAGE_MULTI` remains stage 8, outside the default
+multi-state schedule. Users who extend `nstages` past stage 5 retain
+merged-reference NU matching and spherical support.
 
 Detailed NU behavior belongs to
 [nonuniform filtering policy](../NU/nonuniform_filtering_policy.md); detailed
@@ -708,17 +732,16 @@ stage or later (stage 3; stage 4 when the run searches an axis, section 7); the
 run manifest follows it, so such a run can be the frozen input of
 `solve3D_addon`, which then runs that stage. Single-state schedules stopped
 before it skip this final all-particle reconstruction.
-Before a multi-state final reconstruction, a greedy missing-update pass
-(`refine=greedy`) assigns every active particle that no stage updated.
+Before the final reconstruction, single- or multi-state, a greedy
+missing-update pass (`refine=greedy`) assigns every active particle that no
+stage updated; the final reconstruction leaves out rows without an update, so
+without it a run whose sampling did not reach every particle would drop them.
 
 The final reconstruction inherits only the scientific reconstruction policy it
-needs. It preserves the parent `envfsc` request so the original-sampling half
-maps use the same radial FSC/cFAR masking policy, but it does not inherit staged
-search or reference-filter controls such as `refine`, `lp` or `gauref`. It
-inherits `automsk` from the last stage, so the shipped map is estimated on the
-same density or NU support as the refinement iterations. There is no backend
-exception: the final reconstruction runs with `filt_mode=none` on both
-backends, except that `automsk=nu` keeps the caller's NU `filt_mode`.
+needs. It keeps `envfsc=no` and `automsk=no`, so the original-sampling
+half maps retain spherical support. It does not inherit staged search or
+reference-filter controls such as `refine`, `lp` or `gauref`. The final
+reconstruction runs with `filt_mode=none` on both backends.
 
 If the final stage used `objfun=euclid` and `ml_reg=yes`, final reconstruction
 uses the committed sigma2 store of the workflow's particles: one noise spectrum

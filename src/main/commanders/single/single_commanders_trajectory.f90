@@ -4,30 +4,30 @@ use simple_commanders_api
 implicit none
 #include "simple_local_flags.inc"
 
-type, extends(commander_base) :: commander_track_particles_distr
+type, extends(commander_base) :: commander_tseries_track_particles_distr
   contains
-    procedure :: execute      => exec_track_particles_distr
-end type commander_track_particles_distr
+    procedure :: execute      => exec_tseries_track_particles_distr
+end type commander_tseries_track_particles_distr
 
-type, extends(commander_base) :: commander_track_particles
+type, extends(commander_base) :: commander_tseries_track_particles
   contains
-    procedure :: execute      => exec_track_particles
-end type commander_track_particles
+    procedure :: execute      => exec_tseries_track_particles
+end type commander_tseries_track_particles
 
 type, extends(commander_base) :: commander_trajectory_backgr_subtr
   contains
     procedure :: execute      => exec_trajectory_backgr_subtr
 end type commander_trajectory_backgr_subtr
 
-type, extends(commander_base) :: commander_graphene_subtr
+type, extends(commander_base) :: commander_trajectory_graphene_subtr
   contains
-    procedure :: execute      => exec_graphene_subtr
-end type commander_graphene_subtr
+    procedure :: execute      => exec_trajectory_graphene_subtr
+end type commander_trajectory_graphene_subtr
 
-type, extends(commander_base) :: commander_import_trajectory
+type, extends(commander_base) :: commander_trajectory_import
   contains
-    procedure :: execute      => exec_import_trajectory
-end type commander_import_trajectory
+    procedure :: execute      => exec_trajectory_import
+end type commander_trajectory_import
 
 type, extends(commander_base) :: commander_trajectory_denoise
   contains
@@ -39,15 +39,15 @@ type, extends(commander_base) :: commander_trajectory_swap_stack
     procedure :: execute      => exec_trajectory_swap_stack
 end type commander_trajectory_swap_stack
 
-type, extends(commander_base) :: commander_extract_substk
+type, extends(commander_base) :: commander_trajectory_extract_substk
   contains
-    procedure :: execute      => exec_extract_substk
-end type commander_extract_substk
+    procedure :: execute      => exec_trajectory_extract_substk
+end type commander_trajectory_extract_substk
 
 contains
 
-    subroutine exec_track_particles_distr( self, cline )
-        class(commander_track_particles_distr), intent(inout) :: self
+    subroutine exec_tseries_track_particles_distr( self, cline )
+        class(commander_tseries_track_particles_distr), intent(inout) :: self
         class(cmdline),                         intent(inout) :: cline
         type(parameters)              :: params
         type(qsys_env)                :: qenv
@@ -62,8 +62,8 @@ contains
         if( .not. cline%defined('nframesgrp')) call cline%set('nframesgrp',   50)
         if( .not. cline%defined('filter'))     call cline%set('filter', 'nlmean')
         if( .not. cline%defined('offset'))     call cline%set('offset',      20.)
-        if( cline%defined('nparts') ) THROW_HARD('track_particles: nparts is number of particles; use ncunits')
-        if( .not. cline%defined('ncunits') ) THROW_HARD('track_particles requires ncunits as the concurrent tracker count')
+        if( cline%defined('nparts') ) THROW_HARD('tseries_track_particles: nparts is number of particles; use ncunits')
+        if( .not. cline%defined('ncunits') ) THROW_HARD('tseries_track_particles requires ncunits as the concurrent tracker count')
         call cline%set('oritype','mic')
         call params%new(cline)
         ! set mkdir to no (to avoid nested directory structure)
@@ -83,11 +83,11 @@ contains
                 endif
             end do
         else
-            THROW_HARD('inputted boxfile is empty; exec_track_particles')
+            THROW_HARD('inputted boxfile is empty; exec_tseries_track_particles')
         endif
         call boxfile%kill
         params%nptcls  = ndatlines
-        if( params%ncunits < 1 ) THROW_HARD('ncunits must be >= 1 for track_particles')
+        if( params%ncunits < 1 ) THROW_HARD('ncunits must be >= 1 for tseries_track_particles')
         nactive        = min(params%ncunits, params%nptcls)
         params%nparts  = params%nptcls
         params%ncunits = nactive
@@ -119,11 +119,11 @@ contains
         call qsys_cleanup(params)
         ! end gracefully
         call simple_end('**** single_tseries_tracker NORMAL STOP ****')
-    end subroutine exec_track_particles_distr
+    end subroutine exec_tseries_track_particles_distr
 
-    subroutine exec_track_particles( self, cline )
+    subroutine exec_tseries_track_particles( self, cline )
         use single_tseries_tracker
-        class(commander_track_particles), intent(inout) :: self
+        class(commander_tseries_track_particles), intent(inout) :: self
         class(cmdline),                   intent(inout) :: cline
         type(sp_project)          :: spproj
         type(parameters)          :: params
@@ -137,12 +137,12 @@ contains
         orig_box = params%box
         ! coordinates input
         if( cline%defined('xcoord') .and. cline%defined('ycoord') )then
-            if( .not. cline%defined('box') ) THROW_HARD('need box to be part of command line for this mode of execution; exec_track_particles')
+            if( .not. cline%defined('box') ) THROW_HARD('need box to be part of command line for this mode of execution; exec_tseries_track_particles')
             allocate( boxdata(1,2) )
             boxdata(1,1) = real(params%xcoord)
             boxdata(1,2) = real(params%ycoord)
         else
-            THROW_HARD('need xcoord/ycoord to be part of command line; exec_track_particles')
+            THROW_HARD('need xcoord/ycoord to be part of command line; exec_tseries_track_particles')
         endif
         ! frames input
         call spproj%read(params%projfile)
@@ -182,10 +182,10 @@ contains
         ! clean tracker
         call kill_tracker
         ! end gracefully
-        call qsys_declare_part_finished(params, string('single_commanders_trajectory :: exec_track_particles'))
+        call qsys_declare_part_finished(params, string('single_commanders_trajectory :: exec_tseries_track_particles'))
         call spproj%kill
         call simple_end('**** single_tseries_tracker NORMAL STOP ****')
-    end subroutine exec_track_particles
+    end subroutine exec_tseries_track_particles
 
     subroutine exec_trajectory_backgr_subtr( self, cline )
         ! for background subtraction in time-series data. The goal is to subtract the two graphene
@@ -246,11 +246,11 @@ contains
         call simple_end('**** SIMPLE_BACKGR_SUBTR NORMAL STOP ****')
     end subroutine exec_trajectory_backgr_subtr
 
-    subroutine exec_graphene_subtr( self, cline )
+    subroutine exec_trajectory_graphene_subtr( self, cline )
         use simple_tseries_graphene_subtr
-        class(commander_graphene_subtr), intent(inout) :: self
+        class(commander_trajectory_graphene_subtr), intent(inout) :: self
         class(cmdline),                  intent(inout) :: cline
-        type(parameters)   :: params
+        type(parameters), target :: params
         type(builder)      :: build
         type(image)        :: ave_pre, ave_post, img_tmp, img_tmp2, img_tmp3
         real,  allocatable :: angles1(:), angles2(:)
@@ -274,7 +274,7 @@ contains
         endif
         ! initialize subtracter
         allocate(angles1(nptcls),angles2(nptcls),source=0.)
-        call init_graphene_subtr(params%box,params%smpd)
+        call init_graphene_subtr(params)
         ! init images
         call build%img%new(ldim,params%smpd)       ! particle
         call img_tmp%new(ldim,params%smpd)
@@ -334,10 +334,10 @@ contains
         call ave_post%kill
         ! end gracefully
         call simple_end('**** SIMPLE_GRAPHENE_SUBTR NORMAL STOP ****')
-    end subroutine exec_graphene_subtr
+    end subroutine exec_trajectory_graphene_subtr
 
-    subroutine exec_import_trajectory( self, cline )
-        class(commander_import_trajectory), intent(inout) :: self
+    subroutine exec_trajectory_import( self, cline )
+        class(commander_trajectory_import), intent(inout) :: self
         class(cmdline),                            intent(inout) :: cline
         type(parameters) :: params
         type(sp_project) :: spproj
@@ -366,21 +366,159 @@ contains
         call spproj%add_single_stk(params%stk, ctfvars, os)
         call spproj%write
         ! end gracefully
-        call simple_end('**** import_trajectory NORMAL STOP ****')
-    end subroutine exec_import_trajectory
+        call simple_end('**** trajectory_import NORMAL STOP ****')
+    end subroutine exec_trajectory_import
 
+    !> every frame the kernel pre-image of the frames that look like it and lie near it in time
+    !! (simple_flex_traj_denoise). Frames as given: no shift, rotation or interpolation; each frame's mean removed and
+    !! restored in the output. The mask (mskdiam when given, else the box's inscribed circle) shapes the similarity
+    !! only: the weights compare soft-masked frames and average the frames themselves, so the output is the whole box,
+    !! unmasked. Writes outstk (same rows, box and sampling) and trajectory_denoise_flex.txt (per frame: Kish
+    !! population of its weights, the CV's rank, tau, h)
     subroutine exec_trajectory_denoise( self, cline )
-        use simple_commanders_imgops, only: commander_ppca_denoise
+        use simple_flex_traj_denoise, only: flex_traj_denoise
+        use simple_memoize_ft_maps,   only: memoize_ft_maps, forget_ft_maps, ft_map_lims, ft_map_phys_addrh, ft_map_phys_addrk
         class(commander_trajectory_denoise), intent(inout) :: self
         class(cmdline),                      intent(inout) :: cline
-        type(commander_ppca_denoise) :: xkpca_den
-        if( .not. cline%defined('pca_mode')                ) call cline%set('pca_mode',  'diffusion_maps')
-        if( .not. cline%defined('neigs')                   ) call cline%set('neigs',                  200)
-        if( .not. cline%defined('kpca_nystrom_npts')       ) call cline%set('kpca_nystrom_npts',      512)
-        if( .not. cline%defined('kpca_nystrom_local_nbrs') ) call cline%set('kpca_nystrom_local_nbrs', 96)
-        if( .not. cline%defined('kpca_ker')                ) call cline%set('kpca_ker',             'rbf')
-        if( .not. cline%defined('k_nn')                    ) call cline%set('k_nn',                     5)
-        call xkpca_den%execute(cline)
+        integer, parameter :: SEED = 20261026
+        integer, parameter :: BATCH = 256      !< frames read (written) one by one, then processed in parallel
+        type(parameters) :: params
+        type(image), allocatable :: imgs(:)
+        complex(sp), allocatable :: ym(:,:), yu(:,:), yden(:,:)   !< masked frames (similarity), frames, pre-images
+        real(dp),    allocatable :: ess(:), choice(:,:)
+        real(sp),    allocatable :: wq(:), avgs(:)
+        integer,     allocatable :: hidx(:), kidx(:), shell(:)
+        integer(timer_int_kind)  :: t0
+        integer :: ldim(3), lims(3,2), n, i, j, h, k, sh, nyq, ncoeff, kfit, kband, funit, iostat, i0, i1, ib, nb, nblk
+        real    :: rmsk
+        if( .not. cline%defined('mkdir')   ) call cline%set('mkdir',   'no')
+        if( .not. cline%defined('outstk')  ) call cline%set('outstk',  'trajectory_denoised'//STK_EXT)
+        if( .not. cline%defined('neigs')   ) call cline%set('neigs',   32)
+        if( cline%get_iarg('neigs') <= 0   ) call cline%set('neigs',   32)   ! 0 => auto
+        if( .not. cline%defined('halfwin') ) call cline%set('halfwin', 0)
+        if( .not. cline%defined('eo_pool') ) call cline%set('eo_pool', 'yes')
+        call params%new(cline)
+        if( .not. file_exists(params%stk) ) THROW_HARD('cannot find input stack (stk); trajectory_denoise')
+        call find_ldim_nptcls(params%stk, ldim, n)
+        ldim(3) = 1
+        if( ldim(1) /= ldim(2) ) THROW_HARD('square frames only; trajectory_denoise')
+        ! the similarity mask: mskdiam when given, at most the inscribed circle. A tighter mask correlates the Fourier
+        ! coefficients over a wider neighbourhood (~ box / radius pixels), so the blocks of the coefficient split grow
+        ! with it (4 pixels at the inscribed circle)
+        rmsk = real(ldim(1)) / 2. - 2.
+        if( cline%defined('mskdiam') ) rmsk = min(rmsk, 0.5 * params%mskdiam / params%smpd)
+        if( rmsk < 4. ) THROW_HARD('mask radius below 4 pixels, check mskdiam; trajectory_denoise')
+        nblk = min(16, max(4, nint(2. * real(ldim(1)) / rmsk)))
+        ! the half-plane lattice, shells 1..nyq
+        call memoize_ft_maps(ldim, params%smpd)
+        lims   = ft_map_lims
+        nyq    = fdim(ldim(1)) - 1
+        ncoeff = 0
+        do h = 0, lims(1,2)
+            do k = lims(2,1), lims(2,2)
+                if( h == 0 .and. k < 0 ) cycle
+                sh = nint(hyp(h,k))
+                if( sh < 1 .or. sh > nyq ) cycle
+                ncoeff = ncoeff + 1
+            end do
+        end do
+        allocate(hidx(ncoeff), kidx(ncoeff), shell(ncoeff), wq(ncoeff))
+        j = 0
+        do h = 0, lims(1,2)
+            do k = lims(2,1), lims(2,2)
+                if( h == 0 .and. k < 0 ) cycle
+                sh = nint(hyp(h,k))
+                if( sh < 1 .or. sh > nyq ) cycle
+                j = j + 1
+                hidx(j)  = h
+                kidx(j)  = k
+                shell(j) = sh
+                wq(j)    = 2.      ! each listed coefficient stands for itself and its conjugate (as flex_class_planes)
+            end do
+        end do
+        ! the frames, mean removed: their half-plane coefficients, unmasked (yu) and soft-masked (ym)
+        t0 = tic()
+        allocate(ym(ncoeff,n), yu(ncoeff,n), yden(ncoeff,n), ess(n), choice(3,n), avgs(n))
+        nb = min(BATCH, n)
+        allocate(imgs(nb))
+        do ib = 1, nb
+            call imgs(ib)%new(ldim, params%smpd)
+        end do
+        call imgs(1)%memoize_mask_coords
+        do i0 = 1, n, nb
+            i1 = min(n, i0 + nb - 1)
+            do i = i0, i1
+                call imgs(i-i0+1)%set_ft(.false.)
+                call imgs(i-i0+1)%read(params%stk, i)
+            end do
+            !$omp parallel do default(shared) private(i,ib,j) schedule(static) proc_bind(close)
+            do i = i0, i1
+                ib = i - i0 + 1
+                avgs(i) = imgs(ib)%mean()
+                call imgs(ib)%add(-avgs(i))
+                call imgs(ib)%fft
+                do j = 1, ncoeff
+                    yu(j,i) = imgs(ib)%get_cmat_at(ft_map_phys_addrh(hidx(j),kidx(j)), ft_map_phys_addrk(hidx(j),kidx(j)), 1)
+                end do
+                call imgs(ib)%ifft
+                call imgs(ib)%mask2D_soft(rmsk, backgr=0.)
+                call imgs(ib)%fft
+                do j = 1, ncoeff
+                    ym(j,i) = imgs(ib)%get_cmat_at(ft_map_phys_addrh(hidx(j),kidx(j)), ft_map_phys_addrk(hidx(j),kidx(j)), 1)
+                end do
+            end do
+            !$omp end parallel do
+        end do
+        write(logfhandle,'(A,F9.2)') '>>> TRAJECTORY_DENOISE FLEX: frames read and transformed, s=', toc(t0)
+        kfit = 0
+        if( cline%defined('lp') ) kfit = calc_fourier_index(params%lp, ldim(1), params%smpd)
+        write(logfhandle,'(A,I7,A,I5,A,I4,A,I5,A,A,A,F7.1,A,I3)') '>>> TRAJECTORY_DENOISE FLEX: frames=', n, &
+            &' box=', ldim(1), ' max rank=', params%neigs, ' halfwin=', params%halfwin, ' eo_pool=', trim(params%eo_pool), &
+            &' similarity mask radius (pixels)=', rmsk, ' split block=', nblk
+        call flush(logfhandle)
+        t0 = tic()
+        call flex_traj_denoise(ym, yu, hidx, kidx, shell, wq, params%neigs, kfit, params%halfwin, &
+            &trim(params%eo_pool) == 'yes', SEED, nblk, yden, ess, choice, kband)
+        deallocate(ym, yu)
+        write(logfhandle,'(A,F9.2)') '>>> TRAJECTORY_DENOISE FLEX: denoising, s=', toc(t0)
+        ! the pre-images back to frames, the frame's mean restored
+        t0 = tic()
+        do i0 = 1, n, nb
+            i1 = min(n, i0 + nb - 1)
+            !$omp parallel do default(shared) private(i,ib,j) schedule(static) proc_bind(close)
+            do i = i0, i1
+                ib = i - i0 + 1
+                call imgs(ib)%zero_and_flag_ft
+                do j = 1, ncoeff
+                    call imgs(ib)%set_cmat_at(ft_map_phys_addrh(hidx(j),kidx(j)), ft_map_phys_addrk(hidx(j),kidx(j)), 1, yden(j,i))
+                    ! the half-plane keeps the h = 0 column for k >= 0 only; its k < 0 mate is the conjugate
+                    if( hidx(j) == 0 .and. kidx(j) > 0 ) call imgs(ib)%set_cmat_at(ft_map_phys_addrh(0,-kidx(j)), &
+                        &ft_map_phys_addrk(0,-kidx(j)), 1, conjg(yden(j,i)))
+                end do
+                call imgs(ib)%ifft
+                call imgs(ib)%add(avgs(i))
+            end do
+            !$omp end parallel do
+            do i = i0, i1
+                call imgs(i-i0+1)%write(params%outstk, i)
+            end do
+        end do
+        write(logfhandle,'(A,F9.2)') '>>> TRAJECTORY_DENOISE FLEX: frames transformed back and written, s=', toc(t0)
+        call forget_ft_maps
+        do ib = 1, nb
+            call imgs(ib)%kill
+        end do
+        deallocate(imgs)
+        ! per frame: the Kish population of its weights and the CV's choice
+        call fopen(funit, file=string('trajectory_denoise_flex.txt'), status='replace', action='write', iostat=iostat)
+        write(funit,'(A)') '# frame neff rank tau h   (rank 0 / tau -1: the temporal kernel alone; h -1: no temporal kernel)'
+        do i = 1, n
+            write(funit,'(I7,F10.2,I5,F8.2,F8.1)') i, ess(i), nint(choice(1,i)), choice(2,i), choice(3,i)
+        end do
+        call fclose(funit)
+        write(logfhandle,'(A,F10.2,A,F10.2,A,F10.2,A,I4)') '>>> TRAJECTORY_DENOISE FLEX: neff min/median/max ', minval(ess), &
+            &' / ', median(ess), ' / ', maxval(ess), '; fit band shells 1-', kband
+        call simple_end('**** TRAJECTORY_DENOISE NORMAL STOP ****')
     end subroutine exec_trajectory_denoise
 
     subroutine exec_trajectory_swap_stack( self, cline )
@@ -424,8 +562,8 @@ contains
         call simple_end('**** SINGLE_trajectory_swap_stack NORMAL STOP ****')
     end subroutine exec_trajectory_swap_stack
 
-    subroutine exec_extract_substk( self, cline )
-        class(commander_extract_substk), intent(inout) :: self
+    subroutine exec_trajectory_extract_substk( self, cline )
+        class(commander_trajectory_extract_substk), intent(inout) :: self
         class(cmdline),                  intent(inout) :: cline
         type(parameters) :: params
         type(sp_project) :: spproj
@@ -461,6 +599,6 @@ contains
         endif
         ! end gracefully
         call simple_end('**** SINGLE_EXTRACT_SUBSTK NORMAL STOP ****')
-    end subroutine exec_extract_substk
+    end subroutine exec_trajectory_extract_substk
 
 end module single_commanders_trajectory

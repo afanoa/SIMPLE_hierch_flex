@@ -10,6 +10,7 @@ use simple_qsys_coarray,             only: qsys_coarray
 use simple_cmdline,                  only: cmdline
 use simple_parameters,               only: parameters
 use simple_syslib,                   only: simple_rmfile, simple_sync_dir
+use simple_rnd,                      only: has_global_seed, rnd_run_seed
 use simple_qsys_job_record,          only: check_job_lost, cancel_queued_job, JOB_LOST_EXIT_CODE
 use simple_persistent_worker_message_task, only: qsys_persistent_worker_message_task 
 use simple_persistent_worker_server,       only: persistent_worker
@@ -89,8 +90,8 @@ type qsys_ctrl
     procedure          :: prep_part_jobs
     procedure          :: generate_array_script
     procedure, private :: augment_partition_job_descr, clear_partition_job_descr
-    procedure, private :: generate_script_1, generate_script_2, generate_script_3, generate_script_4
-    generic            :: generate_script => generate_script_2, generate_script_3, generate_script_4
+    procedure, private :: generate_script_part, generate_script_job, generate_script_cline, generate_script_jobs
+    generic            :: generate_script => generate_script_job, generate_script_cline, generate_script_jobs
     ! SUBMISSION TO QSYS
     procedure          :: submit_scripts
     procedure          :: submit_script
@@ -343,7 +344,7 @@ contains
         do ipart=self%fromto_part(1),self%fromto_part(2)
             call self%augment_partition_job_descr(job_descr, ipart, outfile_body_local, part_params)
             if(L_USE_AUTO_MEM) call estimate_mem_usage(job_descr, q_descr, extra_params)
-            call self%generate_script_1(job_descr, ipart, q_descr)
+            call self%generate_script_part(job_descr, ipart, q_descr)
         end do
         call self%clear_partition_job_descr(job_descr, outfile_body_local, part_params)
         ! preparing partition jobs also resets the number of available computing units
@@ -408,6 +409,7 @@ contains
         else
             call self%myqsys%write_array_instr(q_descr, self%fromto_part, fhandle=funit)
         end if
+        call write_seed_export(funit)
         write(funit,'(a)') 'cd '//trim(CWD_GLOB)
         write(funit,'(a)') ''
         ! start partsarray definition
@@ -447,7 +449,7 @@ contains
     !> Internal helper: write one bash submission script for partition ipart.
     !! Called in a loop by prep_part_jobs().  Resets jobs_done(ipart) and
     !! jobs_submitted(ipart) to .false. so the scheduler starts fresh.
-    subroutine generate_script_1( self, job_descr, ipart, q_descr )
+    subroutine generate_script_part( self, job_descr, ipart, q_descr )
         class(qsys_ctrl), intent(inout) :: self
         class(chash),     intent(in)    :: job_descr !< fully populated job description for this partition
         integer,          intent(in)    :: ipart     !< partition index
@@ -456,7 +458,7 @@ contains
         type(string) :: job_str
         integer      :: ios, funit
         call fopen(funit, file=self%script_names(ipart), iostat=ios, STATUS='REPLACE', action='WRITE', iomsg=io_msg)
-        call fileiochk('simple_qsys_ctrl :: generate_script_1; Error when opening file for writing: '&
+        call fileiochk('simple_qsys_ctrl :: generate_script_part; Error when opening file for writing: '&
                 //self%script_names(ipart)%to_char()//' ; '//trim(io_msg),ios )
         ! need to specify shell
         write(funit,'(a)') '#!/bin/bash'
@@ -466,6 +468,7 @@ contains
         else
             call self%myqsys%write_instr(job_descr, fhandle=funit)
         endif
+        call write_seed_export(funit)
         write(funit,'(a)') 'cd '//trim(CWD_GLOB)
         write(funit,'(a)') ''
         ! the part records itself, and its exit status, so that the master sees a part that fails
@@ -487,19 +490,19 @@ contains
         call fclose(funit)
         if( q_descr%get('qsys_name').eq.'local' )then
             ios = simple_chmod(self%script_names(ipart),'+x')
-            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_1; Error chmoding submit script '//self%script_names(ipart)%to_char())
+            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_part; Error chmoding submit script '//self%script_names(ipart)%to_char())
         endif
         ! when we generate the script we also unflag jobs_submitted and jobs_done
         self%jobs_done(ipart)      = .false.
         self%jobs_submitted(ipart) = .false.
         call wait_for_closure(self%script_names(ipart))
-    end subroutine generate_script_1
+    end subroutine generate_script_part
 
     !> Generic overload generate_script: single job with explicit chash description.
     !! When outfile is present output is redirected to that path; otherwise it is
     !! appended to SIMPLE_SUBPROC_OUT.  When exit_code_fname is present the exit
     !! status is written to that file after the executable finishes.
-    subroutine generate_script_2( self, job_descr, q_descr, exec_bin, script_name, outfile, exit_code_fname )
+    subroutine generate_script_job( self, job_descr, q_descr, exec_bin, script_name, outfile, exit_code_fname )
         class(qsys_ctrl),        intent(in) :: self
         class(chash),            intent(in) :: job_descr        !< job key/value parameters
         class(chash),            intent(in) :: q_descr          !< queue-system metadata
@@ -511,7 +514,7 @@ contains
         type(string) :: job_str
         integer      :: ios, funit
         call fopen(funit, file=script_name, iostat=ios, STATUS='REPLACE', action='WRITE', iomsg=io_msg)
-        call fileiochk('simple_qsys_ctrl :: generate_script_2; Error when opening file: '//&
+        call fileiochk('simple_qsys_ctrl :: generate_script_job; Error when opening file: '//&
             &script_name%to_char()//' ; '//trim(io_msg),ios )
         ! need to specify shell
         write(funit,'(a)') '#!/bin/bash'
@@ -521,6 +524,7 @@ contains
         else
             call self%myqsys%write_instr(job_descr, fhandle=funit)
         endif
+        call write_seed_export(funit)
         write(funit,'(a)') 'cd '//trim(CWD_GLOB)
         write(funit,'(a)') ''
         ! an asynchronous job first records its pid, host and scheduler job id next to its exit-status
@@ -550,9 +554,9 @@ contains
         call wait_for_closure(script_name)
         if( q_descr%get('qsys_name').eq.'local' )then
             ios=simple_chmod(script_name,'+x')
-            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_2; Error chmoding submit script '//script_name%to_char())
+            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_job; Error chmoding submit script '//script_name%to_char())
         endif
-    end subroutine generate_script_2
+    end subroutine generate_script_job
 
     !> The first lines of an asynchronous job's script: the job records its pid, its host and its
     !! scheduler and job id in <exit_code_fname>.job, by temporary and rename.
@@ -569,10 +573,10 @@ contains
     !> Generic overload generate_script: N sequential jobs packed into one script.
     !! All jobs share one output file.  exec_bins(:), when provided, overrides
     !! exec_bin on a per-job basis and must match size(jobs_descr). With
-    !! exit_code_fname, the job records itself as generate_script_2 does, a job
+    !! exit_code_fname, the job records itself as generate_script_job does, a job
     !! that fails ends the script, and the status of the failed or last job is
     !! written there.
-    subroutine generate_script_4( self, jobs_descr, q_descr, exec_bin, script_name, outfile, exec_bins, exit_code_fname )
+    subroutine generate_script_jobs( self, jobs_descr, q_descr, exec_bin, script_name, outfile, exec_bins, exit_code_fname )
         class(qsys_ctrl),          intent(in) :: self
         type(chash),  allocatable, intent(in) :: jobs_descr(:)  !< one job description per sequential task
         class(chash),              intent(in) :: q_descr         !< queue-system metadata
@@ -585,7 +589,7 @@ contains
         character(len=512) :: io_msg
         integer :: ios, funit, i, njobs
         call fopen(funit, file=script_name, iostat=ios, STATUS='REPLACE', action='WRITE', iomsg=io_msg)
-        call fileiochk('simple_qsys_ctrl :: generate_script_4; Error when opening file: '//&
+        call fileiochk('simple_qsys_ctrl :: generate_script_jobs; Error when opening file: '//&
             &script_name%to_char()//' ; '//trim(io_msg),ios )
         ! need to specify shell
         write(funit,'(a)') '#!/bin/bash'
@@ -595,6 +599,7 @@ contains
         else
             call self%myqsys%write_instr(jobs_descr(1), fhandle=funit)
         endif
+        call write_seed_export(funit)
         write(funit,'(a)') 'cd '//trim(CWD_GLOB)
         write(funit,'(a)') ''
         if( present(exit_code_fname) ) call write_job_record(funit, exit_code_fname)
@@ -638,13 +643,13 @@ contains
         call wait_for_closure(script_name)
         if( q_descr%get('qsys_name').eq.'local' )then
             ios=simple_chmod(script_name,'+x')
-            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_4; Error chmoding submit script '//script_name%to_char())
+            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_jobs; Error chmoding submit script '//script_name%to_char())
         endif
-    end subroutine generate_script_4
+    end subroutine generate_script_jobs
 
     !> Generic overload generate_script: single job derived from a cmdline object.
     !! Converts cline to a chash job description internally before writing the script.
-    subroutine generate_script_3( self, cline, q_descr, script_name, prgoutput )
+    subroutine generate_script_cline( self, cline, q_descr, script_name, prgoutput )
         class(qsys_ctrl), intent(inout) :: self
         class(cmdline),   intent(in)    :: cline        !< command-line parameters for the job
         class(chash),     intent(in)    :: q_descr      !< queue-system metadata
@@ -658,7 +663,7 @@ contains
         call cline%gen_job_descr(job_descr)
         ! open for write
         call fopen(funit, file=script_name, iostat=ios, STATUS='REPLACE', action='WRITE', iomsg=io_msg)
-        call fileiochk('simple_qsys_ctrl :: generate_script_3; Error when opening file for writing: '&
+        call fileiochk('simple_qsys_ctrl :: generate_script_cline; Error when opening file for writing: '&
         &//script_name%to_char()//' ; '//trim(io_msg),ios )
         ! need to specify shell
         write(funit,'(a)') '#!/bin/bash'
@@ -668,6 +673,7 @@ contains
         else
             call self%myqsys%write_instr(job_descr, fhandle=funit)
         endif
+        call write_seed_export(funit)
         write(funit,'(a)') 'cd '//trim(CWD_GLOB)
         write(funit,'(a)') ''
         ! compose the command line
@@ -681,11 +687,11 @@ contains
         call fclose(funit)
         if( q_descr%get('qsys_name').eq.'local' )then
             ios = simple_chmod(script_name,'+x')
-            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_3; Error chmoding submit script '//script_name%to_char())
+            if( ios .ne. 0 ) THROW_HARD('simple_qsys_ctrl :: generate_script_cline; Error chmoding submit script '//script_name%to_char())
         endif
         call wait_for_closure(script_name)
         call job_descr%kill
-    end subroutine generate_script_3
+    end subroutine generate_script_cline
 
     ! SUBMISSION TO QSYS
 
@@ -1067,14 +1073,16 @@ contains
         class(qsys_ctrl), intent(in) :: self
         real,             intent(in) :: seconds
         type(string) :: label
+        character(len=32) :: elapsed
         integer      :: n
         n = 0
         if( allocated(self%jobs_done) ) n = size(self%jobs_done)
         if( n < 1 ) return
         label = 'distributed'
         if( self%phase_label%is_allocated() ) label = self%phase_label
-        write(logfhandle,'(A,I0,A,F8.1,A)') '>>> '//upperCase(label%to_char())//': ', n, &
-            &' PART(S) COMPLETED IN ', seconds, ' s'
+        write(elapsed,'(F32.1)') seconds
+        write(logfhandle,'(A,I0,A)') '>>> '//upperCase(label%to_char())//': ', n, &
+            &trim(merge(' part ', ' parts', n == 1))//' completed in '//trim(adjustl(elapsed))//' s'
         call label%kill
     end subroutine report_phase_completion
 
@@ -1117,7 +1125,7 @@ contains
                         call simple_rmfile(self%jobs_done_fnames(ipart))
                         call simple_rmfile(self%jobs_exit_code_fnames(ipart))
                         call simple_rmfile(self%jobs_exit_code_fnames(ipart)//JOB_INFO_EXT)
-                        call self%generate_script_2(job_descr, q_descr, self%exec_binary, self%script_names(ipart), &
+                        call self%generate_script_job(job_descr, q_descr, self%exec_binary, self%script_names(ipart), &
                             &exit_code_fname=self%jobs_exit_code_fnames(ipart))
                         call self%submit_script(self%script_names(ipart))
                     end if
@@ -1327,5 +1335,13 @@ contains
         end if
         self%existence = .false.
     end subroutine kill
+
+    !> the run's seed into a job script when SIMPLE_SEED is set: a part run by a worker whose environment is not
+    !! the master's (the persistent worker) reads the same seed as every other part and the master. Written after
+    !! the scheduler's directive block: a scheduler stops reading its directives at the first non-comment line
+    subroutine write_seed_export( funit )
+        integer, intent(in) :: funit
+        if( has_global_seed() ) write(funit,'(a,i0)') 'export SIMPLE_SEED=', rnd_run_seed()
+    end subroutine write_seed_export
 
 end module simple_qsys_ctrl

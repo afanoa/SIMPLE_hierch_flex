@@ -3,7 +3,7 @@ module simple_commanders_solve2D
 use simple_commanders_api
 use simple_commanders_cavgs
 use simple_commanders_refine2D
-use simple_solve2D_controller 
+use simple_solve2D_controller
 use simple_gui_communicator,       only: gui_communicator
 use simple_eo_partition,           only: ensure_field_halves
 use simple_refine2D_fnames,        only: refine2D_cavgs_fname, refine2D_cavgs_ranked_fname
@@ -72,11 +72,12 @@ contains
         type(gui_communicator)     :: gui_comm
         class(oris),       pointer :: spproj_field
         integer, allocatable :: seed_parent(:), seed_pops(:)
+        real,    allocatable :: res05_hist(:) !< the class FRC=0.5 particle quantile at the ends of the executed stages
         integer :: maxits, istage, last_iter, nptcls_eff, nstages, nsample_target_2D
-        integer :: start_stage, stop_stage, it_pass
+        integer :: start_stage, stop_stage, it_pass, nhist
         integer(timer_int_kind) :: t_tot, t_phase
         real(timer_int_kind)    :: rt_setup, rt_calc_pspec, rt_refine2D, rt_final_cavgs, rt_tot
-        logical :: l_shmem, l_seeded
+        logical :: l_shmem, l_seeded, l_mskdiam_auto, l_key
         if( L_BENCH_GLOB )then
             rt_setup       = 0.
             rt_calc_pspec  = 0.
@@ -98,14 +99,27 @@ contains
         if( .not. cline%defined('eo_stage')      ) call cline%set('eo_stage',      EO_STAGE)
         if( .not. cline%defined('rank_cavgs')    ) call cline%set('rank_cavgs',    'yes')
         if( .not. cline%defined('stats')         ) call cline%set('stats',         'no')
-        if( .not. cline%defined('refine')        ) call cline%set('refine',        'prob_snhc')
+        if( .not. cline%defined('refine')        ) call cline%set('refine',        'prob_neigh')
         if( .not. cline%defined('ml_reg')        ) call cline%set('ml_reg',        'yes')
+        ! the polar shift map is on by default (the parameter's; shift_sigma=0 is the window search); mskdiam=0 under
+        ! it runs stage 1 under the box's mask and takes the mask diameter of the stages after from the class averages
+        ! at the exits of stage 1 and of the centring stage, the low-pass ladder re-derived each time
+        l_mskdiam_auto = .false.
+        if( cline%defined('mskdiam') )then
+            l_key = .true.
+            if( cline%defined('shift_sigma') ) l_key = cline%get_rarg('shift_sigma') > 0.01
+            if( l_key .and. cline%get_rarg('mskdiam') < 0.1 )then
+                call cline%delete('mskdiam')
+                l_mskdiam_auto = .true.
+            endif
+        endif
         ! shared memory execution
         l_shmem = set_shmem_flag(cline)
         ! master parameters
         call params%new(cline)
         call gui_comm%new(params)
         if( params%l_nonuniform ) THROW_HARD('nonuniform filtering is not available in 2D; exec_solve2D')
+        if( params%l_shift_map .and. l_checkpoint ) THROW_HARD('shift_sigma is not supported with stream checkpointing; exec_solve2D')
         call cline%set('mkdir', 'no')
         call spproj%ptr2oritype(params%oritype, spproj_field)
         maxits = params%extr_lim
@@ -157,10 +171,11 @@ contains
         if( L_BENCH_GLOB ) rt_setup = toc(t_phase)
         ! summary
         do istage = 1,nstages
-            write(logfhandle,'(A,I2,A,L1,F6.1,I8,F7.3,2L2)')'>>> STAGE ', istage,' LPSET LP NPTCLS UFRAC ST FR: ',&
+            write(logfhandle,'(A,I2,A,L1,F6.1,I8,F7.3,2L2,F6.1,F7.1)')'>>> STAGE ', istage,' LPSET LP NPTCLS UFRAC ST FR TRS MSKDIAM: ',&
             &stage_parms(istage)%l_lpset,stage_parms(istage)%lp,&
             &stage_parms(istage)%nptcls, stage_parms(istage)%update_frac,&
-            &stage_parms(istage)%l_sticky_sampling, stage_parms(istage)%l_frac_restore
+            &stage_parms(istage)%l_sticky_sampling, stage_parms(istage)%l_frac_restore,&
+            &stage_parms(istage)%trslim, stage_parms(istage)%mskdiam
         end do
         ! prep particles field
         if( start_stage == 1 )then
@@ -178,7 +193,25 @@ contains
         endif
 
         ! Frequency marching
+        allocate(res05_hist(nstages), source=0.)
+        nhist = 0
         do istage = start_stage,stop_stage
+            ! Omit the stage when the class averages already resolve past its planned limit at FRC=0.5 at the
+            ! ends of the last two executed stages (solve2D_stage_behind_frc05): never the entry stage, the
+            ! first two or the last. Phase 1 ends at fixed iterations (the extremal schedule's), so an omitted
+            ! phase-1 stage's iterations go to the phase-1 stage that follows; the last phase-1 stage's and a
+            ! phase-2 stage's are dropped
+            if( solve2D_stage_behind_frc05(stage_parms, istage, start_stage, stop_stage, res05_hist, nhist) )then
+                write(logfhandle,'(A,I3,A,F5.1,A,I0,A)')'>>> SOLVE2D OMITTING STAGE ', istage, ': PLANNED LP ', &
+                    &stage_parms(istage)%lp, ' A ALREADY REACHED AT FRC=0.5 BY THE CLASSES OF ', &
+                    &nint(100.*FRC05_SKIP_PTCL_FRAC), '% OF THE PARTICLES'
+                if( istage < PHASES(1) )then
+                    write(logfhandle,'(A)') '>>> SOLVE2D: THE NEXT STAGE RUN TAKES ITS ITERATIONS (PHASE 1 ENDS AT FIXED ITERATIONS)'
+                else if( istage == PHASES(1) )then
+                    write(logfhandle,'(A)') '>>> SOLVE2D: ITS ITERATIONS ARE DROPPED (PHASE 2 FOLLOWS; THE EXTREMAL SCHEDULE ENDS HERE)'
+                endif
+                cycle
+            endif
             write(logfhandle,'(A)')'>>>'
             if( stage_parms(istage)%l_lpset )then
                 write(logfhandle,'(A,I3,A,F5.1,A)')'>>> STAGE ', istage,' WITH LP ', stage_parms(istage)%lp, ' A'
@@ -197,7 +230,10 @@ contains
             call spproj%read_segment('cls2D', params%projfile)
             call spproj%read_segment('out',   params%projfile)
             call gui_comm%add_metadata(spproj, oritype='cls2D', stage=istage)
+            call record_stage_frc05
+            if( solve2D_first_shift_stage(params, istage) .or. (l_mskdiam_auto .and. istage < FIRST_SHIFT_STAGE) ) call adopt_estimated_mskdiam
         enddo
+        deallocate(res05_hist)
         if( l_checkpoint .and. stop_stage < nstages )then
             last_iter = cline_refine2D%get_iarg('endit')
             write(logfhandle,'(A,I0,A,I0)') '>>> SOLVE2D CHECKPOINT READY: stage=', stop_stage,&
@@ -241,10 +277,6 @@ contains
         call del_file('start2Drefs'//params%ext%to_char())
         call del_file('start2Drefs_even'//params%ext%to_char())
         call del_file('start2Drefs_odd'//params%ext%to_char())
-        call del_files(DIST_FBODY,      params%nparts,ext='.dat')
-        call del_files(ASSIGNMENT_FBODY,params%nparts,ext='.dat')
-        call del_file(DIST_FBODY//'.dat')
-        call del_file(ASSIGNMENT_FBODY//'.dat')
         call cline_refine2D%kill
         call cline_calc_pspec%kill
         deallocate(stage_parms)
@@ -286,7 +318,84 @@ contains
             stage_parms(:)%smpd_crop = params%smpd_crop
             stage_parms(:)%trslim    = min(5.,max(2.0, AHELIX_WIDTH/params%smpd_crop))
             if( cline%defined('trs') ) stage_parms(2:)%trslim = params%trs
+            ! the polar shift map (shift_sigma > 0): the stages' masks are the user's (or the first shift stage's
+            ! estimate); a particle on the disk is prepared under the box's mask by itself (ptcl_on_disk), and an
+            ! automatic run's first shift stage runs under the box's mask so that its class averages can estimate
+            ! the mask diameter at its exit
+            stage_parms(:)%mskdiam = 0.
+            if( params%l_shift_map )then
+                stage_parms(:)%mskdiam = params%mskdiam
+                if( l_mskdiam_auto .and. size(stage_parms) >= FIRST_SHIFT_STAGE )&
+                    &stage_parms(FIRST_SHIFT_STAGE)%mskdiam = (real(params%box) - COSMSKHALFWIDTH) * params%smpd
+            endif
         end subroutine set_dims
+
+        !> the stage omission's evidence (solve2D_stage_behind_frc05): the FRC=0.5 resolution the classes of
+        !! FRC05_SKIP_PTCL_FRAC of the particles reached at the stage's end, from the class FRCs the stage wrote,
+        !! with the fraction of the particles in classes past the next planned limit
+        subroutine record_stage_frc05
+            real :: res05_q, frac_past, lp_next
+            lp_next = 0.
+            if( istage < stop_stage )then
+                if( stage_parms(istage+1)%l_lpset ) lp_next = stage_parms(istage+1)%lp
+            endif
+            frac_past = 0.
+            if( lp_next > TINY )then
+                call solve2D_class_frc05_quantile(spproj, FRC05_SKIP_PTCL_FRAC, res05_q, lp=lp_next, frac_past=frac_past)
+            else
+                call solve2D_class_frc05_quantile(spproj, FRC05_SKIP_PTCL_FRAC, res05_q)
+            endif
+            nhist = nhist + 1
+            res05_hist(nhist) = res05_q
+            if( res05_q < TINY ) return
+            write(logfhandle,'(A,I3,A,I0,A,F5.1,A)') '>>> STAGE ', istage, ' CLASS FRC=0.5 RESOLUTION REACHED BY ', &
+                &nint(100.*FRC05_SKIP_PTCL_FRAC), '% OF THE PARTICLES: ', res05_q, ' A'
+            if( lp_next > TINY ) write(logfhandle,'(A,F5.1,A,F5.1)') &
+                &'>>> % OF THE PARTICLES IN CLASSES PAST THE NEXT PLANNED LP ', lp_next, ' A: ', 100.*frac_past
+        end subroutine record_stage_frc05
+
+        ! the mask diameter estimated from the stage's class averages: printed at the centring stage's exit and, in an
+        ! automatic run (mskdiam=0), adopted for the stages after at the exits of the stages up to the centring stage,
+        ! their low-pass ladder re-derived
+        subroutine adopt_estimated_mskdiam
+            real :: mskdiam_est
+            last_iter = cline_refine2D%get_iarg('endit')
+            call solve2D_mskdiam_estimate(refine2D_cavgs_fname(last_iter, params%ext%to_char()), spproj%os_cls2D,&
+                &params%box_crop, params%smpd_crop, mskdiam_est)
+            write(logfhandle,'(A,I0,A,F7.1,A)') '>>> MASK DIAMETER ESTIMATED FROM THE STAGE ', istage, ' CLASS AVERAGES: ', mskdiam_est, ' A'
+            if( l_mskdiam_auto .and. istage < nstages )then
+                stage_parms(istage+1:)%mskdiam = mskdiam_est
+                call rederive_lplims(istage, mskdiam_est)
+                write(logfhandle,'(A)') '>>> THE STAGES THAT FOLLOW USE IT'
+            endif
+        end subroutine adopt_estimated_mskdiam
+
+        ! the low-pass ladder of the stages after from_stage from an adopted mask diameter: the march from that stage's
+        ! limit to the new hard limit, as set_lplims builds it; a user-set lp or lpstop stands
+        subroutine rederive_lplims( from_stage, mskdiam_new )
+            integer, intent(in) :: from_stage
+            real,    intent(in) :: mskdiam_new
+            real    :: lpstart, lpstop, cenlp
+            integer :: istg, last_march
+            if( cline%defined('lp') .or. cline%defined('lpstop') ) return
+            if( from_stage >= nstages ) return
+            call mskdiam2lplimits_refine2D(mskdiam_new, lpstart, lpstop, cenlp)
+            params%lpstop = max(lpstop, 2.*params%smpd_crop)
+            if( .not. cline%defined('cenlp') ) params%cenlp = max(cenlp, 2.*params%smpd_crop)
+            last_march = nstages
+            if( trim(params%eo_stage) == 'yes' ) last_march = nstages - 1
+            do istg = from_stage + 1, last_march
+                stage_parms(istg)%lp = stage_parms(istg-1)%lp - (stage_parms(istg-1)%lp - params%lpstop)/2.0
+            end do
+            stage_parms(max(last_march, from_stage+1):nstages)%lp = params%lpstop
+            write(logfhandle,'(A,*(F5.1,1X))') '>>> LOW-PASS LADDER OF THE STAGES THAT FOLLOW (IN A): ', stage_parms(from_stage+1:nstages)%lp
+        end subroutine rederive_lplims
+
+        ! the final class averages' mask diameter: the last stage's under the polar shift map
+        real function final_mskdiam()
+            final_mskdiam = params%mskdiam
+            if( stage_parms(nstages)%mskdiam > 0. ) final_mskdiam = stage_parms(nstages)%mskdiam
+        end function final_mskdiam
 
         ! Deals with initial references dimensions when *not* starting from random references
         subroutine inirefs
@@ -655,9 +764,16 @@ contains
             call cline_refine2D%set('extr_iter',      params%extr_lim + 1)
             call cline_refine2D%set('refine',         'greedy')
             call cline_refine2D%set('restore_cavgs', 'yes')
+            ! the polar shift map centres the particles the sampled stages left on the sentinel (zero: the window search)
+            if( params%l_shift_map )then
+                call cline_refine2D%set('shift_sigma', params%shift_sigma)
+            else
+                call cline_refine2D%set('shift_sigma', 0.)
+            endif
             if( present(terminal_policy) ) call terminal_policy(cline_refine2D)
             call cline_refine2D%delete('update_frac')
             call cline_refine2D%delete('fillin')
+            call cline_refine2D%delete('assign_all')
             call cline_refine2D%delete('endit')
             call execute_refine2D('terminal_greedy', nstages + 1)
             call terminal_refs%kill
@@ -700,7 +816,7 @@ contains
             ! adding cavgs & FRCs to project
             call spproj%read_segment('out', params%projfile)
             call spproj%add_frcs2os_out( string(FRCS_FILE), 'frc2D')
-            call spproj%add_cavgs2os_out(finalcavgs, params%smpd, imgkind='cavg', mskdiam=params%mskdiam)
+            call spproj%add_cavgs2os_out(finalcavgs, params%smpd, imgkind='cavg', mskdiam=final_mskdiam())
             call spproj%write_segment_inside('out', params%projfile)
             ! rank based on gold-standard resolution estimates
             finalcavgs_ranked = refine2D_cavgs_ranked_fname(iter, params%ext%to_char())
@@ -782,7 +898,7 @@ contains
         call cline%set('remove_chunks','no')
         call cline%set('objfun',       'euclid')
         call cline%set('numlen',       5)
-        if( .not. cline%defined('refine') ) call cline%set('refine', 'prob_snhc')
+        if( .not. cline%defined('refine') ) call cline%set('refine', 'prob_neigh')
         call cline%set('nthr2D',       cline%get_iarg('nthr'))
         if( .not. cline%defined('mkdir')          ) call cline%set('mkdir',         'yes')
         if( .not. cline%defined('center')         ) call cline%set('center',        'yes')
@@ -1122,7 +1238,7 @@ contains
         call cline_refine2D_chunk%set('tau',     params%tau)
         ! refinement
         select case(trim(params%refine))
-               case('snhc','snhc_smpl','prob','prob_snhc')
+               case('snhc','snhc_smpl','prob','prob_neigh')
                 call cline_refine2D_chunk%set('refine', params%refine)
             case DEFAULT
                 THROW_HARD('UNSUPPORTED REFINE PARAMETER!')

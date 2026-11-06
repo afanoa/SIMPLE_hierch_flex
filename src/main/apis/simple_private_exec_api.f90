@@ -9,8 +9,9 @@
 !! command:
 !!  1. USE its defining simple_commanders_* module here.
 !!  2. Add the corresponding commander_* symbol to the PUBLIC list.
-!!  3. Declare a type(commander_...) variable in simple_exec and wire it
-!!     into the SELECT CASE(prg) dispatch.
+!!  3. Declare a type(commander_...) variable in dispatch_private_prg
+!!     (production/simple_private_exec_driver.f90) and wire it into its
+!!     SELECT CASE(prg).
 module simple_private_exec_api
 use simple_core_module_api
 use simple_cmdline,        only: cmdline, cmdline_err
@@ -28,9 +29,6 @@ commander_pick, commander_make_pickrefs
 use simple_commanders_preprocess, only: commander_preprocess, commander_motion_correct,&
 commander_gen_pspecs_and_thumbs, commander_ctf_estimate
 
-! shape commanders, for operations on 2D shapes
-use simple_commanders_imgops, only: commander_ppca_denoise
-
 ! refine2D commanders, for simultanous 2D alignment and clustering of single-particle images
 use simple_commanders_refine2D, only: commander_make_cavgs, commander_refine2D_distr_worker, commander_refine2D,&
 commander_cavgassemble
@@ -46,8 +44,6 @@ use simple_commanders_project_ptcl, only: commander_prune_project, commander_sca
 
 ! refine3D commanders, low-level methods for refine3D for solve3D (de novo map determination) and 3D refinement
 use simple_commanders_refine3D, only: commander_refine3D_distr_worker
-use simple_commanders_prob,     only: commander_prob_tab, commander_prob_tab_neigh, commander_prob_align,&
-                                      commander_prob_align_neigh, commander_prob_tab2D, commander_prob_align2D
 use simple_commanders_flex_pca,          only: commander_flex_pca_worker
 ! euclid commanders, for obtaining signal statistics for noise normalized Euclidean distance functiuon evalutaion
 use simple_commanders_euclid,       only: commander_calc_pspec,commander_commit_sigma2
@@ -80,7 +76,7 @@ use simple_commanders_ori, only: commander_rotmats2oris
 
 ! tseries commanders, methods operating on time-series data obtained with GLC-EM
 use single_commanders_tseries,    only: commander_tseries_motion_correct
-use single_commanders_trajectory, only: commander_track_particles
+use single_commanders_trajectory, only: commander_tseries_track_particles
 
 ! distr commanders, support routines for distributed execution
 use simple_commanders_distr, only: commander_split

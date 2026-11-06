@@ -1,7 +1,8 @@
 # The atomicity prior on the PCG backend: open work
 
-Status (2026-10-20): the prior works inside `reconstruct3D`; it is not yet used by `refine_tomo`,
-`refine3D_nano` or `autorefine3D_nano`. Design, rationale, the rules every prior obeys, and the
+Status (updated 2026-10-25): the prior works inside `reconstruct3D`, and `autorefine3D_nano`
+can bootstrap it from each round's `detect_atoms` model. It is not yet used by `refine_tomo` or
+standalone `refine3D_nano`. Design, rationale, the rules every prior obeys, and the
 record of what was built are in
 [`../completed/single_pcg_integration_completed.md`](../completed/single_pcg_integration_completed.md)
 (read its sections 3 to 6 for the maths and section 11 for the implementation choices).
@@ -55,12 +56,27 @@ the prior'd halves are never a noise reference (use the prior-free `_base` halve
    `B_i = B_min + B_data`, as `atoms%convolve` uses. Make `atoms%convolve`'s per-element tables a
    kernel builder shared by the simulator and the prior. The prior currently uses one Gaussian for
    all species, which suits annular dark-field STEM (AET) but not TEM data (SINGLE).
-4. **SINGLE particles.** The EM loop in `refine3D_nano` / `autorefine3D_nano`: `detect_atoms`
-   builds the model after each refinement stage (M-step); the next stage reconstructs with the
-   regularized solve (E-step) as the alignment reference, the base solve kept for resolution and
-   the residual. Stage 1, with no model, runs prior-free. ICM (the old filter) is not combined
-   with the prior. Needs item 3. Judged by held-out image prediction and the atom statistics of
-   `detect_atoms`. Files: `single_commanders_nano3D.f90`.
+4. **SINGLE particles, partly implemented.** `autorefine3D_nano atm_prior=yes rec_backend=pcg`
+   now runs stage 1 prior-free, builds a model with `detect_atoms`, and passes that PDB to the next
+   stage's atomic-prior reconstruction. The published map is the regularized solve; resolution,
+   the next atom detection, and species discovery use the prior-free `_base` pair. Every stage
+   retains `_base`, `_res`, and `_atmprior.txt` beside the existing products.
+   The loop is agnostic to the atomic species (ruling of 2026-10-26): `autorefine3D_nano` takes
+   no `element` and no species key, each round's `detect_atoms` runs species-free, and the next
+   prior uses `_ATMS.pdb` with its per-atom table `_atoms.csv` (the density model of
+   `../completed/atomic_density_model.md`: every strong and weak atom with its fitted intensity and width); the
+   model products are retained per round. The prior takes from that table the positions and the
+   per-atom widths (`BFAC`) and leaves every amplitude free: its unpenalized subspace is the span of
+   the atom kernels, each at its own width (ruling 4 of `../completed/atomic_density_model.md`, 2026-10-26; the
+   one-scale form pinned every atom's intensity to the last round's fit of an incomplete model).
+   Species are called afterwards on the final model. A PDB without a per-atom table (a model from
+   elsewhere) keeps the position-only, free-amplitude prior at one fitted width; `_species.pdb`
+   with `_species.csv` (a species-posterior intensity) gives a standalone `reconstruct3D
+   atm_prior=yes` the fitted-model form, whose one-dimensional subspace leaves only the global
+   scale free.
+   Species-dependent TEM kernels still need item 3. Standalone `refine3D_nano`, the full
+   `single_workflow` acceptance trajectory and the held-out image check remain open. The `fcc`
+   case of `single_workflow` runs the loop with `maxits_atm=2` and checks the products exist.
 5. **Per-atom amplitudes for species discovery.** Write the data-fitted amplitude
    `c = argmin || A G c - b ||^2` (solves `G^T H G c = G^T r` with the reconstructor's normal
    operator, by a small CG in atom space) and let `discover_species` use it instead of the aperture
@@ -100,7 +116,7 @@ Written down before the runs, from the design:
 
 ## 4. Rulings and rules that bind
 
-- No ICM step; version 1 has one prior and one strength.
+- Version 1 has one prior and one strength.
 - Tomography first, then SINGLE.
 - Rules every prior obeys: a symmetric positive semi-definite term; a linear operator frozen during
   a solve; nothing accumulated into the raw accumulators; attached only in deapodized kernel mode;

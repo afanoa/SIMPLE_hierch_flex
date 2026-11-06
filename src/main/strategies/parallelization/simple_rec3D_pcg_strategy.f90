@@ -8,12 +8,14 @@ use simple_parameters,          only: parameters
 use simple_reconstructor_pcg,   only: reconstructor_pcg, pcg_solver_outcome, PCG_OP_KERNEL, PCG_LAMBDA, PCG_WEIGHT_THRESHOLD, &
     &pcg_raw_accum_compatible, measure_closed_form_agreement, handle_cold_restart_outcome, report_pcg_solve, &
     &report_closed_form_agreement, write_closed_form_diagnostics, validate_solved_map, read_pcg_raw_accum_header
-use simple_matcher_ptcl_io,     only: prepimgbatch, ptcl_read_session, killimgbatch, prep_rec_observation, &
-    &ptcl_read_counts, ptcl_read_counts_now, ptcl_read_counts_since, take_records, get_rec_observation
+use simple_matcher_ptcl_io,     only: prepimgbatch, ptcl_read_session, killimgbatch, &
+    &ptcl_read_counts, ptcl_read_counts_now, ptcl_read_counts_since, rec_state_half, rec_obs_oris, &
+    &rec_obs_inv_sig2, read_rec_obs_batch
 use simple_matcher_3Drec,       only: write_rec3D_bench
 use simple_sigma2_files,        only: load_sigma2
-use simple_euclid_sigma2,       only: sigma2_half
 use simple_image,               only: image
+use simple_imgarr_utils,        only: alloc_imgarr, dealloc_imgarr
+use simple_refine3D_provenance,  only: begin_reference_set, publish_reference_set, publish_reuse_provenance
 use simple_halfmap_diagnostics, only: halfmap_diagnostics_result, evaluate_halfmap_pair, write_halfmap_diagnostics, &
     &write_support_provenance
 use simple_image_msk,           only: image_msk
@@ -28,12 +30,15 @@ use simple_oris,                only: population_blend_weights
 use simple_state_weight_set,    only: state_weight_set
 use simple_pcg_atomic_prior,    only: pcg_atomic_prior, pcg_atomic_prior_stats
 use simple_atoms,               only: atoms
+use simple_eul_prob_tab_utils,  only: prob_insert_poses
 !$ use omp_lib, only: omp_get_max_threads, omp_get_num_procs, omp_get_max_active_levels, &
 !$     &omp_set_max_active_levels, omp_set_num_threads
 implicit none
 
 public :: execute_rec3D_pcg_worker, execute_rec3D_pcg_distributed_master
 public :: rec3D_master_nthr, validate_pcg_common
+public :: set_pcg_solve_support, calculate_pcg_state_diagnostics, accumulate_pcg_state_half
+public :: pcg_extra_entries, accumulate_pcg_extras
 public :: pcg_assemble_bench, write_pcg_assemble_bench
 private
 #include "simple_local_flags.inc"
@@ -43,7 +48,7 @@ integer, parameter :: PCG_MASTER_NTHR_CAP    = 32   !< master-phase thread-boost
 ! the sphere for automsk=no, the lag-one density envelope for yes and nu
 ! (never the NU-evidence envelope), an explicit pcg_mskfile over both.
 logical, parameter :: DEBUG = .false.
-! atomicity prior: the per-half amplitude fit through the data operator (pcg_atomic_prior%amplitudes)
+! atomicity prior: fitted B/occupancy/posterior intensity with a species table; otherwise free amplitudes
 integer, parameter :: ATM_AMP_MAXITS = 30
 real,    parameter :: ATM_AMP_RTOL   = 1.0e-3
 
@@ -271,13 +276,14 @@ contains
     !! folding and every nonlinear finalization step belong to the master.
     !! With a state weight set, a particle is a member of every state it weighs
     !! into above PCG_WEIGHT_THRESHOLD and enters with its noise spectrum over w.
-    subroutine execute_rec3D_pcg_worker( params, build, cline, selected_pinds, wset, wtab )
+    subroutine execute_rec3D_pcg_worker( params, build, cline, selected_pinds, wset, wtab, extra )
         type(parameters),                  intent(inout) :: params
         type(builder),                     intent(inout) :: build
         class(cmdline),                    intent(inout) :: cline
         integer,                           intent(in)    :: selected_pinds(:)
         class(state_weight_set), optional, intent(inout) :: wset
         real,                    optional, intent(in)    :: wtab(:,:)   !< caller's weight table, rows of selected_pinds
+        type(prob_insert_poses), optional, intent(in)    :: extra       !< the weighted insertion's poses (topk > 1)
         integer, allocatable :: half_pinds(:)
         real,    allocatable :: half_w(:)
         logical :: l_weighted
@@ -287,7 +293,7 @@ contains
         logical :: l_sigma_loaded
         type(ptcl_read_counts)  :: reads0, reads
         type(ptcl_read_session) :: rsess
-        integer(timer_int_kind) :: t0, t_half, t_prep
+        integer(timer_int_kind) :: t0, t_half
         real(timer_int_kind)    :: rt_init, rt_half, rt_prep
 
         if( L_BENCH_GLOB )then
@@ -326,7 +332,7 @@ contains
                 if( l_weighted )then
                     call collect_weighted_state_half(state, eo, selected_pinds, half_pinds, half_w)
                 else
-                    call collect_worker_state_half(state, eo, selected_pinds, half_pinds)
+                    call rec_state_half(build, state, eo, selected_pinds, half_pinds)
                 endif
                 n_half = size(half_pinds)
                 nimgs  = nimgs + n_half
@@ -351,28 +357,6 @@ contains
 
     contains
 
-        subroutine collect_worker_state_half( state_here, eo_here, pinds, selected )
-            integer,              intent(in)  :: state_here, eo_here, pinds(:)
-            integer, allocatable, intent(out) :: selected(:)
-            integer :: i, n, p
-            n = 0
-            do i = 1, size(pinds)
-                p = pinds(i)
-                if( build%spproj_field%get_state(p) /= state_here ) cycle
-                if( build%spproj_field%get_eo(p) /= eo_here ) cycle
-                n = n + 1
-            enddo
-            allocate(selected(n))
-            n = 0
-            do i = 1, size(pinds)
-                p = pinds(i)
-                if( build%spproj_field%get_state(p) /= state_here ) cycle
-                if( build%spproj_field%get_eo(p) /= eo_here ) cycle
-                n = n + 1
-                selected(n) = p
-            enddo
-        end subroutine collect_worker_state_half
-
         !> the state's weighted members of one half (only params%state when state= was given)
         subroutine collect_weighted_state_half( state_here, eo_here, pinds, selected, weights )
             integer,              intent(in)  :: state_here, eo_here, pinds(:)
@@ -394,7 +378,7 @@ contains
             endif
             allocate(l_half(size(members)))
             do i = 1, size(members)
-                l_half(i) = build%spproj_field%get_eo(members(i)) == eo_here
+                l_half(i) = build%spproj_field%get_half(members(i)) == eo_here
             enddo
             selected = pack(members, l_half)
             weights  = pack(wmem,    l_half)
@@ -405,17 +389,7 @@ contains
             integer,          intent(in) :: state_here, eo_here, pinds(:)
             character(len=*), intent(in) :: provenance_here
             type(reconstructor_pcg) :: pcgop
-            type(oris)      :: selection
-            type(ori)       :: orientation
-            type(ctfparams) :: ctfparms
             type(string)    :: fname
-            type(image)     :: obs
-            complex, allocatable :: y_batch(:,:,:)
-            real,    allocatable :: inv_sig2(:), con(:), pw(:)
-            integer :: lims2(2,2), R, batchlims(2), batchsz, ih
-            integer :: i, ii, iptcl, ibatch
-            real    :: shift(2), crop_factor
-            logical :: l_records, l_con
 
             call pcgop%new(params%box_crop, params%smpd_crop, PCG_LAMBDA)
             fname = refine3D_pcg_raw_accum_fname(state_here, params%part, params%numlen, &
@@ -427,79 +401,11 @@ contains
                 call fname%kill
                 return
             endif
-            call pcgop%set_sym(build%pgrpsyms)
-            lims2 = pcgop%get_lims2()
-            R     = lims2(1,2)
-            ! every particle of the call is in half eo_here: one inverse spectrum at the native shells 0:R, read
-            ! from the spectra's plane grid at the padded shells OSMPL_PAD_FAC*n, which hold exactly sigma2(n)
-            if( params%cc_objfun == OBJFUN_EUCLID )then
-                call build%esig%prep_fplane_grid(params%box_croppd, lbound(build%esig%sigma2_noise,1))
-                ih = sigma2_half(eo_here)
-                allocate(inv_sig2(0:R))
-                if( OSMPL_PAD_FAC*R > build%esig%fplane%nyq ) THROW_HARD('the plane grid does not reach the PCG shells')
-                inv_sig2(0:R) = build%esig%fplane%inv_sig2(0:OSMPL_PAD_FAC*R:OSMPL_PAD_FAC, ih)
-            endif
-            call selection%new(size(pinds), .true.)
-            call orientation%new(.false.)
-            crop_factor = real(params%box_crop) / real(params%box)
-            allocate(con(size(pinds)), source=1.)
-            do i = 1, size(pinds)
-                iptcl = pinds(i)
-                call build%spproj_field%get_ori(iptcl, orientation)
-                ctfparms      = build%spproj%get_ctfparams(params%oritype, iptcl)
-                ctfparms%smpd = params%smpd_crop
-                shift         = build%spproj_field%get_2Dshift(iptcl) * crop_factor
-                call orientation%set_ctfvars(ctfparms)
-                call orientation%set_shift(shift)
-                call selection%set_ori(i, orientation)
-                if( build%spproj_field%isthere(iptcl, 'contrast') ) con(i) = build%spproj_field%get(iptcl, 'contrast')
-            enddo
-            l_con = any(con /= 1.)
             if( l_weighted )then
-                pw = half_w
+                call accumulate_pcg_state_half(params, build, rsess, eo_here, pinds, pcgop, rt_prep, half_w, extra=extra)
             else
-                allocate(pw(size(pinds)), source=1.)
+                call accumulate_pcg_state_half(params, build, rsess, eo_here, pinds, pcgop, rt_prep, extra=extra)
             endif
-            if( l_con ) pw = pw * max(con, 0.)**2
-            ! the state weight acts as an inverse noise scale: it multiplies the B term and |T|^2 alike
-            if( allocated(inv_sig2) )then
-                if( l_weighted .or. l_con )then
-                    call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2, weights=pw)
-                else
-                    call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2)
-                endif
-            else
-                if( l_weighted .or. l_con )then
-                    call pcgop%prep_particles(selection, use_ctf=.true., weights=pw)
-                else
-                    call pcgop%prep_particles(selection, use_ctf=.true.)
-                endif
-            endif
-            allocate(y_batch(lims2(1,1):lims2(1,2), lims2(2,1):lims2(2,2), MAXIMGBATCHSZ))
-            call pcgop%begin_accum
-            call obs%new([params%box_crop,params%box_crop,1], params%smpd_crop)
-            do ibatch = 1, size(pinds), MAXIMGBATCHSZ
-                batchlims = [ibatch, min(size(pinds),ibatch+MAXIMGBATCHSZ-1)]
-                batchsz   = batchlims(2) - batchlims(1) + 1
-                ! the search's records of a cropped pass are the batch's observations, else the batch is read
-                l_records = take_records(pinds(batchlims(1):batchlims(2)))
-                if( .not. l_records ) call rsess%read(params, build, size(pinds), pinds, batchlims)
-                if( L_BENCH_GLOB ) t_prep = tic()
-                do ii = 1, batchsz
-                    ! the backend-neutral observation (normalize, crop, taper), see prep_rec_observation
-                    if( l_records )then
-                        call get_rec_observation(pinds(batchlims(1)+ii-1), obs, .true.)
-                    else
-                        call prep_rec_observation(build%imgbatch(ii), build%lmsk, obs, .true.)
-                    endif
-                    call obs%fft
-                    y_batch(:,:,ii) = pcgop%extract_native_plane(obs)
-                    if( l_con .and. con(batchlims(1)+ii-1) > 0. ) y_batch(:,:,ii) = y_batch(:,:,ii) / con(batchlims(1)+ii-1)
-                enddo
-                if( L_BENCH_GLOB ) rt_prep = rt_prep + toc(t_prep)
-                call pcgop%accumulate_batch(y_batch, batchsz, batchlims(1))
-            enddo
-            call obs%kill
             if( l_weighted )then
                 call pcgop%write_raw_accum(fname, state_here, eo_here, params%part, &
                     &params%nparts, size(pinds), provenance_here, mass=sum(real(half_w,dp)), wset_id=wset_id)
@@ -508,14 +414,181 @@ contains
                     &params%nparts, size(pinds), provenance_here)
             endif
             call pcgop%kill
-            call selection%kill
-            call orientation%kill
             call fname%kill
-            deallocate(y_batch)
-            if( allocated(inv_sig2) ) deallocate(inv_sig2)
         end subroutine accumulate_worker_state_half
 
     end subroutine execute_rec3D_pcg_worker
+
+    !> The accumulation of the particles pinds, all in half eo_here, into pcgop (made by the caller): the
+    !! point group, the half's noise spectrum at the native shells (objfun=euclid), the particles' orientations
+    !! and CTF at the cropped box, and one pass over their observation batches through rsess. The frame the
+    !! PCG worker publishes and reconstruct3D_wave's start finalizes. weights: the state weights, an inverse
+    !! noise scale that multiplies the B term and |T|^2 alike. extra (the weighted insertion, topk > 1): a particle
+    !! with an entry enters at its committed pose with its committed weight and at each extra pose as one more
+    !! entry from the same observation (pcg_extra_entries), as the gridding insertion has it
+    subroutine accumulate_pcg_state_half( params, build, rsess, eo_here, pinds, pcgop, rt_prep, weights, extra )
+        class(parameters),                 intent(in)    :: params
+        class(builder),                    intent(inout) :: build
+        class(ptcl_read_session),          intent(inout) :: rsess
+        integer,                           intent(in)    :: eo_here, pinds(:)
+        class(reconstructor_pcg),          intent(inout) :: pcgop
+        real(timer_int_kind),              intent(inout) :: rt_prep
+        real,                    optional, intent(in)    :: weights(:)
+        type(prob_insert_poses), optional, intent(in)    :: extra
+        type(oris)  :: selection, entries
+        type(image), allocatable :: obs(:)
+        complex,     allocatable :: y_batch(:,:,:), y_x(:,:,:)
+        real,        allocatable :: inv_sig2(:), wbase(:), wts(:), con(:), weff(:)
+        integer,     allocatable :: xptcl(:), xfirst(:)
+        integer :: lims2(2,2), R, batchlims(2), batchsz, ibatch, nthr, n, nxmax, i
+        logical :: l_extra, l_con, l_w
+        call pcgop%set_sym(build%pgrpsyms)
+        lims2 = pcgop%get_lims2()
+        R     = lims2(1,2)
+        n     = size(pinds)
+        ! a per-particle contrast c (set by hetero_tree) enters as the observation y/c weighted by c^2
+        allocate(con(n), source=1.)
+        do i = 1, n
+            if( build%spproj_field%isthere(pinds(i), 'contrast') ) con(i) = build%spproj_field%get(pinds(i), 'contrast')
+        enddo
+        l_con = any(con /= 1.)
+        l_w   = present(weights) .or. l_con
+        allocate(weff(n), source=1.)
+        if( present(weights) ) weff = weights
+        if( l_con ) weff = weff * max(con, 0.)**2
+        ! every particle of the call is in half eo_here: one inverse spectrum at the native shells 0:R
+        if( params%cc_objfun == OBJFUN_EUCLID ) call rec_obs_inv_sig2(params, build, eo_here, R, inv_sig2)
+        call rec_obs_oris(params, build, pinds, selection)
+        l_extra = .false.
+        if( present(extra) ) l_extra = extra%nptcls > 0
+        if( l_extra )then
+            allocate(wbase(n), source=weff)
+            call pcg_extra_entries(selection, pinds, wbase, extra, real(params%box_crop) / real(params%box), entries,&
+                &wts, xptcl, xfirst)
+            if( allocated(inv_sig2) )then
+                call pcgop%prep_particles(entries, use_ctf=.true., inv_sig2=inv_sig2, weights=wts)
+            else
+                call pcgop%prep_particles(entries, use_ctf=.true., weights=wts)
+            endif
+            ! the extra entries of a batch's particles, at most
+            nxmax = 1
+            do ibatch = 1, n, MAXIMGBATCHSZ
+                nxmax = max(nxmax, xfirst(min(n, ibatch+MAXIMGBATCHSZ-1)+1) - xfirst(ibatch))
+            enddo
+            allocate(y_x(lims2(1,1):lims2(1,2), lims2(2,1):lims2(2,2), nxmax))
+        else if( allocated(inv_sig2) )then
+            if( l_w )then
+                call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2, weights=weff)
+            else
+                call pcgop%prep_particles(selection, use_ctf=.true., inv_sig2=inv_sig2)
+            endif
+        else
+            if( l_w )then
+                call pcgop%prep_particles(selection, use_ctf=.true., weights=weff)
+            else
+                call pcgop%prep_particles(selection, use_ctf=.true.)
+            endif
+        endif
+        allocate(y_batch(lims2(1,1):lims2(1,2), lims2(2,1):lims2(2,2), MAXIMGBATCHSZ))
+        call pcgop%begin_accum
+        ! one observation work image per thread of the batch preparation
+        nthr = 1
+        !$ nthr = omp_get_max_threads()
+        call alloc_imgarr(nthr, [params%box_crop,params%box_crop,1], params%smpd_crop, obs)
+        do ibatch = 1, size(pinds), MAXIMGBATCHSZ
+            batchlims = [ibatch, min(size(pinds),ibatch+MAXIMGBATCHSZ-1)]
+            batchsz   = batchlims(2) - batchlims(1) + 1
+            ! the search's records of a cropped pass are the batch's observations, else the batch is read
+            call read_rec_obs_batch(params, build, rsess, pinds, batchlims, obs, lims2, R*R, y_batch, rt_prep)
+            if( l_con )then
+                do i = 1, batchsz
+                    if( con(batchlims(1)+i-1) > 0. ) y_batch(:,:,i) = y_batch(:,:,i) / con(batchlims(1)+i-1)
+                enddo
+            endif
+            call pcgop%accumulate_batch(y_batch, batchsz, batchlims(1))
+            if( l_extra ) call accumulate_pcg_extras(pcgop, y_batch, batchlims, n, xptcl, xfirst, y_x)
+        enddo
+        call dealloc_imgarr(obs)
+        call selection%kill
+        call entries%kill
+        deallocate(y_batch)
+        if( allocated(inv_sig2) ) deallocate(inv_sig2)
+        if( allocated(y_x) ) deallocate(y_x, wbase, wts, xptcl, xfirst)
+        deallocate(con, weff)
+    end subroutine accumulate_pcg_state_half
+
+    !> The PCG entries of the weighted insertion (topk > 1) for the particles pinds, whose committed poses selection
+    !! holds at the cropped box: entries 1..n the committed poses, weighted wbase times the committed weight for a
+    !! particle with an insertion entry, then each extra pose of positive weight in particle order (the committed
+    !! orientation with the pose's Euler triplet and absolute stored shift times crop_factor, weighted wbase times
+    !! the pose's weight). xptcl: each extra entry's particle; xfirst(i): the first extra entry of particle i
+    !! (xfirst(n+1) one past the last), both counted within the extras
+    subroutine pcg_extra_entries( selection, pinds, wbase, extra, crop_factor, entries, wts, xptcl, xfirst )
+        class(oris),             intent(inout) :: selection
+        integer,                 intent(in)    :: pinds(:)
+        real,                    intent(in)    :: wbase(:), crop_factor
+        type(prob_insert_poses), intent(in)    :: extra
+        type(oris),              intent(inout) :: entries
+        real,    allocatable,    intent(out)   :: wts(:)
+        integer, allocatable,    intent(out)   :: xptcl(:), xfirst(:)
+        type(ori) :: o
+        integer   :: n, nx, i, k, iloc, ipose, ix
+        n = size(pinds)
+        if( selection%get_noris() /= n .or. size(wbase) /= n ) THROW_HARD('one committed pose and weight per particle; pcg_extra_entries')
+        allocate(xfirst(n+1))
+        nx = 0
+        do i = 1, n
+            xfirst(i) = nx + 1
+            if( .not. extra%has(pinds(i)) ) cycle
+            iloc = extra%loc(pinds(i))
+            do k = 1, extra%nextra(iloc)
+                if( extra%w(extra%first(iloc) + k - 1) > 0. ) nx = nx + 1
+            enddo
+        enddo
+        xfirst(n+1) = nx + 1
+        allocate(wts(n+nx), xptcl(nx))
+        call entries%new(n + nx, .true.)
+        call o%new(.true.)
+        ix = 0
+        do i = 1, n
+            call selection%get_ori(i, o)
+            call entries%set_ori(i, o)
+            wts(i) = wbase(i)
+            if( .not. extra%has(pinds(i)) ) cycle
+            iloc   = extra%loc(pinds(i))
+            wts(i) = wbase(i) * extra%wc(iloc)
+            do k = 1, extra%nextra(iloc)
+                ipose = extra%first(iloc) + k - 1
+                if( .not. (extra%w(ipose) > 0.) ) cycle
+                ix = ix + 1
+                call selection%get_ori(i, o)
+                call o%set_euler(extra%euler(:,ipose))
+                call o%set_shift(extra%shift(:,ipose) * crop_factor)
+                call entries%set_ori(n + ix, o)
+                wts(n + ix) = wbase(i) * extra%w(ipose)
+                xptcl(ix)   = i
+            enddo
+        enddo
+        call o%kill
+    end subroutine pcg_extra_entries
+
+    !> the extra entries of the particles batchlims(1):batchlims(2) (pcg_extra_entries' layout after the n committed
+    !! ones), each from its particle's observation in y_batch; y_x the scratch planes
+    subroutine accumulate_pcg_extras( pcgop, y_batch, batchlims, n, xptcl, xfirst, y_x )
+        class(reconstructor_pcg), intent(inout) :: pcgop
+        complex,                  intent(in)    :: y_batch(:,:,:)
+        integer,                  intent(in)    :: batchlims(2), n, xptcl(:), xfirst(:)
+        complex,                  intent(inout) :: y_x(:,:,:)
+        integer :: e1, e2, e
+        e1 = xfirst(batchlims(1))
+        e2 = xfirst(batchlims(2) + 1) - 1
+        if( e2 < e1 ) return
+        if( e2 - e1 + 1 > size(y_x,3) ) THROW_HARD('the scratch planes are fewer than the batch''s extra poses; accumulate_pcg_extras')
+        do e = e1, e2
+            y_x(:,:,e - e1 + 1) = y_batch(:,:,xptcl(e) - batchlims(1) + 1)
+        enddo
+        call pcgop%accumulate_batch(y_x(:,:,1:e2-e1+1), e2 - e1 + 1, n + e1)
+    end subroutine accumulate_pcg_extras
 
     !> Distributed master: reduce raw worker B,D artifacts in ascending part
     !! order, then perform all folding, finalization and PCG locally. For each
@@ -813,6 +886,7 @@ contains
             endif
             time_map_output = 0.0_dp
             time_nu_filter  = 0.0_dp
+            if( params%oritype == 'ptcl3D' ) call begin_reference_set(fname_vol)
             if( params%l_ml_reg )then
                 fname_even_unfil = refine3D_state_halfvol_fname(state, 'even', unfil=.true.)
                 fname_odd_unfil  = refine3D_state_halfvol_fname(state, 'odd',  unfil=.true.)
@@ -929,6 +1003,10 @@ contains
                 endif
                 time_nu_filter = real(toc(t_state_phase),dp)
             endif
+            eonames(1) = fname_even
+            eonames(2) = fname_odd
+            call publish_reference_set(params, build%spproj, build%spproj_field, state, fname_vol, &
+                &eonames, fname_fsc, align_lps(state))
             call write_output_diagnostics(state, 'distributed', time_map_output, time_fsc_output, time_nu_filter)
             if( L_BENCH_GLOB )then
                 bt%rt_map_output  = bt%rt_map_output + time_map_output
@@ -1287,8 +1365,8 @@ contains
                 allocate(l_row(params%fromp:params%top), source=.false.)
                 do p = params%fromp, params%top
                     if( build%spproj_field%get_state(p) <= 0 ) cycle
-                    if( build%spproj_field%get_eo(p) /= eo_here ) cycle
                     if( l_has_updates .and. build%spproj_field%get_updatecnt(p) < 1 ) cycle
+                    if( build%spproj_field%get_half(p) /= eo_here ) cycle
                     l_row(p) = .true.
                 enddo
                 rows = pack([(p, p = params%fromp, params%top)], l_row)
@@ -1300,8 +1378,8 @@ contains
             endif
             do p = params%fromp, params%top
                 if( build%spproj_field%get_state(p) /= state_here ) cycle
-                if( build%spproj_field%get_eo(p) /= eo_here ) cycle
                 if( l_has_updates .and. build%spproj_field%get_updatecnt(p) < 1 ) cycle
+                if( build%spproj_field%get_half(p) /= eo_here ) cycle
                 n = n + 1
             enddo
             mass = real(n, dp)
@@ -1332,7 +1410,7 @@ contains
         subroutine write_chain_manifest( state_here )
             integer, intent(in) :: state_here
             type(trail_chain_manifest) :: man
-            type(string)    :: manifest, half_fname
+            type(string)    :: manifest, half_fname, files(3)
             integer(int64)  :: sizes(4)
             integer         :: io_stat, gen
             integer(timer_int_kind) :: t_manifest
@@ -1349,6 +1427,12 @@ contains
                 &gen, sizes, real(sum(chain_mass)), sum(chain_contrib), wset_id)
             call man%write(manifest, io_stat)
             if( io_stat /= 0 ) THROW_WARN('failed to write the PCG trailing chain manifest; the chain will be re-seeded')
+            if( io_stat == 0 )then
+                files(1) = manifest
+                files(2) = refine3D_pcg_trail_accum_fname(state_here, 'even')
+                files(3) = refine3D_pcg_trail_accum_fname(state_here, 'odd')
+                call publish_reuse_provenance(params, build%spproj, build%spproj_field, 'chain', manifest, files)
+            endif
             call man%kill
             call manifest%kill
             if( L_BENCH_GLOB ) bt%rt_chain = bt%rt_chain + toc(t_manifest)
@@ -1432,8 +1516,10 @@ contains
             type(atoms)       :: model
             type(pcg_atomic_prior_stats) :: astats
             real, allocatable :: pos(:,:), supp(:,:,:), xb(:,:,:), model_map(:,:,:)
+            real, allocatable :: atom_bfac(:), atom_occ(:), atom_prior_intensity(:)
             real    :: bdata, lambda_rel_est, shift_a
             integer :: i, nsh
+            logical :: l_widths, l_fitted_model
             call model%new(params%pdbfile)
             if( model%get_n() < 1 ) THROW_HARD('the atom model pdbfile holds no atoms; atm_prior')
             ! PDB A = 0-based native voxel * smpd; the crop keeps the box centre and the field of view
@@ -1442,18 +1528,30 @@ contains
             do i = 1, model%get_n()
                 pos(:,i) = (model%get_coord(i) - shift_a) / params%smpd_crop + real(params%box_crop/2 + 1)
             end do
+            call read_species_prior_fields(model%get_n(), atom_bfac, atom_occ, atom_prior_intensity, l_widths, l_fitted_model)
             call model%kill
             call even_job%pcgop%get_solve_support(supp)
-            call atm_prior%new(params%box_crop, params%smpd_crop, pos, supp)
+            if( l_fitted_model )then
+                call atm_prior%new(params%box_crop, params%smpd_crop, pos, supp, bfacs=atom_bfac,&
+                    &occupancies=atom_occ, intensities=atom_prior_intensity)
+            elseif( l_widths )then
+                call atm_prior%new(params%box_crop, params%smpd_crop, pos, supp, bfacs=atom_bfac)
+            else
+                call atm_prior%new(params%box_crop, params%smpd_crop, pos, supp)
+            endif
             deallocate(pos, supp)
             xb  = 0.5 * (even_job%x + odd_job%x)
             nsh = 0
-            if( params%l_bfac_data_fit )then
+            if( l_widths )then
+                bdata = 0.
+            elseif( params%l_bfac_data_fit )then
                 call atm_prior%fit_width(xb, bdata, nsh)
             else
                 bdata = params%bfac_data
             endif
-            if( bdata > 0. ) call atm_prior%build(atm_prior%get_bfac_min() + bdata)
+            if( .not. l_widths )then
+                if( bdata > 0. ) call atm_prior%build(atm_prior%get_bfac_min() + bdata)
+            endif
             lambda_rel_est = atm_prior%estimate_lambda(xb, even_job%x, odd_job%x)
             atm_lambda_rel = lambda_rel_est
             if( params%lambda_atm > 0. ) atm_lambda_rel = params%lambda_atm
@@ -1461,21 +1559,34 @@ contains
             write(logfhandle,'(A,I0,A,I0,A,I0,A,I0,A,I0,A)') '>>> PCG ATOMIC PRIOR: STATE ', state_here, ', ', &
                 &astats%natoms, ' of ', astats%natoms_in, ' atoms (', astats%ndup, ' duplicates, ', astats%noutside, &
                 &' off the support)'
-            write(logfhandle,'(A,F8.3,A,F8.3,A,I0,A,F6.3,A,I0)') '>>> PCG ATOMIC PRIOR: B_min ', astats%bfac_min, &
-                &' A^2 + B_data ', astats%bfac_data, ' A^2 (fit over ', nsh, ' shells), sigma ', astats%sigma_vox, &
-                &' voxels, footprint radius ', astats%foot_rad
+            if( astats%fitted_model )then
+                write(logfhandle,'(A,3F8.3,A,F7.4,A,ES11.3)') '>>> PCG ATOMIC PRIOR: fitted B min/mean/max ', &
+                    &astats%bfac_model_min, astats%bfac_model_mean, astats%bfac_model_max, &
+                    &' A^2, mean occupancy ', astats%occupancy_mean, ', mean posterior intensity ', astats%intensity_mean
+            elseif( astats%atom_widths )then
+                write(logfhandle,'(A,3F8.3,A)') '>>> PCG ATOMIC PRIOR: per-atom B min/mean/max ', astats%bfac_model_min, &
+                    &astats%bfac_model_mean, astats%bfac_model_max, ' A^2, amplitudes free'
+            else
+                write(logfhandle,'(A,F8.3,A,F8.3,A,I0,A,F6.3,A,I0)') '>>> PCG ATOMIC PRIOR: B_min ', astats%bfac_min, &
+                    &' A^2 + B_data ', astats%bfac_data, ' A^2 (fit over ', nsh, ' shells), sigma ', astats%sigma_vox, &
+                    &' voxels, footprint radius ', astats%foot_rad
+            endif
             write(logfhandle,'(A,4ES11.3,A,F7.4,A,F9.5,A)') '>>> PCG ATOMIC PRIOR: N S E C^2 ', astats%noise, &
                 &astats%signal, astats%explained, astats%c2, ' -> lambda_rel estimate ', astats%lambda_rel_est, &
                 &' (merged-map ratio ', astats%lambda_rel_merged, ')'
             ! amplitudes per half through its own operator, before the prior is attached (it vanishes on span(G))
             allocate(atm_c(atm_prior%get_natoms(),2), source=0._dp)
             call fit_amplitudes_pair
-            model_map = 0.5 * (even_job%pcgop%atomic_model_map(atm_prior, atm_c(:,1)) + &
-                &odd_job%pcgop%atomic_model_map(atm_prior, atm_c(:,2)))
+            if( atm_prior%uses_fitted_model() )then
+                model_map = atm_prior%project(xb)
+            else
+                model_map = 0.5 * (even_job%pcgop%atomic_model_map(atm_prior, atm_c(:,1)) + &
+                    &odd_job%pcgop%atomic_model_map(atm_prior, atm_c(:,2)))
+            endif
             call atm_res%new([params%box_crop,params%box_crop,params%box_crop], params%smpd_crop)
             call atm_res%set_rmat(xb - model_map, .false.)
             deallocate(xb, model_map)
-            write(logfhandle,'(A,2(I0,A,ES10.3,A))') '>>> PCG ATOMIC PRIOR: amplitudes fitted to the data, even ', &
+            write(logfhandle,'(A,2(I0,A,ES10.3,A))') '>>> PCG ATOMIC PRIOR: free amplitudes fitted for diagnostics, even ', &
                 &atm_amp_nits(1), ' iterations (residual ', atm_amp_rres(1), '), odd ', atm_amp_nits(2), &
                 &' iterations (residual ', atm_amp_rres(2), ')'
             call even_job%pcgop%set_atomic_prior(atm_prior, atm_lambda_rel)
@@ -1485,6 +1596,127 @@ contains
                 &' | lambda_A even/odd ', atm_lambda_abs, ' | realspace diagonal even/odd ', &
                 &even_job%pcgop%get_realspace_diagonal(), odd_job%pcgop%get_realspace_diagonal()
         end subroutine prepare_atomic_prior_on_pair
+
+        !> The per-atom table beside the PDB carries the density model of detect_atoms (atomic_density_model.md): for
+        !! <fbody>_ATMS.pdb it is <fbody>_atoms.csv, whose widths (BFAC) shape the kernels while the amplitudes stay
+        !! free (ruling 4 of atomic_density_model.md: the loop's prior); for <fbody>_species.pdb it is
+        !! <fbody>_species.csv, whose species-posterior intensity (POSTERIOR_INTENSITY) with BFAC and OCCUPANCY fixes
+        !! the fitted model up to one scale. Columns are found by name; a PDB without a table keeps the position-only
+        !! prior at one width
+        subroutine read_species_prior_fields( natoms, bfacs, occupancies, prior_intensities, found_widths, found_model )
+            integer,           intent(in)  :: natoms
+            real, allocatable, intent(out) :: bfacs(:), occupancies(:), prior_intensities(:)
+            logical,           intent(out) :: found_widths, found_model
+            character(len=*), parameter :: ATMS_TAG = '_ATMS'
+            character(len=:), allocatable :: stem
+            type(string) :: csvfile, stem_str
+            character(len=LONGSTRLEN) :: line
+            integer :: funit, io_stat, i, ncol, col_b, col_int, col_occ, nzero, lstem
+            found_widths = .false.
+            found_model  = .false.
+            stem_str = get_fbody(params%pdbfile, 'pdb')
+            stem     = stem_str%to_char()
+            lstem    = len(stem)
+            csvfile = string(stem//'.csv')
+            if( .not. file_exists(csvfile) )then
+                if( lstem > len(ATMS_TAG) )then
+                    if( stem(lstem-len(ATMS_TAG)+1:) == ATMS_TAG ) csvfile = string(stem(:lstem-len(ATMS_TAG))//'_atoms.csv')
+                endif
+            endif
+            if( .not. file_exists(csvfile) ) return
+            call fopen(funit, file=csvfile, status='old', action='read', iostat=io_stat)
+            call fileiochk('atomic prior opening fitted model table '//csvfile%to_char(), io_stat)
+            read(funit,'(A)',iostat=io_stat) line
+            call fileiochk('atomic prior reading fitted model table header', io_stat)
+            ncol    = nfields(line)
+            col_b   = column_of(line, 'BFAC')
+            col_int = column_of(line, 'POSTERIOR_INTENSITY')
+            col_occ = column_of(line, 'OCCUPANCY')
+            if( col_b == 0 )then
+                call fclose(funit)
+                return
+            endif
+            allocate(bfacs(natoms), occupancies(natoms), prior_intensities(natoms), source=1.)
+            nzero = 0
+            do i = 1, natoms
+                read(funit,'(A)',iostat=io_stat) line
+                call fileiochk('atomic prior reading fitted model table row '//int2str(i)//' of '//csvfile%to_char(), io_stat)
+                if( nfields(line) /= ncol ) THROW_HARD('fitted model table row '//int2str(i)//' has not the header''s columns; atomic prior')
+                bfacs(i) = field_value(line, col_b)
+                if( col_occ > 0 ) occupancies(i) = field_value(line, col_occ)
+                if( col_int > 0 )then
+                    prior_intensities(i) = field_value(line, col_int)
+                    ! an atom fitted to zero intensity keeps its kernel at vanishing weight rather than stopping the solve
+                    if( .not. prior_intensities(i) > 0. )then
+                        prior_intensities(i) = TINY
+                        nzero = nzero + 1
+                    endif
+                endif
+            enddo
+            read(funit,'(A)',iostat=io_stat) line
+            if( io_stat == 0 ) THROW_HARD('fitted model table has more rows than its PDB; atomic prior')
+            call fclose(funit)
+            if( any(.not. ieee_is_finite(bfacs)) .or. any(.not. ieee_is_finite(occupancies)) .or. &
+                &any(.not. ieee_is_finite(prior_intensities)) ) THROW_HARD('fitted atomic model fields must be finite')
+            if( nzero > 0 ) write(logfhandle,'(A,I0,A)') '>>> PCG ATOMIC PRIOR: ', nzero, ' atoms of the table have zero fitted intensity'
+            found_widths = .true.
+            found_model  = col_int > 0
+            if( found_model )then
+                write(logfhandle,'(A)') '>>> PCG ATOMIC PRIOR: fitted model read from '//csvfile%to_char()
+            else
+                write(logfhandle,'(A)') '>>> PCG ATOMIC PRIOR: per-atom widths read from '//csvfile%to_char()
+            endif
+        end subroutine read_species_prior_fields
+
+        integer function nfields( line )
+            character(len=*), intent(in) :: line
+            integer :: j
+            nfields = 1
+            do j = 1, len_trim(line)
+                if( line(j:j) == ',' ) nfields = nfields + 1
+            enddo
+        end function nfields
+
+        !> 1-based index of the comma-separated header field equal to name, 0 when absent
+        integer function column_of( header, name )
+            character(len=*), intent(in) :: header, name
+            integer :: j, start, icol
+            column_of = 0
+            icol  = 1
+            start = 1
+            do j = 1, len_trim(header) + 1
+                if( j > len_trim(header) .or. header(j:j) == ',' )then
+                    if( trim(adjustl(header(start:j-1))) == name )then
+                        column_of = icol
+                        return
+                    endif
+                    icol  = icol + 1
+                    start = j + 1
+                endif
+            enddo
+        end function column_of
+
+        !> the real value of comma-separated field icol of line
+        real function field_value( line, icol )
+            character(len=*), intent(in) :: line
+            integer,          intent(in) :: icol
+            integer :: j, start, jcol, io_stat
+            field_value = 0.
+            jcol  = 1
+            start = 1
+            do j = 1, len_trim(line) + 1
+                if( j > len_trim(line) .or. line(j:j) == ',' )then
+                    if( jcol == icol )then
+                        read(line(start:j-1),*,iostat=io_stat) field_value
+                        call fileiochk('atomic prior parsing fitted model table field '//int2str(icol), io_stat)
+                        return
+                    endif
+                    jcol  = jcol + 1
+                    start = j + 1
+                endif
+            enddo
+            THROW_HARD('fitted model table field '//int2str(icol)//' is missing; atomic prior')
+        end function field_value
 
         !> the per-half amplitude fits, concurrently as the half solves
         subroutine fit_amplitudes_pair
@@ -1516,7 +1748,7 @@ contains
             atm_c(:,2) = c_odd
         end subroutine fit_amplitudes_pair
 
-        !> atm_prior=yes: the prior-free pair and its average under _base, the residual x_b - G c under _res, the
+        !> atm_prior=yes: the prior-free pair and its average under _base, the residual to the active atom model under _res, the
         !! sidecar _atmprior.txt; half_even/half_odd and merged still hold the base pair here
         subroutine write_atomic_prior_products( state_here )
             integer, intent(in) :: state_here
@@ -1542,7 +1774,14 @@ contains
             write(funit,'(A,I0)')     'support_voxels=',     astats%nsupport
             write(funit,'(A,F10.4)')  'bfac_min=',           astats%bfac_min
             write(funit,'(A,F10.4)')  'bfac_data=',          astats%bfac_data
-            write(funit,'(A,L1)')     'bfac_data_fitted=',   params%l_bfac_data_fit
+            write(funit,'(A,L1)')     'bfac_data_fitted=',   params%l_bfac_data_fit .and. .not. astats%atom_widths
+            write(funit,'(A,L1)')     'atom_widths=',        astats%atom_widths
+            write(funit,'(A,L1)')     'fitted_model=',       astats%fitted_model
+            write(funit,'(A,F10.4)')  'bfac_model_min=',     astats%bfac_model_min
+            write(funit,'(A,F10.4)')  'bfac_model_mean=',    astats%bfac_model_mean
+            write(funit,'(A,F10.4)')  'bfac_model_max=',     astats%bfac_model_max
+            write(funit,'(A,F10.6)')  'occupancy_mean=',     astats%occupancy_mean
+            write(funit,'(A,ES14.6)') 'posterior_intensity_mean=', astats%intensity_mean
             write(funit,'(A,I0)')     'width_fit_shells=',   astats%nshells_fit
             write(funit,'(A,F10.4)')  'sigma_voxels=',       astats%sigma_vox
             write(funit,'(A,I0)')     'footprint_radius=',   astats%foot_rad
@@ -1566,13 +1805,14 @@ contains
             call fclose(funit)
             call fname%kill
             write(logfhandle,'(A,I0,A)') '>>> PCG ATOMIC PRIOR: STATE ', state_here, ', prior-free pair written '//&
-                &'under _base (the FSC is theirs), residual x_b - G c under _res, prior''d pair ships'
+                &'under _base (the FSC is theirs), residual to the active atom model under _res, prior''d pair ships'
         end subroutine write_atomic_prior_products
 
         function atomic_prior_provenance() result( prov )
             character(len=:), allocatable :: prov
             prov = 'lambda_rel='//trim(real2str(atm_lambda_rel))//' natoms='//int2str(atm_prior%get_natoms())//&
-                &' bfac='//trim(real2str(atm_prior%get_bfac()))
+                &' bfac='//trim(real2str(atm_prior%get_bfac()))//' fitted_model='//&
+                &merge('yes','no ',atm_prior%uses_fitted_model())
         end function atomic_prior_provenance
 
         !> pcg_solvent=yes: solvent_even/odd receive the ridge re-solve, even/odd

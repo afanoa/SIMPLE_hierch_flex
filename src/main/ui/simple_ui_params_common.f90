@@ -13,6 +13,7 @@ type(ui_param) :: automsk
 type(ui_param) :: automsk_refine3D
 type(ui_param) :: backgr_subtr
 type(ui_param) :: bfac
+type(ui_param) :: bfac_model
 type(ui_param) :: blocktree
 type(ui_param) :: box
 type(ui_param) :: box_extract
@@ -40,6 +41,7 @@ type(ui_param) :: element
 type(ui_param) :: envfsc
 type(ui_param) :: envmsklp
 type(ui_param) :: eo
+type(ui_param) :: ewald
 type(ui_param) :: flipgain
 type(ui_param) :: fraca
 type(ui_param) :: fraction_dose_target
@@ -49,7 +51,6 @@ type(ui_param) :: gainref
 type(ui_param) :: graphene_filt
 type(ui_param) :: hp
 type(ui_param) :: icefracthreshold
-type(ui_param) :: icm
 type(ui_param) :: job_memory_per_task
 type(ui_param) :: kv
 type(ui_param) :: lp
@@ -155,7 +156,6 @@ type(ui_param) :: startype
 type(ui_param) :: stepsz
 type(ui_param) :: stk
 type(ui_param) :: stk_backgr
-type(ui_param) :: stk_traj
 type(ui_param) :: stk2
 type(ui_param) :: stktab
 type(ui_param) :: time_per_image
@@ -169,10 +169,12 @@ type(ui_param) :: user_email
 type(ui_param) :: user_project
 type(ui_param) :: vol_dim
 type(ui_param) :: walltime
+type(ui_param) :: wave_model
 type(ui_param) :: wcrit
 type(ui_param) :: wfloat16
 type(ui_param) :: width
 type(ui_param) :: winsz
+type(ui_param) :: zerodose
 
 contains
 
@@ -210,6 +212,11 @@ subroutine set_ui_params
     call bfac%set_param(           'bfac',            'num',    'B-factor for sharpening', &
                                    'B-factor for sharpening in Angstroms^2', &
                                    'B-factor in Angstroms^2', .false., 200.)
+
+    call bfac_model%set_param(     'bfac_model',      'multi',  'Per-window B-factor treatment', &
+                                   'Shrink each window B-factor towards the dose curve or keep the window own value(line|free){line}', &
+                                   '(line|free){line}', .false., 'line', &
+    &choices=ui_choices([character(len=4) :: 'line', 'free']))
 
     call blocktree%set_param(      'blocktree',       'file',   'Block tree binary file', &
                                    'Pre-computed block tree binary file (.bin)', &
@@ -329,6 +336,12 @@ subroutine set_ui_params
                                    'Gold-standard FSC for filtering and resolution estimation(yes|no){no}','', .false., 'no', &
     &choices=ui_choices([character(len=3) :: 'yes', 'no']))
 
+    call ewald%set_param(          'ewald',           'multi',  'Ewald-sphere curvature', &
+                                   'Ewald-sphere curvature of the wave models: neg samples the paraboloid kz = -lambda |k|^2/2 '//&
+                                   '(specter''s negative sign), pos the opposite one, no the central section(neg|pos|no){neg}', &
+                                   '', .false., 'neg', &
+    &choices=ui_choices([character(len=3) :: 'neg', 'pos', 'no']))
+
     call flipgain%set_param(       'flipgain',        'multi',  'Flip the gain reference', &
                                    'Flip the gain reference along the provided axis(no|x|y|xy|yx){no}','', .false., 'no', &
     &choices=ui_choices([character(len=2) :: 'no', 'x', 'y', 'xy', 'yx']))
@@ -360,10 +373,6 @@ subroutine set_ui_params
     call icefracthreshold%set_param('icefracthreshold','num',   'Ice Fraction rejection threshold', &
                                     'Micrographs with an ice ring/1st pspec maxima fraction above the threshold will be ignored from further processing{1.0}', &
                                     'Ice fraction threshold{1.0}', .false., 1.0)
-
-    call icm%set_param(            'icm',             'binary', 'Whether to perform ICM filtering of reference(s)', &
-                                   'Whether to perform ICM filtering of reference(s)(yes|no){no}','', .false., 'no', &
-    &choices=ui_choices([character(len=3) :: 'yes', 'no']))
 
     call job_memory_per_task%set_param('job_memory_per_task','str', 'Memory per computing node', &
                                        'Memory in MB per part/computing node in distributed execution{16000}', &
@@ -675,14 +684,14 @@ subroutine set_ui_params
 
     call quality_context%set_param('quality_context', 'multi',  'Class-average quality context', &
                                    'Required analysis hard-gate context for class-average quality rejection'//&
-                                   '(chunk|pool|sieve)','', .false., 'chunk', &
-    &choices=ui_choices([character(len=5) :: 'chunk', 'pool', 'sieve']))
+                                   '(chunk|pool|sieve|nano)','', .false., 'chunk', &
+    &choices=ui_choices([character(len=5) :: 'chunk', 'pool', 'sieve', 'nano']))
 
     call quality_model%set_param(  'quality_model',   'multi',  'Class-average quality model', &
                                    'Built-in class-average quality model preset'//&
-                                   '(chunk100mics|sieve|pool){chunk100mics}','', &
+                                   '(chunk100mics|sieve|pool|nano){chunk100mics}','', &
                                    .false., 'chunk100mics', &
-    &choices=ui_choices([character(len=12) :: 'chunk100mics', 'sieve', 'pool']))
+    &choices=ui_choices([character(len=12) :: 'chunk100mics', 'sieve', 'pool', 'nano']))
 
     call qsys_name%set_param(      'qsys_name',       'multi',  'Queue system kind', &
                                    'Queue system kind(local|coarray|slurm|pbs|lsf|sge)','', .false., 'local', &
@@ -780,10 +789,6 @@ subroutine set_ui_params
                                    'xxx.mrc file with bg spectra', .true., '')
 
 
-    call stk_traj%set_param(       'stk_traj',         'file',   'Tracked NP image stack', &
-                                   'xxx.mrc file with NP time-trajectory', &
-                                   'trajectory.mrcs', .true., '')
-
     call stk2%set_param(           'stk2',            'file',   'Second Particle image stack', &
                                    'Particle image stack', &
                                    'xxx.mrc file with particles', .false., 'stk2.mrc')
@@ -836,6 +841,13 @@ subroutine set_ui_params
                                    'Maximum execution time for job scheduling and management(23h59mins){86340}', &
                                    'in seconds(23h59mins){86340}', .false., 86340.)
 
+    call wave_model%set_param(     'wave_model',      'multi',  'Wave model', &
+                                   'Wave model of the image formation: projection exp(i sigma V) of the projected potential, '//&
+                                   'first_born 1 + i sigma V, rytov exp(i sigma V) on the Ewald surface, multislice '//&
+                                   'slice-by-slice propagation(projection|first_born|rytov|multislice){rytov}', &
+                                   '', .false., 'rytov', &
+    &choices=ui_choices([character(len=10) :: 'projection', 'first_born', 'rytov', 'multislice']))
+
     call wcrit%set_param(          'wcrit',           'multi',  'Correlation to weights conversion scheme', &
                                    'Correlation to weights conversion scheme(softmax|zscore|sum|cen|exp|inv|uniform|no){softmax}','', .false., 'softmax', &
     &choices=ui_choices([character(len=7) :: 'softmax', 'zscore', 'sum', 'cen', 'exp', 'inv', 'uniform', 'no']))
@@ -847,6 +859,10 @@ subroutine set_ui_params
     call width%set_param(          'width',           'num',    'Falloff of inner mask', &
                                    'Number of cosine edge pixels of inner mask in pixels', &
                                    '# pixels cosine edge{10}', .false., 10.)
+
+    call zerodose%set_param(       'zerodose',        'binary', 'Write the zero-dose extrapolation', &
+                                   'Also write the zero-dose extrapolation of the accumulated map(yes|no){no}', '', .false., 'no', &
+    &choices=ui_choices([character(len=3) :: 'yes', 'no']))
 end subroutine set_ui_params
 
 end module simple_ui_params_common

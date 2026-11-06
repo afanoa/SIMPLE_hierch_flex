@@ -12,9 +12,9 @@ cost, and they must not be confused:
 
 The outer problem is a stochastic-gradient idea: a fraction of the data gives
 a cheaper but noisier update of the references. The inner problem is
-importance sampling over poses. This chapter covers both, the balanced
-assignment that consumes the inner samples, and the rule that blends a
-partial update into the running reference estimate.
+importance sampling over poses. This chapter covers both, the assignment
+that consumes the inner samples, and the rule that blends a partial update
+into the running reference estimate.
 
 ## Outer sampling
 
@@ -38,18 +38,25 @@ been updated, and `sampled`, the last sampling round that selected it. The
   draw, so coverage of the dataset is as even as possible.
 - **fill-in** (late 3D stages): the same, but always starting from the
   particles that have never been updated (`updatecnt = 0`).
-- **class units** (`balance=class` or `balance=cavg`; `cavg` is the default
+- **class units** (`balance=class` or `balance=cavg`; `class` is the default
   of `solve3D`, `refine3D_states`, and `classify3D_refs`): share the budget
   over sampling units built from the selected 2D classes. Each unit is one
   selected class, with its active particles ordered by their 2D score.
 
-  - Under `class`, every unit gets an equal share, capped at its population.
+  - Under `class`, every unit gets a share in proportion to the square root
+    of its population, capped at its population. Rare views are sampled more
+    often than proportional sampling would, but a class 100 times smaller is
+    visited 10 times as often per particle, not 100 times, so one small odd
+    class cannot take over the draw.
   - Under `cavg`, the class averages are first clustered into `nclust`
     groups (default 20) by average linkage on their rotation-, shift-, and
-    mirror-invariant correlation, so that a preferred view split over many
-    classes becomes one group. The budget is then shared equally over the
-    groups and, within a group, equally over its units; the remainder of a
-    split goes to the least-updated units. The group level keeps the views
+    mirror-invariant correlation between 30 and 6 A, so that a preferred view
+    split over many classes becomes one group. A group holding fewer than 2.5%
+    of the particles keeps merging into its nearest group, so outlier classes
+    do not become groups of their own. The budget is then shared over the groups
+    and, within a group, over its units, in both cases in proportion to the
+    square root of the populations; the remainder of a split goes to the
+    least-updated units. The group level keeps the views
     balanced, and the unit level keeps the classes inside a view, which may
     be different conformational states, on an equal footing.
 
@@ -57,9 +64,11 @@ been updated, and `sampled`, the last sampling round that selected it. The
   `frac_best < 1`, only the best-scoring fraction of each unit is eligible,
   and `greedy_sampling` takes the top of each unit deterministically.
 - **reproduce**: reuse exactly the particles whose `sampled` equals the
-  current maximum. This lets a probabilistic iteration choose the subset once
-  and have every later step (table filling, matching, and reconstruction) act
-  on the same particles.
+  current maximum. This lets a probabilistic iteration choose the subset once,
+  on the master, and have every part's pipeline (the table rows, the draws, the
+  matching and the reconstruction) act on the same particles. The draw is
+  keyed on the run's seed, the pass, the iteration and the particle, so the
+  subset does not depend on the number of parts or threads.
 - **cohort** (`refine3D_states`): the set drawn at the first iteration of a
   frequency block is kept for the whole block. Later iterations reproduce it
   and advance its counters, so that state labels and poses converge on one
@@ -72,7 +81,7 @@ decides which particles are sampled. The maps carry bias, and a sampler
 driven by them would feed that bias back; the 2D class averages are evidence
 independent of the maps.
 
-With equal quotas, visiting every particle once takes
+With unequal quotas, visiting every particle once takes
 `max over units of ceil(pop / quota)` iterations rather than
 `1 / update_frac`, because a unit larger than its share takes longer. This
 sweep length is printed in a table of the units before the first stage, and
@@ -85,72 +94,152 @@ close to the full set, subsampling would save little and add noise.
 
 ## Inner sampling: the probability table
 
-Before any hard assignment, a probabilistic iteration fills a table of losses
-between every particle in the subset and every reference `j`: in 3D the
-`nstates x nspace` projections, in 2D the active classes. For each particle:
+Before a particle's hard assignment, the matcher fills its row of losses
+against every reference `j`: in 3D the `nstates x nspace` projections, in 2D
+the active classes. The rows are filled batch by batch inside the matcher's
+pipeline, each batch's rows drawn from and released before the next (no table
+across batches, no file); every random draw below is keyed on the seed, the
+pass, the iteration, the particle and the draw. For each particle:
 
 1. a common shift seed is found by shift-only optimization at the particle's
    previous pose;
 2. every reference is scored at that shift over all in-plane rotations, and
-   the in-plane rotation is drawn from the best `K_inpl` rotations by the
-   softmax defined below;
-3. the best `K_ref` references are refined again in shift.
+   one in-plane rotation is drawn from the row's tempered posterior over all
+   of them (below);
+3. the best `K_ref` references are refined again in shift (below).
 
-For a list of `n` candidates, the truncation `K` is derived from an angular
-threshold rather than fixed:
-
-```text
-K      = min(n, max(1, floor(athres * n / 180))),
-athres = min(prob_athres, mean angular change of the last iteration),
-```
-
-with `prob_athres` defaulting to 10 degrees. As the alignment settles, the
-measured angular change shrinks and the candidate list tightens
-automatically.
-
-For the Euclidean objective, the loss is the whitened negative
-log-likelihood, `d = -log(score)`; for correlation, it is
-`d = 1 - max(cc, 0)`. A draw from `K` candidates uses
+For the Euclidean objective, the loss `d` is the whitened negative
+log-likelihood, `d = -log(score)`, normalized by the particle's weighted
+power: one nat is `1/T_i` of it with
 
 ```text
-w_j = exp[-(d_j - d_min)],     p_j = w_j / sum_l w_l.
+T_i = pi wsqsum_i / (2 pftsz),
 ```
 
-No temperature is applied, because the noise normalization of the objective
-already puts `d` in natural log-likelihood units. The `K` candidates are only
-the best-scoring poses near the top of the list, used to decide where to
-search; they are not meant to represent the probability of every possible
-orientation. One candidate is drawn and committed as a hard assignment. A
-particle is never spread over several orientations in proportion to their
-probabilities, as it is in expectation-maximization refinement.
+the particle's noise temperature, several hundred to a thousand on PfCRT
+(measured 2026-10-22, doc/implementation_notes/completed/pose_marginalization.md,
+sections 3 and 14). A draw from `n` candidates uses
 
-## Balanced assignment
+```text
+w_j = exp[-beta T_i (d_j - d_min)],     p_j = w_j / sum_l w_l,
+```
 
-The table is not consumed particle by particle. It is consumed as one global
-assignment problem, which is what prevents a few references from absorbing
-most of the particles:
+the tempered posterior p^beta with `beta = prob_beta` (default 0.3, for
+small membrane proteins; 1 is the physical posterior; below one hotter). No
+truncation: the exploration of the draw is the data's width, not a fixed
+angular window. The tables refuse the correlation objective. One candidate
+is drawn and committed as a hard assignment. A particle is never spread
+over several orientations in proportion to their probabilities, as it is
+in expectation-maximization refinement.
 
-1. for each reference `j`, sort all particles by `d_ij`;
-2. each reference keeps a *head*, its best still-unassigned particle;
-3. until every particle is assigned, repeat: draw one reference from the
-   softmax over the head losses (truncated to the best `K` heads), give it
-   its head particle, mark the particle as taken, and advance all heads.
+The randomness of the in-plane draw is load-bearing: it is what keeps the
+direction assignment diverse against the references' memory of where each
+particle was last put (the self-reinforcement of the same note, 1-7 nats
+on the own half). Scoring every entry at its best grid rotation instead
+(`K_inpl = 1`, tried as a switch on 2026-10-23 and removed again) takes the
+search noise out as intended but traps the run: 5 of 10 PfCRT restarts
+ended near 7 A against 4.0-4.6 A for the other 5 and 4.0 A for the draw
+(`PfCRT_posterior/greedy_inpl`). The in-plane angle a particle ends with is
+the continuous refinement's in either case; what the draw buys is the
+diversity of the direction assignment.
 
-Every reference competes at every step, and a reference that wins takes
-exactly one particle, so populations even out without explicit quotas. The
-result is a stochastic greedy matching between particles and references, not
-the optimal assignment that the Hungarian algorithm would find. Optimality is
-not wanted here, because the draw is the exploration mechanism.
+Before the posterior (until 2026-10-24) the in-plane rotation was drawn by
+the untempered softmax `exp[-(d_j - d_min)]` over the best `K_inpl`
+rotations, the truncation derived from an angular threshold,
+`K = min(n, max(1, floor(athres * n / 180)))` with
+`athres = min(prob_athres, mean angular change of the last iteration)` and
+`prob_athres` 10 degrees: since `T_i` is hundreds, a uniform draw over a
+random rotation within `athres` of the best (on PfCRT more than a nat worse
+than the best grid pose for 17-27% of the particles; the note, section 14),
+which `athres` shrinking with the measured in-plane change annealed as the
+alignment settled. The tables' fills no longer use it; the SHC strategies
+of the early 2D stages keep their own samplers.
 
-In multi-state 3D, the state label is assigned first, by the same loop with a
-deterministic choice of the lowest head loss, and the projection within the
-state is then drawn
-stochastically. Neighborhood variants (`prob_neigh`) restrict which
-references are scored for each particle: a stochastic subset (`shc`,
-`snhc`), the coarse cell of projection directions that contains the previous
-projection (`geom`), or the best `npeaks` coarse cells pooled across states
-(`state`); the cells are defined in [refine3D](refine3d.md). The assignment
-loop is the same in every case.
+**The refined set** is a search budget, not a posterior quantity. The dense
+3D fill refines the `K_ref = min(prob_athres, mean pose change of the last
+iteration) x nspace / 180` lowest losses of the row (`calc_num2sample`; 10
+degrees gives nspace/18 while the poses move, a few percent of nspace as they
+settle), the neighbourhood table the `npeaks_inpl` lowest per state, the 2D
+dense table a tenth of the classes (at most `npeaks_inpl`) and the sparse
+table its annealed `smpl_ncls`. Sizing it by the row's own posterior mass
+instead (tried 2026-10-25: the entries holding 99% of the tempered mass, each
+at least 1%, the mode always) broke PorF: stages 3 and 4 a little worse,
+stage 5 at 7.8-8.0 A against 4.9-6.8 A in ten restarts (the note, section 19,
+item 10). The row's losses are conditional on the one seed shift and the
+previous band, so after a band jump the posterior is sharp around poses
+fitted at the coarser band, and only refining many candidates lets the shift
+search re-rank them: the refinement is the search, and its breadth must come
+from the pose uncertainty (what the pose-change term measures), not from the
+sharpness of a row that has not been refined yet. Nor does a larger budget
+help: at 20 and 40 degrees PorF was worse, because every refined wrong
+reference gets a chance gain from fitting its shift to noise and the largest
+of many such gains beats the true pose for a few percent of the particles
+(the bench histogram of where the refined argmin sat in the unrefined
+ranking is flat deep down: winners by chance). `shift_prior=yes` is the
+experiment against that: the tables' shift searches carry a Gaussian prior
+on the shift's distance from the seed, width the previous iteration's shift
+variance, so a wandering wrong reference pays what it was gaining and the
+true one near its seed pays nothing (the note, section 19, item 11).
+
+## Assignment
+
+The rows are consumed particle by particle (2026-10-23; the only assignment
+since 2026-10-24, when the class-balanced frontier was deleted from every
+table): each particle's reference is one draw from its own row by the
+tempered posterior above, within the state of its closest reference, `T_i`
+kept with the row by the fill. Particles are assigned to
+references; no reference is forced to be populated, and no particle takes
+an argmin. The stage then ends on the resolution exit or its budget, not on
+the pose overlap (the committed pose is a draw and stable from a stage's
+first iterations). The 2D class assignment is the same per-particle draw
+over the row (`solve2D_policy.md`); the neighbourhood tables follow the rule
+on their candidate store (the state of the closest valid candidate, one
+draw within it), the current pose among the candidates so that the draw is
+an acceptance step and not a forced move.
+
+The temperature is the band's: T_i grows with the number of Fourier
+components the stage searches, so at solve3D's stages 1-2 (rings 2-5 on a
+137 A box) T is about 33 where it is hundreds from stage 3 on, and the
+physical posterior is flat there and a delta later; the ladder is itself a
+cooling schedule. In ten streptavidin restarts at beta 0.3, with the current
+pose missing from the shc neighbourhood's candidates, stages 1-2 did nothing
+and stage 3 solved the structure from scratch (the note, section 19); the
+incumbent is a candidate since, and whether the early stages also need a
+colder draw is the open measurement (the `prob_beta_ini` override of stages
+1-2 was removed 2026-10-29 with the other tempering inputs). `prob_beta` is the
+search's annealing knob, since at the physical temperature the posterior
+over directions is a delta once the map has any resolution (n_eff 1.0-1.2)
+and the map-pose alternation then stops at the nearest fixed point (section
+17 of the note). A refine3D run with `prob_beta_end` searches flat at
+`prob_beta` until neither FSC 0.5 nor FSC 0.143 gained on the previous
+iteration, then anneals geometrically to `prob_beta_end` over the next five
+iterations and ends (the annealing tail); solve3D does so on its last
+stage, to 1, so the final map is weighted at the physical posterior. The
+design and its measurements are in
+`doc/implementation_notes/completed/pose_marginalization.md`.
+
+### The balanced frontier, deleted
+
+Until 2026-10-24 the tables consumed the table as one global assignment
+problem: for each reference, sort its particles by `d_ij`; each reference
+keeps a head, its best still-unassigned particle; until every particle is
+assigned, draw one reference from the softmax over the head losses
+(truncated to the best `K` heads), give it its head particle and advance
+the heads. Every reference competed at every step and a winning reference
+took exactly one particle, so populations evened out without quotas: a
+stochastic greedy matching between particles and references, which forced
+every reference to be populated whether or not any particle's data put it
+there. Hans, 2026-10-24: methodologically it makes no sense; particles are
+assigned to references, not references to particles. It was deleted from
+the dense 3D table, the 2D tables and the neighbourhood table, with its
+samplers and reference tests (the note, section 19).
+
+Neighborhood variants (`prob_neigh`) restrict which references are scored
+for each particle: a stochastic subset (`shc`, `snhc`), the coarse cell of
+projection directions that contains the previous projection (`geom`), or
+the best `npeaks` coarse cells pooled across states (`state`); the cells are
+defined in [refine3D](refine3d.md). The assignment is the same in every
+case.
 
 ## Blending partial updates
 
@@ -235,5 +324,10 @@ on its own would be too noisy to align against.
 - Trailing blend: `src/main/commanders/simple/simple_commanders_rec_distr.f90`;
   the distributed PCG chain in
   `src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90`.
-- Orchestration: `src/main/commanders/simple/simple_commanders_prob.f90`.
-- Policy: `doc/policies/importance_sampling_fractional_update_policy.md`.
+- The batch pipeline (the rows, the draws and the commit per batch):
+  `src/main/strategies/search/simple_strategy3D_matcher.f90` and
+  `simple_strategy2D_matcher.f90`; the master's sample draw:
+  `src/main/strategies/parallelization/simple_refine3D_strategy.f90` and
+  `simple_refine2D_strategy.f90`.
+- Policy: `doc/policies/importance_sampling_fractional_update_policy.md`;
+  the design: `doc/implementation_notes/completed/prob_align_batch_pipeline.md`.

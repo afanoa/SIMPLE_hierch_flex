@@ -3,9 +3,10 @@ module simple_relion
 use simple_core_module_api
 use simple_sp_project, only: sp_project
 use simple_cmdline,    only: cmdline
+use simple_syslib,     only: simple_rmfile
 use CPlot2D_wrapper_module
 use simple_starfile_wrappers
-use FoX_dom, only: Node, parseFile, item, getElementsByTagname, getTextContent, destroy
+use simple_epu_xml,    only: read_epu_beamshift
 implicit none
 private
 public :: relion_project
@@ -80,7 +81,7 @@ contains
             if(kv) call starfile_table__setValue_double(startable, EMDL_CTF_VOLTAGE, real(spproj%os_mic%get(i, 'kv'), dp))
             if(smpd) call starfile_table__setValue_double(startable, EMDL_IMAGE_PIXEL_SIZE, real(spproj%os_mic%get(i, 'smpd'), dp))
         end do
-        call starfile_table__open_ofile(startable, 'micrographs_corrected.star', 0)
+        call starfile_table__open_ofile(startable, 'micrographs_corrected.star.tmp', 0)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
         call starfile_table__delete(startable)
@@ -111,15 +112,19 @@ contains
                     lgstr = len(getstring%to_char())
                     inquire(file='movies/' // getstring_base%to_char() // ' ', exist=exists)
                     if(.NOT. exists) then
+                        call simple_rmfile('movies/'//getstring_base%to_char())
+                        getstring = simple_abspath(getstring, check_exists=.false.)
                         call syslib_symlink(getstring, string('movies/'//getstring_base%to_char()))
                     endif
                 endif
                 if(opticsgroup) call starfile_table__setValue_int(startable, EMDL_IMAGE_OPTICS_GROUP, int(spproj%os_mic%get(i, 'opticsgroup') + int(cline%get_rarg('optics_offset'))))
             endif
         end do
-        call starfile_table__open_ofile(startable, 'micrographs_corrected.star', 1)
+        call starfile_table__open_ofile(startable, 'micrographs_corrected.star.tmp', 1)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
+        ! written as .tmp and renamed when complete: a reader never meets a partial file
+        call simple_rename(string('micrographs_corrected.star.tmp'), string('micrographs_corrected.star'))
         call starfile_table__delete(startable)
         call getstring%kill
     end subroutine write_corrected_micrographs_star
@@ -183,7 +188,7 @@ contains
             if(kv) call starfile_table__setValue_double(startable, EMDL_CTF_VOLTAGE, real(spproj%os_mic%get(i, 'kv'), dp))
             if(smpd) call starfile_table__setValue_double(startable, EMDL_IMAGE_PIXEL_SIZE, real(spproj%os_mic%get(i, 'smpd'), dp))
         end do
-        call starfile_table__open_ofile(startable, 'micrographs.star', 0)
+        call starfile_table__open_ofile(startable, 'micrographs.star.tmp', 0)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
         call starfile_table__delete(startable)
@@ -234,9 +239,11 @@ contains
                 if(opticsgroup) call starfile_table__setValue_int(startable, EMDL_IMAGE_OPTICS_GROUP, int(spproj%os_mic%get(i, 'opticsgroup') + int(cline%get_rarg('optics_offset'))))
             endif
         end do
-        call starfile_table__open_ofile(startable, 'micrographs.star', 1)
+        call starfile_table__open_ofile(startable, 'micrographs.star.tmp', 1)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
+        ! written as .tmp and renamed when complete: a reader never meets a partial file
+        call simple_rename(string('micrographs.star.tmp'), string('micrographs.star'))
         call starfile_table__delete(startable)
         call getstring%kill
         call getstring_base%kill
@@ -274,8 +281,14 @@ contains
         real                      :: dfxmin
         real                      :: dfxmax
         real                      :: dfxstep
+        logical                   :: l_poses3D
         if(spproj%os_ptcl2D%get_noris() == 0) then
             return
+        endif
+        ! 3D poses when the 3D field holds them, else the 2D field's in-plane poses
+        l_poses3D = .false.
+        if( spproj%os_ptcl3D%get_noris() == spproj%os_ptcl2D%get_noris() )then
+            l_poses3D = spproj%has_valid_ptcl3D_alignment()
         endif
         write(logfhandle, *) 'Generating particles2D.star ... '
         call simple_mkdir('particles')
@@ -300,7 +313,7 @@ contains
         ptcldfy     = spproj%os_ptcl2D%isthere(i, 'dfy')
         ptclangast  = spproj%os_ptcl2D%isthere(i, 'angast')
         !trial up to 1000 particles for non 0 values of xpos and ypos
-        do j=i, i + 1000
+        do j=i, min(i + 1000, spproj%os_ptcl2D%get_noris())
           if((spproj%os_ptcl2D%get(j, 'xpos') .GT. 0) .OR. (spproj%os_ptcl2D%get(j, 'ypos') .GT. 0)) then
             xpos = .TRUE.
             ypos = .TRUE.
@@ -340,7 +353,7 @@ contains
             if(box) call starfile_table__setValue_int(startable, EMDL_IMAGE_SIZE, int(spproj%os_stk%get(i, 'box')))
             call starfile_table__setValue_int(startable, EMDL_IMAGE_DIMENSIONALITY, 2)
         end do
-        call starfile_table__open_ofile(startable, 'particles2D.star', 0)
+        call starfile_table__open_ofile(startable, 'particles2D.star.tmp', 0)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
         call starfile_table__delete(startable)
@@ -388,6 +401,11 @@ contains
                         endif
                         call starfile_table__setValue_double(startable, EMDL_CTF_PHASESHIFT, &
                             &real(rad2deg(spproj%os_ptcl2D%get(i, 'phshift')), dp))
+                        if( l_poses3D )then
+                            call write_pose(spproj%os_ptcl3D)
+                        else
+                            call write_pose(spproj%os_ptcl2D)
+                        endif
                         if(cline%get_rarg('reliongroups') > 0 .AND. dfx) then
                             group = ceiling((spproj%os_stk%get_dfx(stkindex) - dfxmin) / dfxstep)
                             write(groupname, *) group
@@ -398,14 +416,47 @@ contains
                 endif
             endif
         end do
-        call starfile_table__open_ofile(startable, 'particles2D.star', 1)
+        call starfile_table__open_ofile(startable, 'particles2D.star.tmp', 1)
         call starfile_table__write_ofile(startable)
         call starfile_table__close_ofile(startable)
+        ! written as .tmp and renamed when complete: a reader never meets a partial file
+        call simple_rename(string('particles2D.star.tmp'), string('particles2D.star'))
         call starfile_table__delete(startable)
         call getstring%kill
         call getstring_base%kill
         call getstring_mrc%kill
         call getstring_mrcs%kill
+
+        contains
+
+            ! the pose of particle i in os; origins from pixels of its stack to Angstrom
+            subroutine write_pose( os )
+                class(oris), intent(in) :: os
+                character(len=XLONGSTRLEN) :: msg, stkname
+                real :: smpd, x, y
+                if( l_poses3D )then
+                    call starfile_table__setValue_double(startable, EMDL_ORIENT_ROT,  real(os%e1get(i), dp))
+                    call starfile_table__setValue_double(startable, EMDL_ORIENT_TILT, real(os%e2get(i), dp))
+                endif
+                call starfile_table__setValue_double(startable, EMDL_ORIENT_PSI, real(os%e3get(i), dp))
+                x = os%get(i, 'x')
+                y = os%get(i, 'y')
+                if( x /= 0. .or. y /= 0. )then
+                    smpd = spproj%os_stk%get(stkindex, 'smpd')
+                    if( smpd <= 0. )then
+                        stkname = ''
+                        if( spproj%os_stk%isthere(stkindex, 'stk') ) call spproj%os_stk%get_static(stkindex, 'stk', stkname)
+                        write(msg,'(A,I0,A,I0,3A)') 'particle ', i, ' of stack ', stkindex, ' (', trim(stkname),&
+                            &') has no pixel size to write its origin in Angstrom'
+                        THROW_HARD(trim(msg))
+                    endif
+                    x = x * smpd
+                    y = y * smpd
+                endif
+                call starfile_table__setValue_double(startable, EMDL_ORIENT_ORIGIN_X_ANGSTROM, real(x, dp))
+                call starfile_table__setValue_double(startable, EMDL_ORIENT_ORIGIN_Y_ANGSTROM, real(y, dp))
+            end subroutine write_pose
+
     end subroutine write_particles2D_star
 
     subroutine find_movienames(self, cline, spproj)
@@ -497,11 +548,11 @@ contains
         character(len=20), allocatable :: tiltgroups(:)
         integer              :: i,j
         type(string)         :: tiltname, tmpname, fname, fname_eps, xmlloc_file
-        type(Node), pointer  :: xmldoc, beamtiltnode, beamtiltnodex, beamtiltnodey
         type(string)         :: title
         type(CPlot2D_type)   :: plot2D
         type(CDataSet_type)  :: dataSet
         real                 :: beamtiltx, beamtilty, threshold
+        logical              :: l_beamshift
         real,    allocatable :: tilts(:,:), centroids(:,:)
         integer, allocatable :: populations(:) 
         integer              :: pos
@@ -543,15 +594,10 @@ contains
                 tilts(i,1) = 0.0
                 tilts(i,2) = 0.0
             else
-                xmldoc => parseFile(fname%to_char())
-                beamtiltnode => item(getElementsByTagname(xmldoc, "BeamShift"), 0)
-                beamtiltnodex => item(getElementsByTagname(beamtiltnode, "a:_x"), 0)
-                beamtiltnodey => item(getElementsByTagname(beamtiltnode, "a:_y"), 0)
-                beamtiltx = str2real(getTextContent(beamtiltnodex))
-                beamtilty = str2real(getTextContent(beamtiltnodey))
+                call read_epu_beamshift(fname%to_char(), beamtiltx, beamtilty, l_beamshift)
+                if( .not. l_beamshift ) write(logfhandle, *) fname%to_char() // ' holds no BeamShift. Ignoring'
                 tilts(i,1) = beamtiltx
                 tilts(i,2) = beamtilty
-                call destroy(xmldoc)
             endif  
             if(index(self%movienames(1)%to_char(), 'FoilHole') .ne. 0) then
                 tiltname = self%movienames(i)

@@ -126,10 +126,11 @@ contains
 
     !> The matcher's reader of the references of its pass: the prepared Cartesian reference
     !! volumes for a Cartesian pass (l_cart_refine; read_cart_refvols), the polar reprojection
-    !! model otherwise. With diag_halves (the dense table workers under prob_post_diag=yes) and
+    !! model otherwise. With diag_halves (the matcher under prob_post_diag=yes) and
     !! the diagnostic's model of the real halves on disk, the polar object holds twice the
     !! references: the matcher's in 1..nrefs, the real even/odd sections of the same directions
-    !! in nrefs+1..2*nrefs (doc/implementation_notes/planned/pose_marginalization.md section 5).
+    !! in nrefs+1..2*nrefs, so that the diagnostic can re-score a pose against the half the particle
+    !! did not enter.
     subroutine read_reprojection_model( params, build, batchsz, diag_halves )
         class(parameters), intent(inout) :: params
         class(builder),    intent(inout) :: build
@@ -342,9 +343,7 @@ contains
 
     !> The matching references of state s in build%vol (even) and build%vol_odd (odd), read,
     !! regularized, masked and filtered. With diag_halves the independent even/odd maps are
-    !! read whatever the mode (the LP-set and merged-NU branches that put one merged map in
-    !! both are bypassed, the ICM pair is not averaged), for the pose-posterior diagnostic's
-    !! model of the real halves; the filtering of each half is otherwise that of the mode.
+    !! used for the pose-posterior diagnostic, bypassing merged LP-set and NU references.
     subroutine read_mask_filter_refvols( params, build, s, diag_halves )
         class(parameters), intent(in)    :: params
         class(builder),    intent(inout) :: build
@@ -419,17 +418,7 @@ contains
         call mask_matching_reference(build%vol)
         call mask_matching_reference(build%vol_odd)
         ! FILTER
-        if( params%l_icm )then
-            call build%vol%ICM3D_eo(build%vol_odd, params%lambda)
-            if( (params%l_lpset .or. trim(params%combine_eo).eq.'yes') .and. .not. l_diag_halves )then ! no independent volume registration, so average eo pairs
-                call build%vol%add(build%vol_odd)
-                call build%vol%mul(0.5)
-                call build%vol_odd%copy_fast(build%vol)
-            endif
-            ! FT
-            call build%vol%fft
-            call build%vol_odd%fft
-        else if( params%l_lpset .and. .not. l_nonuniform_mode .and. .not. l_diag_halves )then
+        if( params%l_lpset .and. .not. l_nonuniform_mode .and. .not. l_diag_halves )then
             ! read average volume that will occupy both even and odd
             if( .not. file_exists(vol_avg) )then
                 THROW_HARD('Missing average reference for state='//int2str(s)//' : '//vol_avg%to_char())
@@ -450,8 +439,6 @@ contains
         endif
         if( (params%l_ml_reg .or. l_nonuniform_mode) .and. .not. l_nu_refs_missing )then
             ! filtering done when volumes are assembled
-        else if( params%l_icm )then
-            ! filtering done above
         else if( params%l_lpset )then
             if( trim(params%gauref)=='yes' )then
                 ! Gaussian filter
@@ -497,10 +484,16 @@ contains
         !! first assembly neither artifact need exist, so the references retain
         !! the spherical mask and that bootstrap is logged.
         subroutine apply_automatic_envelope_to_refs( prefer_nu )
+            use simple_refine3D_provenance, only: local_import_marker
             logical, optional, intent(in) :: prefer_nu
             type(string) :: fname_envmsk
             type(image)  :: envmsk
             logical      :: l_prefer_nu
+            ! An imported base pair has no lagged envelope produced in this run.
+            if( file_exists(local_import_marker(params%vols(s))) )then
+                write(logfhandle,'(A)') '>>> LOCAL IMPORT: reference envelopes await the first assembly; using spherical support'
+                return
+            endif
             l_prefer_nu = .false.
             if( present(prefer_nu) ) l_prefer_nu = prefer_nu
             if( l_prefer_nu )then

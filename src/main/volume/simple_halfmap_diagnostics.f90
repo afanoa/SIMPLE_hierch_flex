@@ -8,6 +8,7 @@ use simple_fsc,        only: phase_rand_fsc, fsc_area_score_result
 implicit none
 
 public :: halfmap_diagnostics_result, evaluate_halfmap_pair, write_halfmap_diagnostics
+public :: write_base_halfmap_fsc
 public :: support_provenance_fname, write_support_provenance, read_support_provenance
 public :: copy_support_provenance, rename_support_provenance, remove_support_provenance
 private
@@ -32,6 +33,28 @@ type :: halfmap_diagnostics_result
 end type halfmap_diagnostics_result
 
 contains
+
+    ! Raw saved-half FSC only: preserves the startup fallback without adding mask or filtering policy.
+    subroutine write_base_halfmap_fsc( even_file, odd_file, dims, smpd, fsc_file )
+        use simple_fileio, only: arr2file
+        type(string), intent(in) :: even_file, odd_file, fsc_file
+        integer, intent(in) :: dims(3)
+        real, intent(in) :: smpd
+        class(image), allocatable :: even, odd
+        real, allocatable :: fsc(:)
+        allocate(even, odd)
+        call even%new(dims, smpd)
+        call odd%new(dims, smpd)
+        call even%read(even_file)
+        call odd%read(odd_file)
+        allocate(fsc(even%get_lfny(1)), source=0.)
+        call even%fft
+        call odd%fft
+        call even%fsc(odd, fsc)
+        call arr2file(fsc, fsc_file)
+        call even%kill
+        call odd%kill
+    end subroutine write_base_halfmap_fsc
 
     !> Evaluate the half-map FSC, cFAR, and Nyquist-clamped FSC=0.5/0.143
     !! resolutions for one explicitly prepared real-space pair, with explicit
@@ -89,7 +112,9 @@ contains
         diagnostics%fsc_mode = 'backend='//trim(backend)//' support='//trim(support_kind_here)//&
             &' posthoc_mask='//trim(posthoc_kind)//&
             &' phase_randomization='//merge('yes', 'no ', l_phase_randomization)
-        write(logfhandle,'(A,I0,A)') '>>> FSC MODE: STATE ', state, ', '//trim(diagnostics%fsc_mode)
+        write(logfhandle,'(A,I0,A)') '>>> FSC MODE (state ', state, '): '//trim(backend)//', '//&
+            &trim(support_kind_here)//' support, post-hoc mask '//trim(posthoc_kind)//', phase randomization '//&
+            &trim(merge('yes', 'no ', l_phase_randomization))
         if( l_phase_randomization )then
             call phase_rand_fsc(even, odd, envmask_work, state, nyq, diagnostics%fsc, fsc_t, fsc_n)
             call work_even%copy(even)
@@ -178,7 +203,7 @@ contains
         support_kind_here = merge('density', 'sphere ', l_constrained)
         if( present(support_kind) ) support_kind_here = trim(support_kind)
         select case(trim(support_kind_here))
-            case('sphere','density','nu','explicit')
+            case('none','sphere','density','nu','explicit')
             case default
                 THROW_HARD('invalid support kind for the support provenance sidecar')
         end select
@@ -197,8 +222,9 @@ contains
         character(len=*), optional, intent(out) :: solve_kind
         logical,          optional, intent(out) :: l_kind_found
         character(len=*), optional, intent(out) :: support_kind
-        type(string) :: fname
+        type(string)      :: fname
         character(len=64) :: line
+        character(len=16) :: support_here
         integer :: funit, io_stat
         l_constrained = .false.
         l_found       = .false.
@@ -215,9 +241,19 @@ contains
             read(funit,'(A)',iostat=io_stat) line
             if( io_stat /= 0 ) exit
             if( index(line, 'solve_support=') == 1 )then
-                l_found       = .true.
-                if( present(support_kind) ) support_kind = adjustl(line(len('solve_support=')+1:))
-                l_constrained = index(line, 'sphere') == 0
+                support_here = adjustl(line(len('solve_support=')+1:))
+                l_found = .true.
+                select case(trim(support_here))
+                    case('none','sphere')
+                        l_constrained = .false.
+                    case('density','nu','explicit')
+                        l_constrained = .true.
+                    case default
+                        l_found = .false.
+                        l_constrained = .false.
+                        support_here = ''
+                end select
+                if( present(support_kind) ) support_kind = support_here
             else if( index(line, 'solve_kind=') == 1 )then
                 if( present(solve_kind) ) solve_kind = adjustl(line(len('solve_kind=')+1:))
                 if( present(l_kind_found) ) l_kind_found = .true.
@@ -251,7 +287,7 @@ contains
         src  = support_provenance_fname(src_vol)
         dest = support_provenance_fname(dest_vol)
         if( file_exists(src) )then
-            call simple_rename(src, dest, overwrite=.true.)
+            call simple_rename(src, dest)
         else if( file_exists(dest) )then
             call del_file(dest)
         endif

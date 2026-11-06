@@ -81,7 +81,7 @@ contains
         call self%kill
         ! set constants
         self%ldim = img%get_ldim()
-        if( self%ldim(3) > 1 ) THROW_HARD('only for 2D images; new_1')
+        if( self%ldim(3) > 1 ) THROW_HARD('only for 2D images; ft_expanded%new')
         self%smpd = img%get_smpd()
         self%hp   = hp
         lp_nyq    = 2.*self%smpd
@@ -258,9 +258,9 @@ contains
     ! MODIFIERS
 
     subroutine shift( self, shvec, self_out )
-        class(ft_expanded),           intent(inout) :: self
-        real,                         intent(in)    :: shvec(2)
-        class(ft_expanded), optional, intent(inout) :: self_out
+        class(ft_expanded), intent(in)    :: self
+        real,               intent(in)    :: shvec(2)
+        class(ft_expanded), intent(inout) :: self_out
         integer  :: hind,kind,kind_shift,kkind
         real(dp) :: ch(self%flims(1,1):self%flims(1,2)),sh(self%flims(1,1):self%flims(1,2))
         real(dp) :: argh,argk,ck,sk
@@ -270,33 +270,18 @@ contains
             ch(hind) = cos(argh)
             sh(hind) = sin(argh)
         enddo
-        if( present(self_out) )then
-            do kind=self%flims(2,1),self%flims(2,2)
-                kkind = kind+kind_shift
-                argk  = real(ftexp_transfmat(1,kkind,2) * shvec(2),dp)
-                ck    = cos(argk)
-                sk    = sin(argk)
-                do hind=self%flims(1,1),self%flims(1,2)
-                    if( self%bandmsk(hind,kind) )then
-                        self_out%cmat(hind,kind) = self%cmat(hind,kind) * &
-                            &cmplx(ck*ch(hind)-sk*sh(hind), sk*ch(hind)+ck*sh(hind), kind=sp)
-                    endif
-                end do
+        do kind=self%flims(2,1),self%flims(2,2)
+            kkind = kind+kind_shift
+            argk  = real(ftexp_transfmat(1,kkind,2) * shvec(2),dp)
+            ck    = cos(argk)
+            sk    = sin(argk)
+            do hind=self%flims(1,1),self%flims(1,2)
+                if( self%bandmsk(hind,kind) )then
+                    self_out%cmat(hind,kind) = self%cmat(hind,kind) * &
+                        &cmplx(ck*ch(hind)-sk*sh(hind), sk*ch(hind)+ck*sh(hind), kind=sp)
+                endif
             end do
-        else
-            do kind=self%flims(2,1),self%flims(2,2)
-                kkind = kind+kind_shift
-                argk  = ftexp_transfmat(1,kkind,2) * shvec(2)
-                ck    = cos(argk)
-                sk    = sin(argk)
-                do hind=self%flims(1,1),self%flims(1,2)
-                    if( self%bandmsk(hind,kind) )then
-                        self%cmat(hind,kind) = self%cmat(hind,kind) * &
-                            &cmplx(ck*ch(hind)-sk*sh(hind), sk*ch(hind)+ck*sh(hind), kind=sp)
-                    endif
-                end do
-            end do
-        endif
+        end do
         self_out%sumsq = real(self_out%corr_unnorm_serial(self_out))
     end subroutine shift
 
@@ -577,11 +562,7 @@ contains
         shconst = 0.
         do i=1,2
             if( ldim(i) > 1 )then
-                if( is_even(ldim(i)) )then
-                    shconst(i) = PI/real(ldim(i)/2)
-                else
-                    shconst(i) = PI/real((ldim(i)-1)/2)
-                endif
+                shconst(i) = PI/(real(ldim(i))/2.) ! 2 pi/n, an odd box included
             endif
         end do
         allocate(ftexp_transfmat(ftexp_transf_flims(1,1):ftexp_transf_flims(1,2),&

@@ -6,18 +6,23 @@ use simple_stack_read_session, only: stack_read_session, stack_read_counts
 use simple_syslib,            only: get_peak_rss_bytes, get_node_mem_in_use_bytes, get_node_mem_total_bytes
 use simple_image_slab,        only: image_slab, SLAB_OK, SLAB_OVER_BUDGET, SLAB_NO_MEMORY
 use simple_image,             only: image
+use simple_cartesian_fourier, only: extract_native_fourier_plane
+use simple_euclid_sigma2,     only: sigma2_half
 use, intrinsic :: iso_fortran_env, only: int64
+!$ use omp_lib,                only: omp_get_max_threads, omp_get_thread_num
 implicit none
 #include "simple_local_flags.inc"
 
 public :: prepimgbatch, killimgbatch, read_imgbatch, ptcl_read_session
-public :: prep_rec_observation
-public :: ptcl_read_counts, ptcl_read_counts_now, ptcl_read_counts_since, add_ptcl_cache_read_time
+public :: prep_rec_observation, prep_rec_observation_ptcl
+public :: rec_state_half, rec_obs_oris, rec_obs_inv_sig2, read_rec_obs_batch
+public :: ptcl_read_counts, ptcl_read_counts_now, ptcl_read_counts_since
 public :: write_ptcl_read_bench_context, write_mem_bench_context
 public :: ptcl_buffer_budget, fill_pass_buffer, release_pass_buffer, pass_buffer_status_name, pass_buffer_bytes
 public :: open_record_buffer, records_open, record_slot, put_record, seal_record_buffer, take_records
 public :: get_rec_observation, get_records
 public :: BUFFER_FILLED, BUFFER_OFF, BUFFER_OVER_BUDGET, BUFFER_NO_MEMORY, BUFFER_RECORDS
+public :: pass_team
 private
 
 ! outcomes of filling the particle buffer, or of opening it for records
@@ -34,7 +39,6 @@ type(stack_io) :: stkio_r
 
 !> The particle reads of every read session, cumulative over the process and updated by the
 !! master thread; a pass's counts are the difference of two snapshots (ptcl_read_counts_since).
-!! The downscaled 2D cache has its own reader: only its read time is kept.
 type :: ptcl_read_counts
     integer(int64)       :: nopens     = 0_int64 !< stacks opened
     integer(int64)       :: nrequests  = 0_int64 !< read requests
@@ -45,14 +49,13 @@ type :: ptcl_read_counts
     integer(int64)       :: bytes_advised       = 0_int64 !< file bytes hinted to the kernel beyond the window
     integer(int64)       :: nbuffered  = 0_int64 !< images copied from the particle buffer, no file touched
     real(timer_int_kind) :: rt_read    = 0.      !< wall time reading stacks (L_BENCH_GLOB)
-    real(timer_int_kind) :: rt_cache   = 0.      !< wall time reading the downscaled 2D cache (L_BENCH_GLOB)
 end type ptcl_read_counts
 
 type(ptcl_read_counts) :: read_totals
 
 ! The particle buffer of one search pass: its share's images, read once into an immutable slab and copied from
 ! it by the batches of the same process (section 3.1 of particle_io_few_particle_stacks.md). 3D: the search and
-! the reconstruction; 2D in shared memory: the probability table fills it, the matcher's batches use it.
+! the reconstruction.
 ! A cropped 3D pass holds records instead: each particle's reconstruction observation (prep_rec_observation,
 ! untapered), put by the search's batches from the transform the alignment computes, sealed before the
 ! reconstruction, which takes its observations from them.
@@ -82,6 +85,12 @@ end type ptcl_read_session
 
 contains
 
+    !> the team the pass's parallel regions run, by which its per-thread state is sized
+    integer function pass_team()
+        pass_team = nthr_glob
+        !$ pass_team = omp_get_max_threads()
+    end function pass_team
+
     type(ptcl_read_counts) function ptcl_read_counts_now()
         ptcl_read_counts_now = read_totals
     end function ptcl_read_counts_now
@@ -98,14 +107,7 @@ contains
         d%bytes_advised       = read_totals%bytes_advised       - t0%bytes_advised
         d%nbuffered           = read_totals%nbuffered           - t0%nbuffered
         d%rt_read    = read_totals%rt_read    - t0%rt_read
-        d%rt_cache   = read_totals%rt_cache   - t0%rt_cache
     end function ptcl_read_counts_since
-
-    !> The 2D cache has its own reader (simple_ptcl_cache); its callers time it
-    subroutine add_ptcl_cache_read_time( rt )
-        real(timer_int_kind), intent(in) :: rt
-        read_totals%rt_cache = read_totals%rt_cache + rt
-    end subroutine add_ptcl_cache_read_time
 
     !> Context lines of a pass's particle reads for a bench file
     subroutine write_ptcl_read_bench_context( fnr, prefix, counts )
@@ -148,8 +150,8 @@ contains
         else
             currsz    = size(build%imgbatch)
             ldim_curr = build%imgbatch(1)%get_ldim()
-            ! a batch read from the downscaled cache needs box_crop buffers at
-            ! smpd_crop, so both have to be honoured on reuse, not just the batch size
+            ! a batch of cropped particles needs box_crop buffers at smpd_crop, so both
+            ! have to be honoured on reuse, not just the batch size
             if( batchsz > currsz .or. ldim_curr(1) /= box_here .or. &
                &abs(build%imgbatch(1)%get_smpd() - smpd_here) > 1.e-6 )then
                 call killimgbatch(build)
@@ -553,6 +555,21 @@ contains
     !! Fourier-cropped to obs, back in real space, then tapered at the cropped box if l_taper; uncropped: tapered,
     !! then normalized, as in the fused gridding routine. Cropping and tapering do not commute, so all backends use it.
     !! A cropped 3D pass keeps the untapered cropped observation as the particle's record (get_rec_observation).
+    !> prep_rec_observation under the mask particle iptcl's preparation in this process normalised it under (the box's
+    !! for a particle on the disk, build%obs_on_box), so an observation read again agrees with its record
+    subroutine prep_rec_observation_ptcl( build, iptcl, ptcl_img, obs, l_taper )
+        class(builder), intent(in)    :: build
+        integer,        intent(in)    :: iptcl
+        class(image),   intent(inout) :: ptcl_img
+        class(image),   intent(inout) :: obs
+        logical,        intent(in)    :: l_taper
+        if( build%obs_on_box(iptcl) )then
+            call prep_rec_observation(ptcl_img, build%lmsk_box, obs, l_taper)
+        else
+            call prep_rec_observation(ptcl_img, build%lmsk, obs, l_taper)
+        endif
+    end subroutine prep_rec_observation_ptcl
+
     subroutine prep_rec_observation( ptcl_img, lmsk, obs, l_taper )
         class(image), intent(inout) :: ptcl_img
         logical,      intent(in)    :: lmsk(:,:,:)
@@ -573,5 +590,118 @@ contains
             call obs%norm_noise(lmsk, sdev_noise)
         endif
     end subroutine prep_rec_observation
+
+    ! THE OBSERVATION-BATCH FRAME OF RECONSTRUCTION: the particles of a state's half, their orientations
+    ! and CTF at the cropped box, the half's noise spectrum at the native shells, and batches of their
+    ! observations as native Fourier planes. The PCG worker accumulates from it, the wave objective
+    ! evaluates its passes on it.
+
+    !> The particles of pinds in state state_here and half eo_here, in the order of pinds
+    subroutine rec_state_half( build, state_here, eo_here, pinds, selected )
+        class(builder),       intent(in)  :: build
+        integer,              intent(in)  :: state_here, eo_here, pinds(:)
+        integer, allocatable, intent(out) :: selected(:)
+        integer :: i, n, p
+        n = 0
+        do i = 1, size(pinds)
+            p = pinds(i)
+            if( build%spproj_field%get_state(p) /= state_here ) cycle
+            if( build%spproj_field%get_half(p) /= eo_here ) cycle
+            n = n + 1
+        enddo
+        allocate(selected(n))
+        n = 0
+        do i = 1, size(pinds)
+            p = pinds(i)
+            if( build%spproj_field%get_state(p) /= state_here ) cycle
+            if( build%spproj_field%get_half(p) /= eo_here ) cycle
+            n = n + 1
+            selected(n) = p
+        enddo
+    end subroutine rec_state_half
+
+    !> selection(i) is particle pinds(i)'s orientation with its CTF at the cropped sampling and its
+    !! shift scaled to the cropped box: what a reconstruction at box_crop models
+    subroutine rec_obs_oris( params, build, pinds, selection )
+        class(parameters), intent(in)    :: params
+        class(builder),    intent(inout) :: build
+        integer,           intent(in)    :: pinds(:)
+        class(oris),       intent(inout) :: selection
+        type(ori)       :: orientation
+        type(ctfparams) :: ctfparms
+        real            :: shift(2), crop_factor
+        integer         :: i, iptcl
+        call selection%new(size(pinds), .true.)
+        call orientation%new(.false.)
+        crop_factor = real(params%box_crop) / real(params%box)
+        do i = 1, size(pinds)
+            iptcl = pinds(i)
+            call build%spproj_field%get_ori(iptcl, orientation)
+            ctfparms      = build%spproj%get_ctfparams(params%oritype, iptcl)
+            ctfparms%smpd = params%smpd_crop
+            shift         = build%spproj_field%get_2Dshift(iptcl) * crop_factor
+            call orientation%set_ctfvars(ctfparms)
+            call orientation%set_shift(shift)
+            call selection%set_ori(i, orientation)
+        enddo
+        call orientation%kill
+    end subroutine rec_obs_oris
+
+    !> 1/sigma2 of half eo_here at the native shells 0:R of the cropped box, read from the spectra's plane
+    !! grid at the padded shells OSMPL_PAD_FAC*n, which hold exactly sigma2(n) (objfun=euclid)
+    subroutine rec_obs_inv_sig2( params, build, eo_here, R, inv_sig2 )
+        class(parameters),  intent(in)    :: params
+        class(builder),     intent(inout) :: build
+        integer,            intent(in)    :: eo_here, R
+        real, allocatable,  intent(out)   :: inv_sig2(:)
+        integer :: ih
+        call build%esig%prep_fplane_grid(params%box_croppd, lbound(build%esig%sigma2_noise,1))
+        ih = sigma2_half(eo_here)
+        allocate(inv_sig2(0:R))
+        if( OSMPL_PAD_FAC*R > build%esig%fplane%nyq ) THROW_HARD('the plane grid does not reach the reconstruction shells')
+        inv_sig2(0:R) = build%esig%fplane%inv_sig2(0:OSMPL_PAD_FAC*R:OSMPL_PAD_FAC, ih)
+    end subroutine rec_obs_inv_sig2
+
+    !> y_batch(:,:,ii) receives the native Fourier plane (the disk lims2, h^2+k^2 <= sqlp) of the
+    !! reconstruction observation of particle pinds(batchlims(1)+ii-1): from the search's records when
+    !! a cropped pass sealed them, else read through rsess (which then reads the next batch ahead) and
+    !! prepared by prep_rec_observation, tapered, the batch in parallel over the work images obs (one
+    !! per thread at box_crop, sized by omp_get_max_threads at their allocation); rt_prep accumulates
+    !! the preparation's wall time (L_BENCH_GLOB)
+    subroutine read_rec_obs_batch( params, build, rsess, pinds, batchlims, obs, lims2, sqlp, y_batch, rt_prep )
+        class(parameters),       intent(in)    :: params
+        class(builder),          intent(inout) :: build
+        class(ptcl_read_session),intent(inout) :: rsess
+        integer,                 intent(in)    :: pinds(:), batchlims(2), lims2(2,2), sqlp
+        class(image),            intent(inout) :: obs(:)
+        complex,                 intent(inout) :: y_batch(lims2(1,1):,lims2(2,1):,:)
+        real(timer_int_kind),    intent(inout) :: rt_prep
+        integer(timer_int_kind) :: t_prep
+        integer :: ii, ithr, nthr, batchsz
+        logical :: l_records
+        batchsz = batchlims(2) - batchlims(1) + 1
+        if( size(y_batch,3) < batchsz ) THROW_HARD('the plane batch is smaller than the particle batch; read_rec_obs_batch')
+        if( size(obs) < 1 ) THROW_HARD('no observation work images; read_rec_obs_batch')
+        l_records = take_records(pinds(batchlims(1):batchlims(2)))
+        if( .not. l_records ) call rsess%read(params, build, size(pinds), pinds, batchlims)
+        if( L_BENCH_GLOB ) t_prep = tic()
+        nthr = 1
+        !$ nthr = min(size(obs), omp_get_max_threads())
+        !$omp parallel do default(shared) private(ii,ithr) schedule(static) num_threads(nthr) proc_bind(close)
+        do ii = 1, batchsz
+            ithr = 1
+            !$ ithr = omp_get_thread_num() + 1
+            ! the backend-neutral observation (normalize, crop, taper), see prep_rec_observation
+            if( l_records )then
+                call get_rec_observation(pinds(batchlims(1)+ii-1), obs(ithr), .true.)
+            else
+                call prep_rec_observation_ptcl(build, pinds(batchlims(1)+ii-1), build%imgbatch(ii), obs(ithr), .true.)
+            endif
+            call obs(ithr)%fft
+            y_batch(:,:,ii) = extract_native_fourier_plane(obs(ithr), lims2, sqlp)
+        enddo
+        !$omp end parallel do
+        if( L_BENCH_GLOB ) rt_prep = rt_prep + toc(t_prep)
+    end subroutine read_rec_obs_batch
 
 end module simple_matcher_ptcl_io

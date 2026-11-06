@@ -20,6 +20,7 @@ type picksegdiam
     private
     real              :: moldiam_max
     real              :: moldiam_min
+    real              :: smpd_raw = 0.   !< sampling of the micrograph the positions refer to (A)
     type(linked_list) :: diameters, xpos, ypos
 contains
     generic            :: pick => pick_1, pick_2, pick_3 
@@ -33,12 +34,14 @@ end type picksegdiam
 
 contains
 
-    subroutine pick_1( self, micname, smpd, moldiam_max, pcontrast, denfname, topofname, binfname, empty )
+    subroutine pick_1( self, micname, smpd, moldiam_max, pcontrast, denfname, topofname, binfname, empty, thumbfname )
+        use simple_gui_utils, only: mic2thumb
         class(picksegdiam),      intent(inout) :: self
         class(string),           intent(in)    :: micname !< micrograph file name
         real,                    intent(in)    :: smpd, moldiam_max
         character(len=*),        intent(in)    :: pcontrast
         class(string), optional, intent(in)    :: denfname, topofname, binfname
+        class(string), optional, intent(in)    :: thumbfname !< thumbnail of the denoised micrograph (particles black)
         logical,       optional, intent(out)   :: empty
         integer, allocatable :: cc_imat(:,:,:), cc_imat_copy(:,:,:)
         logical, allocatable :: picking_mask(:,:)
@@ -49,6 +52,7 @@ contains
         logical         :: l_empty
         call self%kill
         self%moldiam_max = moldiam_max
+        self%smpd_raw    = smpd
         scale = smpd / SMPD_SHRINK1
         call read_mic_subtr_backgr_shrink(micname, smpd, scale, pcontrast, mic_raw, mic_shrink, l_empty)
         if(present(empty)) empty = l_empty
@@ -71,6 +75,7 @@ contains
             call mic_den%write(denfname)
             write(logfhandle,'(a)')  '>>> DENOISED MICROGRAPH: '//denfname%to_char()
         endif
+        if( present(thumbfname) ) call mic2thumb(mic_den, thumbfname, l_neg=.true.)
         if( present(topofname) ) call mic_shrink%write(topofname)
         call binarize_mic_den(mic_shrink, FRAC_FG, mic_bin)
         write(logfhandle,'(a)')  '>>> BINARIZATION, CONNECTED COMPONENT IDENTIFICATION, DIAMETER ESTIMATION'
@@ -134,6 +139,7 @@ contains
         real           :: rpos(2), diam, diam_adj, scale
         integer        :: pos(2), icc, nccs, ldim(3), nframes
         call self%kill
+        self%smpd_raw = smpd_raw
         scale = smpd_raw / SMPD_SHRINK1
         ! read binary
         call find_ldim_nptcls(binmicname, ldim, nframes)
@@ -194,6 +200,7 @@ contains
         endif
         self%moldiam_max = maxval(moldiams)
         self%moldiam_min = minval(moldiams)
+        self%smpd_raw    = smpd
         scale = smpd / SMPD_SHRINK1
         call read_mic_subtr_backgr_shrink(micname, smpd, scale, pcontrast, mic_raw, mic_shrink, l_empty)
         if(present(empty)) empty = l_empty
@@ -345,7 +352,7 @@ contains
         if( present(box) )then
             box_here = box
         else
-            box_here = round2even(BOX_EXP_FAC*self%moldiam_max)
+            box_here = round2even(BOX_EXP_FAC*self%moldiam_max/self%smpd_raw)
         endif
         allocate(diams(nptcls),source=0.)
         call self%get_diameters(diams)
@@ -379,6 +386,7 @@ contains
     subroutine kill( self )
         class(picksegdiam), intent(inout) :: self
         self%moldiam_max = 0.
+        self%smpd_raw    = 0.
         call self%diameters%kill
         call self%xpos%kill
         call self%ypos%kill

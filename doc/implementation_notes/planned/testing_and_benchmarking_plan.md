@@ -117,7 +117,7 @@ The reference benchmarks are still run by hand:
 
 ## 3. Now: the suite on the merged code (`test_truth_sync`, Dell)
 
-Specified in `test_suite_truth_and_robustness.md`, Phases 7 to 9. Phase 9
+Specified in `../completed/test_suite_truth_and_robustness.md`, Phases 7 to 9. Phase 9
 times A, A-shm, E and E-shm as `prob_speed` defined them and MS and M as
 `ms_speed` did. It also closes these documentation gaps:
 
@@ -417,13 +417,15 @@ Each is a separate project that changes results. Each is judged by a paired
 - **The FSC=0.5 stage shift and mid-stage exit** use the best state's crossing
   (`minval` over states), so in a multi-state run the best state can end a stage
   for all of them.
-- **The speed items that change results** (`speed_architecture_proposals.md`):
-  - the master draws the stage 1-2 sample;
-  - 2D partitions balanced by active particles;
-  - the `maxits`/`minits`, `fillin` and `prob_snhc` renames, which also need
-    the stream tests;
-  - single-precision weights;
-  - a cap on refined references across states.
+- **The speed items that change results** (`speed_architecture_proposals.md`,
+  status 2026-11-03):
+  - the master draws the stage 1-2 sample, and 2D partitions balanced by
+    active particles: done, checked on the bgal selection (four seeds);
+  - the `maxits`/`minits`, `fillin` and `prob_snhc` renames: done, identical
+    on the workflows, distributed solve2D and `mini_stream`;
+  - single-precision weights: done, checked at the kernels (one ulp, no best
+    rotation moved) and on a refine3D of trpv1;
+  - a cap on refined references across states: open.
 
 Validation tests added when their features land. These are not now, but are
 budgeted here so they are not forgotten:
@@ -459,15 +461,15 @@ FePt with two species, the nonuniform evidence-mask diagnostic.
 
 ## Sources
 
-Under `doc/implementation_notes/planned/`:
+Implementation records and related planned work (paths relative to this note):
 
-- `test_suite_truth_and_robustness.md`
-- `single_state_speed_week_unfinished.md`
+- `../completed/test_suite_truth_and_robustness.md`
+- `../completed/single_state_speed_week_closeout.md`
 - `multistate_speed_run_unfinished.md`
 - `speed_architecture_proposals.md` (the maintainer's tree holds the newer copy)
-- `hardware_resource_planning_unfinished.md`
-- `species_discovery_status.md`
-- `atom_bfactor_model.md`
+- `../completed/hardware_resource_planning_validation_closeout.md`
+- `../completed/species_discovery_status.md`
+- `../completed/atom_bfactor_model.md`
 - `single_pcg_integration_unfinished.md`
 - `nu_evidence_mask_cross_validated_threshold.md`
 - `next_release/calpha_nu_evidence_mask.md`

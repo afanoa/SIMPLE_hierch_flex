@@ -1,7 +1,8 @@
 !@descr: polarft class submodule for objective function evaluations
 submodule (simple_polarft_calc) simple_polarft_corr
 use simple_defs, only: DTWOPI
-use simple_eul_prob_tab_utils, only: sample_bounded_dists, sample_likelihood_dists, sample_power_dists
+use simple_eul_prob_tab_utils, only: sample_bounded_dists, sample_power_dists, draw_posterior_row, posterior_temperature
+use simple_rnd,                only: rnd_keyed, rnd_draw_key, RND_FAM_INPL
 #include "simple_local_flags.inc"
 implicit none
 
@@ -83,25 +84,6 @@ contains
         end select
     end subroutine gen_prob_objfun_val
 
-    module subroutine gen_likelihood_val( self, iref, iptcl, shift, nsample, dist, corr, irot,&
-        &pvec_sorted, sorted_inds )
-        class(polarft_calc), intent(inout) :: self
-        integer,             intent(in)    :: iref, iptcl, nsample
-        real(sp),            intent(in)    :: shift(2)
-        real(sp),            intent(out)   :: dist, corr
-        integer,             intent(out)   :: irot
-        real(sp),            intent(inout) :: pvec_sorted(self%nrots)
-        integer,             intent(inout) :: sorted_inds(self%nrots)
-        select case(self%p_ptr%cc_objfun)
-            case(OBJFUN_CC)
-                call self%gen_prob_likelihood_cc_val(iref, iptcl, shift, nsample, dist, corr, irot, &
-                    &pvec_sorted, sorted_inds)
-            case(OBJFUN_EUCLID)
-                call self%gen_prob_likelihood_euclid_val(iref, iptcl, shift, nsample, dist, corr, irot, &
-                    &pvec_sorted, sorted_inds)
-        end select
-    end subroutine gen_likelihood_val
-
     module subroutine gen_prob_power_objfun_val( self, iref, iptcl, shift, power, nsample, dist, corr, irot,&
         &pvec_sorted, sorted_inds )
         class(polarft_calc), intent(inout) :: self
@@ -129,6 +111,7 @@ contains
         complex(sp), pointer :: shmat(:,:)
         real(sp) :: shift_mag_sq
         integer  :: i, ithr, k, kk, k0, ieo
+        call self%check_ptcl_memo
         ithr    =  omp_get_thread_num() + 1
         i       =  self%pinds(iptcl)
         k0      =  self%kfromto(1)
@@ -200,6 +183,8 @@ contains
         real(dp)    :: ptcl_sqsum
         real(sp)    :: A_sp, shift_mag_sq, wk
         integer     :: k, i, ithr, kk, k0, p, ieo, ih
+        call self%check_ptcl_memo
+        call self%check_euclid_weights
         ithr         =  omp_get_thread_num() + 1
         i            =  self%pinds(iptcl)
         ih = merge(1, 2, self%iseven(i))
@@ -225,7 +210,7 @@ contains
             do k = self%kfromto(1), self%kfromto(2)
                 wk = self%sigma2_wk(k,ih)
                 kk = k - k0 + 1
-                do p = 1,self%pftsz
+                do p = 1,self%pftsz+1
                     c = self%ft_ctf2(p,k,i) * self%ft_ref2(p,k,iref,ieo) - &
                         &2._sp * self%ft_ptcl_ctf(p,k,i) * conjg(self%cmat2_many(ithr)%c(p,kk))
                     self%crvec1(ithr)%c(p) = self%crvec1(ithr)%c(p) + wk * c
@@ -237,7 +222,7 @@ contains
             self%crvec1(ithr)%c = cmplx(0.,0.,kind=c_float_complex)
             do k = self%kfromto(1), self%kfromto(2)
                 wk = self%sigma2_wk(k,ih)
-                do p = 1,self%pftsz
+                do p = 1,self%pftsz+1
                     c = self%ft_ctf2(p,k,i) * self%ft_ref2(p,k,iref,ieo) - &
                         &2._sp * self%ft_ptcl_ctf(p,k,i) * conjg(self%ft_ref(p,k,iref,ieo))
                     self%crvec1(ithr)%c(p) = self%crvec1(ithr)%c(p) + wk * c
@@ -288,6 +273,8 @@ contains
         complex(sp), pointer :: shmat(:,:)
         real(sp)    :: shift_mag_sq
         integer     :: k, i, kk, k0, ieo, ih
+        call self%check_ptcl_memo
+        call self%check_euclid_weights
         ithr         = omp_get_thread_num() + 1
         i            = self%pinds(iptcl)
         ih = merge(1, 2, self%iseven(i))
@@ -308,35 +295,47 @@ contains
                     conjg(self%cmat2_many(ithr)%c(1:self%pftsz,kk))
             enddo
             call fftwf_execute_dft(self%plan_fwd1_many, self%cmat2_many(ithr)%c, self%cmat2_many(ithr)%c)
-            call euclid_sums(self%pftsz, self%pftsz+1, self%nrots, self%nk, self%ft_ctf2(:,:,i),&
-                &self%ft_ref2(:,:,iref,ieo), self%ft_ptcl_ctf(:,:,i), self%cmat2_many(ithr)%c, self%sigma2_wk8(:,ih),&
+            call euclid_sums(self%pftsz+1, self%pftsz+1, self%nrots, self%nk, self%ft_ctf2(:,:,i),&
+                &self%ft_ref2(:,:,iref,ieo), self%ft_ptcl_ctf(:,:,i), self%cmat2_many(ithr)%c, self%sigma2_wk(:,ih),&
                 &self%crvec1(ithr)%c)
         else
-            call euclid_sums(self%pftsz, self%pftsz+1, self%pftsz+1, self%nk, self%ft_ctf2(:,:,i),&
-                &self%ft_ref2(:,:,iref,ieo), self%ft_ptcl_ctf(:,:,i), self%ft_ref(:,:,iref,ieo), self%sigma2_wk8(:,ih),&
+            call euclid_sums(self%pftsz+1, self%pftsz+1, self%pftsz+1, self%nk, self%ft_ctf2(:,:,i),&
+                &self%ft_ref2(:,:,iref,ieo), self%ft_ptcl_ctf(:,:,i), self%ft_ref(:,:,iref,ieo), self%sigma2_wk(:,ih),&
                 &self%crvec1(ithr)%c)
         endif
         call fftwf_execute_dft_c2r(self%plan_bwd1_single, self%crvec1(ithr)%c, self%crvec1(ithr)%r)
     end subroutine gen_euclid_crvec
 
     !> The euclid sums of one pair over angular bins 1..np, sum_k w_k (FT(CTF2) x FT(REF2) - 2 FT(X.CTF) x FT(REF)*),
-    !! into acc. Plain array dummies: the compiler then knows unit stride and no overlap and vectorizes the bins.
+    !! into acc, one shell per call of euclid_shell_sum: with the shell loop around the bin loop in one procedure gcc
+    !! unroll-and-jams two shells, which on x86 vectorizes with lane permutes and reads twice the memory streams
     subroutine euclid_sums( np, n1, ldr, nk, ctf2, ref2, xctf, ref, wk, acc )
         integer,     intent(in)    :: np, n1, ldr, nk
         complex(sp), intent(in)    :: ctf2(n1,nk), ref2(n1,nk), xctf(n1,nk), ref(ldr,nk)
-        real(dp),    intent(in)    :: wk(nk)
+        real(sp),    intent(in)    :: wk(nk)
         complex(sp), intent(inout) :: acc(n1)
-        complex(sp) :: c
-        integer     :: kk, p
+        integer :: kk
         acc = cmplx(0.,0.,kind=sp)
         do kk = 1,nk
-            do p = 1,np
-                c = ctf2(p,kk) * ref2(p,kk)
-                c = c - 2.0 * xctf(p,kk) * conjg(ref(p,kk))
-                acc(p) = cmplx(acc(p) + wk(kk) * c, kind=sp)
-            enddo
+            call euclid_shell_sum(np, ctf2(:,kk), ref2(:,kk), xctf(:,kk), ref(:,kk), wk(kk), acc)
         enddo
     end subroutine euclid_sums
+
+    !> One shell of euclid_sums: plain array dummies, unit stride and no overlap; the weight single precision as
+    !! the data (sigma2_wk), so the loop runs at the full single-precision vector width
+    subroutine euclid_shell_sum( np, ctf2, ref2, xctf, ref, wk, acc )
+        integer,     intent(in)    :: np
+        complex(sp), intent(in)    :: ctf2(np), ref2(np), xctf(np), ref(np)
+        real(sp),    intent(in)    :: wk
+        complex(sp), intent(inout) :: acc(np)
+        complex(sp) :: c
+        integer     :: p
+        do p = 1,np
+            c = ctf2(p) * ref2(p)
+            c = c - 2.0 * xctf(p) * conjg(ref(p))
+            acc(p) = acc(p) + wk * c
+        enddo
+    end subroutine euclid_shell_sum
 
     !> The euclid distances of the n rotations from the inverse FFT r of gen_euclid_crvec, huge above -log(TINY).
     !! Converting every element (vc clamps a huge v) and overwriting those above, not if/else, lets the loop vectorize
@@ -417,6 +416,53 @@ contains
         dist = self%heap_vars(ithr)%rot_dists(irot)
     end subroutine gen_euclid_val_at
 
+    !> The Euclidean loss of a bank entry (the particle shifted by its particle-frame seed, memoize_shifted_ptcl)
+    !! at its best grid rotation, own slot or, with cross, the other half's: the deterministic row of the
+    !! pose-posterior diagnostic at the seed the production search scored at. Every Euclidean kernel sums the
+    !! angular Nyquist bin.
+    module subroutine gen_best_euclid_val_bank( self, iref, iptcl, bank, dist, irot, cross )
+        class(polarft_calc), target, intent(inout) :: self
+        integer,                     intent(in)    :: iref, iptcl
+        complex(sp),                 intent(in)    :: bank(:,:)
+        real(sp),                    intent(out)   :: dist
+        integer,                     intent(out)   :: irot
+        logical, optional,           intent(in)    :: cross
+        real(dp) :: norm
+        integer  :: ithr, p
+        logical  :: l_cross
+        l_cross = .false.
+        if( present(cross) ) l_cross = cross
+        call gen_euclid_crvec_bank(self, iref, iptcl, bank, norm, ithr, cross=l_cross)
+        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, self%heap_vars(ithr)%rot_dists)
+        irot = 1
+        dist = self%heap_vars(ithr)%rot_dists(1)
+        do p = 2,self%nrots
+            if( self%heap_vars(ithr)%rot_dists(p) < dist )then
+                irot = p
+                dist = self%heap_vars(ithr)%rot_dists(p)
+            endif
+        enddo
+    end subroutine gen_best_euclid_val_bank
+
+    !> The Euclidean loss of a bank entry at one grid rotation, own slot or the other half's; huge outside 1..nrots
+    module subroutine gen_euclid_val_at_bank( self, iref, iptcl, bank, irot, dist, cross )
+        class(polarft_calc), target, intent(inout) :: self
+        integer,                     intent(in)    :: iref, iptcl, irot
+        complex(sp),                 intent(in)    :: bank(:,:)
+        real(sp),                    intent(out)   :: dist
+        logical, optional,           intent(in)    :: cross
+        real(dp) :: norm
+        integer  :: ithr
+        logical  :: l_cross
+        l_cross = .false.
+        if( present(cross) ) l_cross = cross
+        dist = huge(dist)
+        if( irot < 1 .or. irot > self%nrots ) return
+        call gen_euclid_crvec_bank(self, iref, iptcl, bank, norm, ithr, cross=l_cross)
+        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, self%heap_vars(ithr)%rot_dists)
+        dist = self%heap_vars(ithr)%rot_dists(irot)
+    end subroutine gen_euclid_val_at_bank
+
     !> whether the two half slots of reference iref hold the same section (solve3D's LP-set stages put one
     !! merged map in both, so a cross-slot score is then the same reference; prob_post_diag records it)
     module logical function ref_slots_identical( self, iref )
@@ -427,6 +473,17 @@ contains
         if( iref < 1 .or. iref > self%nrefs ) return
         ref_slots_identical = all(self%pfts_refs(:,:,iref,REF_EVEN) == self%pfts_refs(:,:,iref,REF_ODD))
     end function ref_slots_identical
+
+    !> The temperature every in-plane posterior draw of particle iptcl runs at (the probability tables' fills): the
+    !! Gaussian noise model's pi wsqsum / (2 pftsz) from the memoized self-term under the current sigma2
+    !! (posterior_temperature) times the iteration's tempering factor prob_beta (T_eff = beta T, below one hotter),
+    !! the one factor every draw of the tables runs at, so the annealing tail cools the in-plane draws with the
+    !! direction and class draws. The tables keep the untempered value with the row
+    module real function ptcl_posterior_temp( self, iptcl )
+        class(polarft_calc), intent(in) :: self
+        integer,             intent(in) :: iptcl
+        ptcl_posterior_temp = self%p_ptr%prob_beta * posterior_temperature(self%wsqsum_ptcl_now(iptcl), self%pftsz)
+    end function ptcl_posterior_temp
 
     module subroutine gen_prob_euclid_val( self, iref, iptcl, shift, athres_ub, prob_athres, dist, irot, pvec_sorted, sorted_inds )
         class(polarft_calc), target, intent(inout) :: self
@@ -444,67 +501,6 @@ contains
         call sample_bounded_dists(self%nrots, self%heap_vars(ithr)%rot_dists, athres_ub, prob_athres, dist, irot,&
             &pvec_sorted, sorted_inds)
     end subroutine gen_prob_euclid_val
-
-    module subroutine gen_prob_likelihood_cc_val( self, iref, iptcl, shift, nsample, dist, corr, irot,&
-        &pvec_sorted, sorted_inds )
-        class(polarft_calc), target, intent(inout) :: self
-        integer,                     intent(in)    :: iref, iptcl, nsample
-        real(sp),                    intent(in)    :: shift(2)
-        real(sp),                    intent(out)   :: dist, corr
-        integer,                     intent(out)   :: irot
-        real(sp),                    intent(inout) :: pvec_sorted(self%nrots)
-        integer,                     intent(inout) :: sorted_inds(self%nrots)
-        integer :: ithr
-        ithr = omp_get_thread_num() + 1
-        call self%gen_corrs(iref, iptcl, shift, self%heap_vars(ithr)%rot_scores)
-        call sample_cc_scores(self, ithr, nsample, dist, corr, irot, pvec_sorted, sorted_inds)
-    end subroutine gen_prob_likelihood_cc_val
-
-    !> the likelihood draw over the cc scores of the calling thread's buffer: distance 1 - cc, cc clamped to [0,1]
-    subroutine sample_cc_scores( self, ithr, nsample, dist, corr, irot, pvec_sorted, sorted_inds )
-        class(polarft_calc), intent(inout) :: self
-        integer,             intent(in)    :: ithr, nsample
-        real(sp),            intent(out)   :: dist, corr
-        integer,             intent(out)   :: irot
-        real(sp),            intent(inout) :: pvec_sorted(self%nrots)
-        integer,             intent(inout) :: sorted_inds(self%nrots)
-        integer :: p
-        do p = 1,self%nrots
-            self%heap_vars(ithr)%rot_dists(p) = 1. - max(0., min(1., self%heap_vars(ithr)%rot_scores(p)))
-        enddo
-        call sample_likelihood_dists(self%nrots, self%heap_vars(ithr)%rot_dists, nsample, dist, corr, irot,&
-            &pvec_sorted, sorted_inds, self%heap_vars(ithr)%rot_cdf)
-        corr = max(0., min(1., self%heap_vars(ithr)%rot_scores(irot)))
-    end subroutine sample_cc_scores
-
-    !> the likelihood draw over the Euclidean distances of the calling thread's crvec1 (gen_euclid_crvec)
-    subroutine sample_euclid_crvec( self, ithr, norm, nsample, dist, corr, irot, pvec_sorted, sorted_inds )
-        class(polarft_calc), intent(inout) :: self
-        integer,             intent(in)    :: ithr, nsample
-        real(dp),            intent(in)    :: norm
-        real(sp),            intent(out)   :: dist, corr
-        integer,             intent(out)   :: irot
-        real(sp),            intent(inout) :: pvec_sorted(self%nrots)
-        integer,             intent(inout) :: sorted_inds(self%nrots)
-        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, self%heap_vars(ithr)%rot_dists)
-        call sample_likelihood_dists(self%nrots, self%heap_vars(ithr)%rot_dists, nsample, dist, corr, irot,&
-            &pvec_sorted, sorted_inds, self%heap_vars(ithr)%rot_cdf)
-    end subroutine sample_euclid_crvec
-
-    module subroutine gen_prob_likelihood_euclid_val( self, iref, iptcl, shift, nsample, dist, corr, irot,&
-        &pvec_sorted, sorted_inds )
-        class(polarft_calc), target, intent(inout) :: self
-        integer,                     intent(in)    :: iref, iptcl, nsample
-        real(sp),                    intent(in)    :: shift(2)
-        real(sp),                    intent(out)   :: dist, corr
-        integer,                     intent(out)   :: irot
-        real(sp),                    intent(inout) :: pvec_sorted(self%nrots)
-        integer,                     intent(inout) :: sorted_inds(self%nrots)
-        real(dp) :: norm
-        integer  :: ithr
-        call gen_euclid_crvec(self, iref, iptcl, shift, norm, ithr)
-        call sample_euclid_crvec(self, ithr, norm, nsample, dist, corr, irot, pvec_sorted, sorted_inds)
-    end subroutine gen_prob_likelihood_euclid_val
 
     module subroutine gen_prob_power_euclid_val( self, iref, iptcl, shift, power, nsample, dist, corr, irot,&
         &pvec_sorted, sorted_inds )
@@ -526,23 +522,30 @@ contains
 
     ! Kernels of a particle bank entry (memoize_shifted_ptcl): the shifted particle against the unshifted
     ! memoised reference, so there is no reference shift and no shift matrix. The cross term sums the angular
-    ! Nyquist bin too (p = 1..pftsz+1), which makes the loss exact against the true shifted loss; the
-    ! shifted-reference kernels above drop that bin.
+    ! Nyquist bin (p = 1..pftsz+1), as every Euclidean kernel does, which makes the loss exact against the true
+    ! shifted loss.
 
-    subroutine gen_euclid_crvec_bank( self, iref, iptcl, bank, norm, ithr )
+    !> cross=.true. scores the bank entry against the other half's reference (prob_post_diag), as gen_euclid_crvec
+    subroutine gen_euclid_crvec_bank( self, iref, iptcl, bank, norm, ithr, cross )
         class(polarft_calc), intent(inout) :: self
         integer,             intent(in)    :: iref, iptcl
         complex(sp),         intent(in)    :: bank(:,:)
         real(dp),            intent(out)   :: norm
         integer,             intent(out)   :: ithr
+        logical, optional,   intent(in)    :: cross
         integer :: i, ieo, ih
+        call self%check_ptcl_memo
+        call self%check_euclid_weights
         ithr = omp_get_thread_num() + 1
         i    = self%pinds(iptcl)
         ih   = merge(1, 2, self%iseven(i))
         ieo  = merge(REF_EVEN, REF_ODD, self%iseven(i))
+        if( present(cross) )then
+            if( cross ) ieo = merge(REF_ODD, REF_EVEN, self%iseven(i))
+        endif
         norm = self%wsqsum_ptcl_now(iptcl) * real(2*self%nrots, dp)
         call euclid_sums(self%pftsz+1, self%pftsz+1, self%pftsz+1, self%nk, self%ft_ctf2(:,:,i),&
-            &self%ft_ref2(:,:,iref,ieo), bank, self%ft_ref(:,:,iref,ieo), self%sigma2_wk8(:,ih), self%crvec1(ithr)%c)
+            &self%ft_ref2(:,:,iref,ieo), bank, self%ft_ref(:,:,iref,ieo), self%sigma2_wk(:,ih), self%crvec1(ithr)%c)
         call fftwf_execute_dft_c2r(self%plan_bwd1_single, self%crvec1(ithr)%c, self%crvec1(ithr)%r)
     end subroutine gen_euclid_crvec_bank
 
@@ -552,6 +555,7 @@ contains
         complex(sp),         intent(in)    :: bank(:,:)
         real(sp),            intent(out)   :: cc(self%nrots)
         integer :: i, ithr, ieo
+        call self%check_ptcl_memo
         ithr = omp_get_thread_num() + 1
         i    = self%pinds(iptcl)
         ieo  = merge(REF_EVEN, REF_ODD, self%iseven(i))
@@ -567,7 +571,8 @@ contains
             &sqrt(cc * real(self%sqsums_ptcls(i), sp) * real(2*self%nrots, sp))
     end subroutine gen_corrs_bank
 
-    !> sum_k a_k x b_k (l_conj: a_k x b_k*) over the n1 angular bins into acc, plain array dummies as in euclid_sums
+    !> sum_k a_k x b_k (l_conj: a_k x b_k*) over the n1 angular bins into acc, two shells per call of cc_shells_sum
+    !! (a shell loop here would be unroll-and-jammed, see euclid_sums)
     subroutine cc_sums( n1, ldb, nk, a, b, l_conj, acc )
         integer,     intent(in)    :: n1, ldb, nk
         complex(sp), intent(in)    :: a(n1,nk), b(ldb,nk)
@@ -575,16 +580,37 @@ contains
         complex(sp), intent(inout) :: acc(n1)
         integer :: kk
         acc = cmplx(0.,0.,kind=sp)
-        if( l_conj )then
-            do kk = 1,nk
-                acc = acc + a(:,kk) * conjg(b(1:n1,kk))
-            enddo
-        else
-            do kk = 1,nk
-                acc = acc + a(:,kk) * b(1:n1,kk)
-            enddo
-        endif
+        do kk = 1,nk-1,2
+            call cc_shells_sum(n1, ldb, 2, a(:,kk:kk+1), b(:,kk:kk+1), l_conj, acc)
+        enddo
+        if( mod(nk,2) == 1 ) call cc_shells_sum(n1, ldb, 1, a(:,nk:nk), b(:,nk:nk), l_conj, acc)
     end subroutine cc_sums
+
+    !> One or two shells of cc_sums in one pass over acc, summed in shell order; plain array dummies
+    subroutine cc_shells_sum( n1, ldb, ns, a, b, l_conj, acc )
+        integer,     intent(in)    :: n1, ldb, ns
+        complex(sp), intent(in)    :: a(n1,ns), b(ldb,ns)
+        logical,     intent(in)    :: l_conj
+        complex(sp), intent(inout) :: acc(n1)
+        integer :: p
+        if( ns == 2 )then
+            if( l_conj )then
+                do p = 1,n1
+                    acc(p) = (acc(p) + a(p,1) * conjg(b(p,1))) + a(p,2) * conjg(b(p,2))
+                enddo
+            else
+                do p = 1,n1
+                    acc(p) = (acc(p) + a(p,1) * b(p,1)) + a(p,2) * b(p,2)
+                enddo
+            endif
+        else
+            if( l_conj )then
+                acc = acc + a(:,1) * conjg(b(1:n1,1))
+            else
+                acc = acc + a(:,1) * b(1:n1,1)
+            endif
+        endif
+    end subroutine cc_shells_sum
 
     !> The objective over all rotations (gen_objfun_vals' convention: exp(-loss) for Euclid, cc) of a bank entry.
     module subroutine gen_objfun_vals_bank( self, iref, iptcl, bank, vals )
@@ -607,30 +633,93 @@ contains
         end select
     end subroutine gen_objfun_vals_bank
 
-    !> gen_likelihood_val for a bank entry.
-    module subroutine gen_likelihood_val_bank( self, iref, iptcl, bank, nsample, dist, corr, irot,&
-        &pvec_sorted, sorted_inds )
-        class(polarft_calc), intent(inout) :: self
-        integer,             intent(in)    :: iref, iptcl, nsample
-        complex(sp),         intent(in)    :: bank(:,:)
-        real(sp),            intent(out)   :: dist, corr
-        integer,             intent(out)   :: irot
-        real(sp),            intent(inout) :: pvec_sorted(self%nrots)
-        integer,             intent(inout) :: sorted_inds(self%nrots)
+    !> The row the posterior draws run over: the Euclidean loss of reference iref against the particle shifted by
+    !! shift (the shifted-reference kernel) at every grid rotation, the invalid marker where the loss is not finite
+    !! (euclid_dists_from_crvec). The posterior draws below compute this row into the thread's buffer and draw
+    !! from it; the bench and the testers read it through here. objfun=euclid only.
+    module subroutine gen_euclid_dists( self, iref, iptcl, shift, dists )
+        class(polarft_calc), target, intent(inout) :: self
+        integer,                     intent(in)    :: iref, iptcl
+        real(sp),                    intent(in)    :: shift(2)
+        real(sp),                    intent(out)   :: dists(self%nrots)
         real(dp) :: norm
         integer  :: ithr
-        select case(self%p_ptr%cc_objfun)
-            case(OBJFUN_CC)
-                ithr = omp_get_thread_num() + 1
-                call gen_corrs_bank(self, iref, iptcl, bank, self%heap_vars(ithr)%rot_scores)
-                call sample_cc_scores(self, ithr, nsample, dist, corr, irot, pvec_sorted, sorted_inds)
-            case(OBJFUN_EUCLID)
-                call gen_euclid_crvec_bank(self, iref, iptcl, bank, norm, ithr)
-                call sample_euclid_crvec(self, ithr, norm, nsample, dist, corr, irot, pvec_sorted, sorted_inds)
-        end select
-    end subroutine gen_likelihood_val_bank
+        if( self%p_ptr%cc_objfun /= OBJFUN_EUCLID ) THROW_HARD('gen_euclid_dists requires objfun=euclid')
+        call gen_euclid_crvec(self, iref, iptcl, shift, norm, ithr)
+        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, dists)
+    end subroutine gen_euclid_dists
 
-    module real(dp) function gen_corr_for_rot_8_1( self, iref, iptcl, irot )
+    !> gen_euclid_dists for a bank entry (the particle shifted once by its seed, with the angular Nyquist bin)
+    module subroutine gen_euclid_dists_bank( self, iref, iptcl, bank, dists )
+        class(polarft_calc), intent(inout) :: self
+        integer,             intent(in)    :: iref, iptcl
+        complex(sp),         intent(in)    :: bank(:,:)
+        real(sp),            intent(out)   :: dists(self%nrots)
+        real(dp) :: norm
+        integer  :: ithr
+        if( self%p_ptr%cc_objfun /= OBJFUN_EUCLID ) THROW_HARD('gen_euclid_dists_bank requires objfun=euclid')
+        call gen_euclid_crvec_bank(self, iref, iptcl, bank, norm, ithr)
+        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, dists)
+    end subroutine gen_euclid_dists_bank
+
+    !> One in-plane rotation drawn from the posterior over the nrots Euclidean losses of reference iref against
+    !! the particle shifted by shift (the shifted-reference kernel) at temperature temp (the probability tables'
+    !! fill): p_r proportional to
+    !! exp(-temp (L_r - L_min)) over every grid rotation, no angular threshold and no truncation to a best subset.
+    !! dist is the drawn rotation's loss. objfun=euclid only: the temperature is the Gaussian noise model's
+    !! (posterior_temperature). The draw's variate is keyed on the calculator's scope, the particle (the
+    !! project index) and the reference: the same pair in the same pass draws the same variate on any thread.
+    module subroutine gen_posterior_val( self, iref, iptcl, shift, temp, dist, irot )
+        class(polarft_calc), target, intent(inout) :: self
+        integer,                     intent(in)    :: iref, iptcl
+        real(sp),                    intent(in)    :: shift(2), temp
+        real(sp),                    intent(out)   :: dist
+        integer,                     intent(out)   :: irot
+        real(dp) :: norm, u
+        integer  :: ithr
+        if( self%p_ptr%cc_objfun /= OBJFUN_EUCLID ) THROW_HARD('gen_posterior_val requires objfun=euclid')
+        if( .not. self%l_rnd_scope ) THROW_HARD('the posterior draw needs the calculator''s scope (set_rnd_scope); gen_posterior_val')
+        u = rnd_keyed(rnd_draw_key(self%rnd_scope, iptcl, RND_FAM_INPL, reference=iref))
+        call gen_euclid_crvec(self, iref, iptcl, shift, norm, ithr)
+        call draw_posterior_crvec(self, ithr, norm, temp, u, dist, irot)
+    end subroutine gen_posterior_val
+
+    !> gen_posterior_val for a bank entry (the particle shifted once by its seed, with the angular Nyquist bin)
+    module subroutine gen_posterior_val_bank( self, iref, iptcl, bank, temp, dist, irot )
+        class(polarft_calc), intent(inout) :: self
+        integer,             intent(in)    :: iref, iptcl
+        complex(sp),         intent(in)    :: bank(:,:)
+        real(sp),            intent(in)    :: temp
+        real(sp),            intent(out)   :: dist
+        integer,             intent(out)   :: irot
+        real(dp) :: norm, u
+        integer  :: ithr
+        if( self%p_ptr%cc_objfun /= OBJFUN_EUCLID ) THROW_HARD('gen_posterior_val_bank requires objfun=euclid')
+        if( .not. self%l_rnd_scope ) THROW_HARD('the posterior draw needs the calculator''s scope (set_rnd_scope); gen_posterior_val_bank')
+        u = rnd_keyed(rnd_draw_key(self%rnd_scope, iptcl, RND_FAM_INPL, reference=iref))
+        call gen_euclid_crvec_bank(self, iref, iptcl, bank, norm, ithr)
+        call draw_posterior_crvec(self, ithr, norm, temp, u, dist, irot)
+    end subroutine gen_posterior_val_bank
+
+    !> the posterior draw over the Euclidean distances of the calling thread's crvec1 (gen_euclid_crvec or its bank
+    !! form) with the variate u, rot_cdf the work array; a row without a valid rotation (every loss above
+    !! -log(TINY)) returns rotation 1 at the invalid marker
+    subroutine draw_posterior_crvec( self, ithr, norm, temp, u, dist, irot )
+        class(polarft_calc), intent(inout) :: self
+        integer,             intent(in)    :: ithr
+        real(dp),            intent(in)    :: norm, u
+        real(sp),            intent(in)    :: temp
+        real(sp),            intent(out)   :: dist
+        integer,             intent(out)   :: irot
+        call euclid_dists_from_crvec(self%nrots, self%crvec1(ithr)%r, norm, self%heap_vars(ithr)%rot_dists)
+        call draw_posterior_row(self%nrots, self%heap_vars(ithr)%rot_dists, temp, self%heap_vars(ithr)%rot_cdf, u, irot, dist)
+        if( irot < 1 )then
+            irot = 1
+            dist = huge(dist)
+        endif
+    end subroutine draw_posterior_crvec
+
+    module real(dp) function gen_corr_for_rot_8_noshift( self, iref, iptcl, irot )
         class(polarft_calc), target, intent(inout) :: self
         integer,                     intent(in)    :: iref, iptcl, irot
         complex(dp), pointer :: pft_ref_8(:,:)
@@ -640,16 +729,16 @@ contains
         pft_ref_8 => self%heap_vars(ithr)%pft_ref_8
         ieo       = merge(REF_EVEN, REF_ODD, self%iseven(i))
         pft_ref_8 = self%pfts_refs(:,self%kfromto(1):self%kfromto(2),iref,ieo)
-        gen_corr_for_rot_8_1 = 0.d0
+        gen_corr_for_rot_8_noshift = 0.d0
         select case(self%p_ptr%cc_objfun)
             case(OBJFUN_CC)
-                gen_corr_for_rot_8_1 = self%gen_corr_cc_for_rot_8_1(pft_ref_8, i, irot)
+                gen_corr_for_rot_8_noshift = self%gen_corr_cc_for_rot_8_noshift(pft_ref_8, i, irot)
             case(OBJFUN_EUCLID)
-                gen_corr_for_rot_8_1 = self%gen_euclid_for_rot_8_1(pft_ref_8, iptcl, irot)
+                gen_corr_for_rot_8_noshift = self%gen_euclid_for_rot_8_noshift(pft_ref_8, iptcl, irot)
         end select
-    end function gen_corr_for_rot_8_1
+    end function gen_corr_for_rot_8_noshift
 
-    module real(dp) function gen_corr_for_rot_8_2( self, iref, iptcl, shvec, irot )
+    module real(dp) function gen_corr_for_rot_8_shifted( self, iref, iptcl, shvec, irot )
         class(polarft_calc), target, intent(inout) :: self
         integer,                     intent(in)    :: iref, iptcl
         real(dp),                    intent(in)    :: shvec(2)
@@ -661,16 +750,16 @@ contains
         pft_ref_8 => self%heap_vars(ithr)%pft_ref_8
         ieo       = merge(REF_EVEN, REF_ODD, self%iseven(i))
         pft_ref_8 = self%pfts_refs(:,self%kfromto(1):self%kfromto(2),iref,ieo)
-        gen_corr_for_rot_8_2 = 0.d0
+        gen_corr_for_rot_8_shifted = 0.d0
         select case(self%p_ptr%cc_objfun)
             case(OBJFUN_CC)
-                gen_corr_for_rot_8_2 = self%gen_corr_cc_for_rot_8_2(pft_ref_8, i, shvec, irot)
+                gen_corr_for_rot_8_shifted = self%gen_corr_cc_for_rot_8_shifted(pft_ref_8, i, shvec, irot)
             case(OBJFUN_EUCLID)
-                gen_corr_for_rot_8_2 = self%gen_euclid_for_rot_8_2(pft_ref_8, iptcl, shvec, irot)
+                gen_corr_for_rot_8_shifted = self%gen_euclid_for_rot_8_shifted(pft_ref_8, iptcl, shvec, irot)
         end select
-    end function gen_corr_for_rot_8_2
+    end function gen_corr_for_rot_8_shifted
 
-    module real(dp) function gen_corr_cc_for_rot_8_1( self, pft_ref, i, irot )
+    module real(dp) function gen_corr_cc_for_rot_8_noshift( self, pft_ref, i, irot )
         class(polarft_calc),  intent(inout) :: self
         complex(dp), pointer, intent(inout) :: pft_ref(:,:)
         integer,              intent(in)    :: i, irot
@@ -678,7 +767,7 @@ contains
         real(dp)    :: sqsum_ref, sqsumk, wk, fk
         integer     :: k, p, rp
         sqsum_ref = 0.d0
-        gen_corr_cc_for_rot_8_1 = 0.d0
+        gen_corr_cc_for_rot_8_noshift = 0.d0
         if( irot <= self%pftsz )then
             do k = self%kfromto(1),self%kfromto(2)
                 sqsumk = 0.d0
@@ -699,7 +788,7 @@ contains
                     fk      = fk     + real(crefctf * conjg(self%pfts_ptcls(p,k,i)), dp)
                     sqsumk  = sqsumk + real(crefctf * conjg(crefctf), dp)
                 enddo
-                gen_corr_cc_for_rot_8_1 = gen_corr_cc_for_rot_8_1 + wk * fk
+                gen_corr_cc_for_rot_8_noshift = gen_corr_cc_for_rot_8_noshift + wk * fk
                 sqsum_ref = sqsum_ref + wk * sqsumk
             enddo
         else
@@ -719,14 +808,14 @@ contains
                     fk      = fk     + real(crefctf * conjg(self%pfts_ptcls(p,k,i)), dp)
                     sqsumk  = sqsumk + real(crefctf * conjg(crefctf), dp)
                 enddo
-                gen_corr_cc_for_rot_8_1 = gen_corr_cc_for_rot_8_1 + wk * fk
+                gen_corr_cc_for_rot_8_noshift = gen_corr_cc_for_rot_8_noshift + wk * fk
                 sqsum_ref = sqsum_ref + wk * sqsumk
             enddo
         endif
-        gen_corr_cc_for_rot_8_1 = gen_corr_cc_for_rot_8_1 / sqrt(sqsum_ref * self%ksqsums_ptcls(i))
-    end function gen_corr_cc_for_rot_8_1
+        gen_corr_cc_for_rot_8_noshift = gen_corr_cc_for_rot_8_noshift / sqrt(sqsum_ref * self%ksqsums_ptcls(i))
+    end function gen_corr_cc_for_rot_8_noshift
 
-    module real(dp) function gen_corr_cc_for_rot_8_2( self, pft_ref, i, shvec, irot )
+    module real(dp) function gen_corr_cc_for_rot_8_shifted( self, pft_ref, i, shvec, irot )
         class(polarft_calc), target, intent(inout) :: self
         complex(dp),        pointer, intent(inout) :: pft_ref(:,:)
         integer,                     intent(in)    :: i, irot
@@ -741,7 +830,7 @@ contains
         ! shift matrix
         call self%gen_shmat4aln_8(ithr, shvec, shmat_8)
         ! evaluation
-        gen_corr_cc_for_rot_8_2 = 0.d0
+        gen_corr_cc_for_rot_8_shifted = 0.d0
         if( irot <= self%pftsz )then
             do k = self%kfromto(1),self%kfromto(2)
                 sqsumk = 0.d0
@@ -762,7 +851,7 @@ contains
                     fk      = fk     + real(crefctf * conjg(self%pfts_ptcls(p,k,i)), dp)
                     sqsumk  = sqsumk + real(crefctf * conjg(crefctf), dp)
                 enddo
-                gen_corr_cc_for_rot_8_2 = gen_corr_cc_for_rot_8_2 + wk * fk
+                gen_corr_cc_for_rot_8_shifted = gen_corr_cc_for_rot_8_shifted + wk * fk
                 sqsum_ref = sqsum_ref + wk * sqsumk
             enddo
         else
@@ -782,14 +871,14 @@ contains
                     fk      = fk     + real(crefctf * conjg(self%pfts_ptcls(p,k,i)), dp)
                     sqsumk  = sqsumk + real(crefctf * conjg(crefctf), dp)
                 enddo
-                gen_corr_cc_for_rot_8_2 = gen_corr_cc_for_rot_8_2 + wk * fk
+                gen_corr_cc_for_rot_8_shifted = gen_corr_cc_for_rot_8_shifted + wk * fk
                 sqsum_ref = sqsum_ref + wk * sqsumk
             enddo
         endif
-        gen_corr_cc_for_rot_8_2 = gen_corr_cc_for_rot_8_2 / sqrt(sqsum_ref * self%ksqsums_ptcls(i))
-    end function gen_corr_cc_for_rot_8_2
+        gen_corr_cc_for_rot_8_shifted = gen_corr_cc_for_rot_8_shifted / sqrt(sqsum_ref * self%ksqsums_ptcls(i))
+    end function gen_corr_cc_for_rot_8_shifted
 
-    module real(dp) function gen_euclid_for_rot_8_1( self, pft_ref, iptcl, irot )
+    module real(dp) function gen_euclid_for_rot_8_noshift( self, pft_ref, iptcl, irot )
         class(polarft_calc), target, intent(inout) :: self
         complex(dp),        pointer, intent(inout) :: pft_ref(:,:)
         integer,                     intent(in)    :: iptcl, irot
@@ -799,7 +888,7 @@ contains
         ithr = omp_get_thread_num() + 1
         i = self%pinds(iptcl)
         ih = merge(1, 2, self%iseven(i))
-        gen_euclid_for_rot_8_1 = 0.d0
+        gen_euclid_for_rot_8_noshift = 0.d0
         if( irot <= self%pftsz )then
             do k = self%kfromto(1),self%kfromto(2)
                 wk    = self%sigma2_wk8(k,ih)
@@ -818,7 +907,7 @@ contains
                     sumsq = sumsq + real(c * conjg(c), dp)
                 enddo
                 ! DIST^2 = SUMk weightk SUMp |Rot(REFkp).CTFkp - PTCLkp|^2
-                gen_euclid_for_rot_8_1 = gen_euclid_for_rot_8_1 + wk * sumsq
+                gen_euclid_for_rot_8_noshift = gen_euclid_for_rot_8_noshift + wk * sumsq
             enddo
         else
             do k = self%kfromto(1),self%kfromto(2)
@@ -835,14 +924,14 @@ contains
                     sumsq = sumsq + real(c * conjg(c), dp)
                 enddo
                 ! accumulate weighted sum over k
-                gen_euclid_for_rot_8_1 = gen_euclid_for_rot_8_1 + wk * sumsq
+                gen_euclid_for_rot_8_noshift = gen_euclid_for_rot_8_noshift + wk * sumsq
             enddo
         endif
         ! EUCL = EXP( -DIST^2 / |PTCL|^2 )
-        gen_euclid_for_rot_8_1 = exp(-gen_euclid_for_rot_8_1 / self%wsqsums_ptcls(i))
-    end function gen_euclid_for_rot_8_1
+        gen_euclid_for_rot_8_noshift = exp(-gen_euclid_for_rot_8_noshift / self%wsqsums_ptcls(i))
+    end function gen_euclid_for_rot_8_noshift
 
-    module real(dp) function gen_euclid_for_rot_8_2( self, pft_ref, iptcl, shvec, irot )
+    module real(dp) function gen_euclid_for_rot_8_shifted( self, pft_ref, iptcl, shvec, irot )
         class(polarft_calc), target, intent(inout) :: self
         complex(dp),        pointer, intent(inout) :: pft_ref(:,:)
         integer,                     intent(in)    :: iptcl, irot
@@ -858,7 +947,7 @@ contains
         call self%gen_shmat4aln_8(ithr, shvec, shmat_8)
         ! splitting both the compute based on irot and the loop avoids branching,
         ! and optimizes for memory access patterns & vectorization
-        gen_euclid_for_rot_8_2 = 0.d0
+        gen_euclid_for_rot_8_shifted = 0.d0
         if( irot <= self%pftsz )then
             do k = self%kfromto(1),self%kfromto(2)
                 wk    = self%sigma2_wk8(k,ih)
@@ -880,7 +969,7 @@ contains
                     sumsq = sumsq + real(c * conjg(c), dp)
                 enddo
                 ! DIST^2 = SUMk weightk SUMp |Rot(Shift(REFkp)).CTFkp - PTCLkp|^2
-                gen_euclid_for_rot_8_2 = gen_euclid_for_rot_8_2 + wk * sumsq
+                gen_euclid_for_rot_8_shifted = gen_euclid_for_rot_8_shifted + wk * sumsq
             enddo
         else
             do k = self%kfromto(1),self%kfromto(2)
@@ -899,12 +988,12 @@ contains
                     sumsq = sumsq + real(c * conjg(c), dp)
                 enddo
                 ! accumulate weighted sum over k
-                gen_euclid_for_rot_8_2 = gen_euclid_for_rot_8_2 + wk * sumsq
+                gen_euclid_for_rot_8_shifted = gen_euclid_for_rot_8_shifted + wk * sumsq
             enddo
         endif
         ! EUCL = EXP( -DIST^2 / |PTCL|^2 )
-        gen_euclid_for_rot_8_2 = exp(-gen_euclid_for_rot_8_2 / self%wsqsums_ptcls(i))
-    end function gen_euclid_for_rot_8_2
+        gen_euclid_for_rot_8_shifted = exp(-gen_euclid_for_rot_8_shifted / self%wsqsums_ptcls(i))
+    end function gen_euclid_for_rot_8_shifted
 
     module subroutine gen_corr_cc_grad_for_rot_8( self, pft_ref, i, shvec, irot, f, grad )
         class(polarft_calc), target, intent(inout) :: self
@@ -1147,6 +1236,8 @@ contains
         integer :: i, ithr, k, k0, kk, p, ieo, ih
         logical :: shifted
 
+        call self%check_ptcl_memo
+        call self%check_euclid_weights
         if( .not. self%is_euclid_objfun() )then
             THROW_HARD('continuous Euclidean gradient requires objfun=euclid')
         endif
@@ -1191,7 +1282,7 @@ contains
         do k = self%kfromto(1), self%kfromto(2)
             wk = self%sigma2_wk(k,ih)
             kk = k - k0 + 1
-            do p = 1,self%pftsz
+            do p = 1,self%pftsz+1
                 ref2_term  = self%ft_ctf2(p,k,i) * self%ft_ref2(p,k,iref,ieo)
                 cross_term = self%ft_ptcl_ctf(p,k,i) * conjg(cjoint(p,kk))
                 coeffs(p,1) = coeffs(p,1) + wk * (ref2_term - 2._sp*cross_term)
@@ -1283,6 +1374,7 @@ contains
         integer :: i, ithr, k, k0, kk, p, ieo
         logical :: shifted
 
+        call self%check_ptcl_memo
         ithr         = omp_get_thread_num() + 1
         i            = self%pinds(iptcl)
         k0           = self%kfromto(1)
@@ -1424,9 +1516,9 @@ contains
         gen_corr_for_rot_8_aln = 0.d0
         select case(self%p_ptr%cc_objfun)
             case(OBJFUN_CC)
-                gen_corr_for_rot_8_aln = self%gen_corr_cc_for_rot_8_2(pft_ref_8, self%pinds(iptcl), shvec, irot)
+                gen_corr_for_rot_8_aln = self%gen_corr_cc_for_rot_8_shifted(pft_ref_8, self%pinds(iptcl), shvec, irot)
             case(OBJFUN_EUCLID)
-                gen_corr_for_rot_8_aln = self%gen_euclid_for_rot_8_2(pft_ref_8, iptcl, shvec, irot)
+                gen_corr_for_rot_8_aln = self%gen_euclid_for_rot_8_shifted(pft_ref_8, iptcl, shvec, irot)
         end select
     end function gen_corr_for_rot_8_aln
 
@@ -1547,6 +1639,8 @@ contains
         real(dp)    :: A, v
         real(sp)    :: wk, shift_mag_sq
         integer     :: k, kk, k0, i, j, ithr, iref, p, ieo, ih
+        call self%check_ptcl_memo
+        call self%check_euclid_weights
         ithr  = omp_get_thread_num() + 1
         i     = self%pinds(iptcl)
         ih = merge(1, 2, self%iseven(i))

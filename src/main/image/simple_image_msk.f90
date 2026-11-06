@@ -311,7 +311,7 @@ contains
         ldim = img%get_ldim()
         smpd = img%get_smpd()
         call img_bin%new_bimg(ldim, smpd, wthreads=.false.)
-        call img_bin%copy(img)
+        call img_bin%copy_fast(img)
         call cc_img%new_bimg( ldim, smpd, wthreads=.false.)
         call img_bin%zero_edgeavg
         ! low-pass filter
@@ -370,7 +370,7 @@ contains
         type(image_bin),   allocatable                :: cc_img(:)
         type(image_bin)                               :: cc_min_dist
         integer :: i, n
-        real    :: mm(2)
+        real    :: mm(2), shift(2)
         logical :: l_write, l_verbose
         n = size(imgs)
         l_write = .false.
@@ -391,9 +391,10 @@ contains
             endif
         endif
         call imgs(1)%memoize_mask_coords
-        !$omp parallel do default(shared) private(i) schedule(static) proc_bind(close)
+        !$omp parallel do default(shared) private(i,shift) schedule(static) proc_bind(close)
         do i = 1,n
-            call automask2D_binary_one(settings, imgs(i), cc_img(i), diams(i), shifts(i,:))
+            call automask2D_binary_one(settings, imgs(i), cc_img(i), diams(i), shift)
+            shifts(i,:) = shift
             ! apply cosine egde to soften mask (to avoid Fourier artefacts)
             call imgs(i)%zero_and_unflag_ft
             call cc_img(i)%cos_edge(settings%edge,imgs(i))
@@ -413,9 +414,11 @@ contains
         end if
         ! destruct
         do i = 1,n
-            call cc_img(i)%write(string('binarized_automask2D.mrc'), i)
+            if( l_write )then
+                call cc_img(i)%write(string('binarized_automask2D.mrc'), i)
+                call imgs(i)%write(string('masks_automask2D.mrc'), i)
+            endif
             call cc_img(i)%kill_bimg
-            call imgs(i)%write(string('masks_automask2D.mrc'), i)
         end do
         deallocate(cc_img)
     end subroutine automask2D_set
@@ -474,7 +477,7 @@ contains
         smpd = img%get_smpd()
         mskrad = automask2D_mskrad(settings, ldim)
         call img_bin%new_bimg(ldim, smpd, wthreads=.false.)
-        call img_bin%copy(img)
+        call img_bin%copy_fast(img)
         call bin_mask%new_bimg(ldim, smpd, wthreads=.false.)
         call img_bin%zero_edgeavg
         ! dampens below zero (object positive in class averages/reprojs)

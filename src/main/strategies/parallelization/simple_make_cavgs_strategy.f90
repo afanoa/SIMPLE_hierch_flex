@@ -211,7 +211,8 @@ contains
                 THROW_HARD('# class averages (ncls) need to be part of command line when tseries=yes')
             endif
             call build%spproj_field%ini_tseries(params%ncls, 'class')
-            call build%spproj_field%partition_eo
+            ! existing halves are kept: after a prune the row parity no longer matches them, nor ptcl3D's
+            if( build%spproj_field%get_nevenodd() == 0 ) call build%spproj_field%partition_eo
         else if( params%proj_is_class .eq. 'yes' )then
             call build%spproj_field%proj2class
         endif
@@ -285,10 +286,12 @@ contains
         type(builder),    intent(inout) :: build
         type(parameters), intent(inout) :: params
         class(cmdline),   intent(inout) :: cline
-        call build%spproj%write_segment_inside('cls2D', params%projfile)
         call build%spproj%add_frcs2os_out(string(FRCS_FILE), 'frc2D')
+        ! registering the class averages makes cls2D (indstk) and cls3D congruent with them: all three are written
         call build%spproj%add_cavgs2os_out(params%refs, build%spproj%get_smpd(), imgkind='cavg')
-        call build%spproj%write_segment_inside('out', params%projfile)
+        call build%spproj%write_segment_inside('cls2D', params%projfile)
+        call build%spproj%write_segment_inside('cls3D', params%projfile)
+        call build%spproj%write_segment_inside('out',   params%projfile)
     end subroutine shmem_bookkeeping
 
     ! ====================================================================

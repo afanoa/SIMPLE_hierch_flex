@@ -354,7 +354,7 @@ contains
         if( ldim(1) /= ldim(2) ) THROW_HARD('Unsupported dimensions!')
         scales = real(self%ldim(1:2)) / real(ldim(1:2))
         scale  = product(scales)
-        call upsampled%new([ldim(1), ldim(2), 1], self%smpd/scales(1))
+        call upsampled%new([ldim(1), ldim(2), 1], self%smpd/scales(1), wthreads=self%wthreads)
         !$omp parallel do default(shared) collapse(2) proc_bind(close)&
         !$omp private(i,j,x,y,fx,fy,fpx,fpy,dx,dy,b)
         do j = 1,ldim(1)
@@ -676,19 +676,23 @@ contains
     ! Dose-weighing
     !=================
 
-    ! algebraically simplified Grant & Grigorieff; eLife 2015;4:e06980
-    subroutine apply_dose_weighing( self, nframes, frames, frange, total_dose, voltage )
-        class(image), intent(inout) :: self         ! is never used here, only for function call convenience
-        integer,      intent(in)    :: nframes
-        class(image), intent(inout) :: frames(nframes)
-        integer,      intent(in)    :: frange(2)
-        real,         intent(in)    :: total_dose   ! in e-/A2
-        real,         intent(in)    :: voltage      ! in kV
+    subroutine apply_dose_weighing( self, nframes, frames, frange, total_dose, voltage, mode )
+        class(image),     intent(inout) :: self         ! is never used here, only for function call convenience
+        integer,          intent(in)    :: nframes
+        class(image),     intent(inout) :: frames(nframes)
+        integer,          intent(in)    :: frange(2)
+        real,             intent(in)    :: total_dose   ! in e-/A2
+        real,             intent(in)    :: voltage      ! in kV
+        character(len=*), intent(in)    :: mode
         real(dp), parameter :: A = 0.245d0
         real(dp), parameter :: B = -1.665d0
         real(dp), parameter :: C = 2.81d0
         real(dp), parameter :: halfB = 0.5d0 * B
+        real(dp), parameter :: CRITICAL_SCALE    = 0.67586d0
+        real(dp), parameter :: CRITICAL_EXPONENT = -1.31489d0
         real(dp) :: s, sksq, twoNe, alpha, r, r2, q, sumsq, term
+        real(dp) :: freq, critical_exposure, dose_per_frame_cs, weight_sum
+        real(dp) :: limhsq_cs, limksq_cs
         real     :: smpd, limhsq, limksq, dose_per_frame
         integer  :: ldim(3), hphys, kphys, h, k, i, j, nsel
         integer  :: nxphys, nyphys, ldimx, ldimy, ldimx_half, ldimy_half
@@ -697,54 +701,140 @@ contains
         ldim       = frames(frange(1))%ldim
         limhsq     = (real(ldim(1)) * smpd)**2
         limksq     = (real(ldim(2)) * smpd)**2
+        limhsq_cs  = (real(ldim(1), dp) * real(smpd, dp))**2
+        limksq_cs  = (real(ldim(2), dp) * real(smpd, dp))**2
         nsel       = frange(2) - frange(1) + 1
         nxphys     = frames(frange(1))%array_shape(1)
         nyphys     = frames(frange(1))%array_shape(2)
-        ldimx      = frames(frange(1))%ldim(1)
-        ldimy      = frames(frange(1))%ldim(2)
+        ldimx      = ldim(1)
+        ldimy      = ldim(2)
         ldimx_half = ldimx / 2
         ldimy_half = ldimy / 2
-        dose_per_frame = total_dose / real(nframes)
+        dose_per_frame    = total_dose / real(nframes)
+        dose_per_frame_cs = real(total_dose, dp) / real(nframes, dp)
         if (is_equal(voltage, 200.0)) then
-            dose_per_frame = dose_per_frame / 0.8
+            dose_per_frame    = dose_per_frame / 0.8
+            dose_per_frame_cs = dose_per_frame_cs / 0.8
         else if (is_equal(voltage, 100.0)) then
-            dose_per_frame = dose_per_frame / 0.64
+            dose_per_frame    = dose_per_frame / 0.64
+            dose_per_frame_cs = dose_per_frame_cs / 0.64
         end if
-        !$omp parallel do private(h,k,s,sksq,twoNe,alpha,r,r2,q,term,sumsq,i,j,hphys,kphys) &
-        !$omp default(shared) schedule(static) proc_bind(close)
-        do kphys = 1, nyphys
-            k    = kphys - 1 - merge(ldimy, 0, kphys - 1 > ldimy_half)
-            sksq = real(k*k, dp) / real(limksq, dp)
-            do hphys = 1, nxphys
-                h = hphys - 1 - merge(ldimx, 0, hphys - 1 > ldimx_half)
-                if (h == 0 .and. k == 0) then
-                    q = 1.0d0 / sqrt(real(nsel, dp))
-                    r = 1.0d0
-                else
-                    s     = real(h*h, dp) / real(limhsq, dp) + sksq
-                    twoNe = 2.0d0 * (A * s**halfB + C)
-                    alpha = real(dose_per_frame, dp) / twoNe
-                    r     = exp(-alpha)
-                    r2    = r * r
-                    if (abs(1.0d0 - r) < 1.0d-12) then
-                        sumsq = 1.0d0
-                        term  = 1.0d0
-                        do j = 2, nsel
-                            term  = term * r
-                            sumsq = sumsq + term * term
-                        end do
-                        q = 1.0d0 / sqrt(sumsq)
+        select case( trim(mode) )
+        case( 'gg', 'GG' )
+            ! Algebraically simplified Grant & Grigorieff; eLife 2015;4:e06980.
+            !$omp parallel do private(h,k,s,sksq,twoNe,alpha,r,r2,q,term,sumsq,i,j,hphys,kphys) &
+            !$omp default(shared) schedule(static) proc_bind(close)
+            do kphys = 1, nyphys
+                k    = kphys - 1 - merge(ldimy, 0, kphys - 1 > ldimy_half)
+                sksq = real(k*k, dp) / real(limksq, dp)
+                do hphys = 1, nxphys
+                    h = hphys - 1 - merge(ldimx, 0, hphys - 1 > ldimx_half)
+                    if (h == 0 .and. k == 0) then
+                        q = 1.0d0 / sqrt(real(nsel, dp))
+                        r = 1.0d0
                     else
-                        q = sqrt((1.0d0 - r2) / (1.0d0 - r2**nsel))
+                        s     = real(h*h, dp) / real(limhsq, dp) + sksq
+                        twoNe = 2.0d0 * (A * s**halfB + C)
+                        alpha = real(dose_per_frame, dp) / twoNe
+                        r     = exp(-alpha)
+                        r2    = r * r
+                        if (abs(1.0d0 - r) < 1.0d-12) then
+                            sumsq = 1.0d0
+                            term  = 1.0d0
+                            do j = 2, nsel
+                                term  = term * r
+                                sumsq = sumsq + term * term
+                            end do
+                            q = 1.0d0 / sqrt(sumsq)
+                        else
+                            q = sqrt((1.0d0 - r2) / (1.0d0 - r2**nsel))
+                        end if
                     end if
-                end if
-                do i = frange(1), frange(2)
-                    frames(i)%cmat(hphys,kphys,1) = frames(i)%cmat(hphys,kphys,1) * real(q, sp)
-                    q = q * r
+                    do i = frange(1), frange(2)
+                        frames(i)%cmat(hphys,kphys,1) = frames(i)%cmat(hphys,kphys,1) * real(q, sp)
+                        q = q * r
+                    end do
                 end do
             end do
-        end do
-        !$omp end parallel do
+            !$omp end parallel do
+        case( 'cs', 'CS' )
+            ! CryoSPARC-style curve and mean-one normalization; curve from alignparts_lmbfgs.
+            ! Functional form: Rubinstein & Brubaker, JSB (2015).
+            ! Critical-exposure data: Grant & Grigorieff, eLife (2015).
+            !$omp parallel do private(h,k,s,sksq,freq,critical_exposure,r,q,term,weight_sum,i,j,hphys,kphys) &
+            !$omp default(shared) schedule(static) proc_bind(close)
+            do kphys = 1, nyphys
+                k    = kphys - 1 - merge(ldimy, 0, kphys - 1 > ldimy_half)
+                sksq = real(k*k, dp) / limksq_cs
+                do hphys = 1, nxphys
+                    h = hphys - 1 - merge(ldimx, 0, hphys - 1 > ldimx_half)
+                    if( h == 0 .and. k == 0 )then
+                        q = 1.0d0
+                        r = 1.0d0
+                    else
+                        s                 = real(h*h, dp) / limhsq_cs + sksq
+                        freq              = sqrt(s)
+                        critical_exposure = CRITICAL_SCALE * freq**CRITICAL_EXPONENT
+                        r                 = exp(-dose_per_frame_cs / (2.0d0 * critical_exposure))
+                        term              = 1.0d0
+                        weight_sum        = 1.0d0
+                        do j = 2, nsel
+                            term       = term * r
+                            weight_sum = weight_sum + term
+                        end do
+                        q = real(nsel, dp) / weight_sum
+                    endif
+                    do i = frange(1), frange(2)
+                        frames(i)%cmat(hphys,kphys,1) = frames(i)%cmat(hphys,kphys,1) * real(q, sp)
+                        q = q * r
+                    end do
+                end do
+            end do
+            !$omp end parallel do
+        case default
+            THROW_HARD('Dose-weighting mode must be gg, GG, cs or CS')
+        end select
     end subroutine apply_dose_weighing
+
+    !> Weights from a per-frame contrast c and B-factor (A^2), of unit squared sum over frange at every frequency:
+    !! w_f(k) = c_f exp(-B_f k^2/4) / sqrt(sum_g c_g^2 exp(-B_g k^2/2)). Frames outside frange are untouched.
+    module subroutine apply_frame_bfactor_weights( self, nframes, frames, frange, cfrac, bfrac )
+        class(image), intent(inout) :: self      ! the call handle only, as for apply_dose_weighing
+        integer,      intent(in)    :: nframes
+        class(image), intent(inout) :: frames(nframes)
+        integer,      intent(in)    :: frange(2)
+        real(dp),     intent(in)    :: cfrac(nframes), bfrac(nframes)
+        real(dp) :: e(nframes), s, den, limhsq, limksq
+        integer  :: ldim(3), nxphys, nyphys, ldimx_half, ldimy_half, hphys, kphys, h, k, i
+        if( frange(1) < 1 .or. frange(2) > nframes .or. frange(1) > frange(2) ) THROW_HARD('Invalid frame range')
+        if( .not. frames(frange(1))%is_ft() ) THROW_HARD('Frames should be in Fourier space')
+        if( any(cfrac(frange(1):frange(2)) <= 0._dp) ) THROW_HARD('Frame contrasts must be positive')
+        ldim       = frames(frange(1))%ldim
+        limhsq     = (real(ldim(1),dp) * real(frames(frange(1))%smpd,dp))**2
+        limksq     = (real(ldim(2),dp) * real(frames(frange(1))%smpd,dp))**2
+        nxphys     = frames(frange(1))%array_shape(1)
+        nyphys     = frames(frange(1))%array_shape(2)
+        ldimx_half = ldim(1) / 2
+        ldimy_half = ldim(2) / 2
+        !$omp parallel do private(hphys,kphys,h,k,s,e,den,i) default(shared) schedule(static) proc_bind(close)
+        do kphys = 1, nyphys
+            k = kphys - 1 - merge(ldim(2), 0, kphys - 1 > ldimy_half)
+            do hphys = 1, nxphys
+                h   = hphys - 1 - merge(ldim(1), 0, hphys - 1 > ldimx_half)
+                s   = real(h*h,dp) / limhsq + real(k*k,dp) / limksq
+                den = 0._dp
+                do i = frange(1), frange(2)
+                    ! clamped so that the squared sum stays finite
+                    e(i) = cfrac(i) * exp(max(-300._dp, min(300._dp, -bfrac(i) * s / 4._dp)))
+                    den  = den + e(i) * e(i)
+                enddo
+                den = 1._dp / sqrt(den)
+                do i = frange(1), frange(2)
+                    frames(i)%cmat(hphys,kphys,1) = frames(i)%cmat(hphys,kphys,1) * real(e(i) * den, sp)
+                enddo
+            enddo
+        enddo
+        !$omp end parallel do
+    end subroutine apply_frame_bfactor_weights
 
 end submodule simple_image_ops

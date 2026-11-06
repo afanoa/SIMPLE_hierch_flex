@@ -16,9 +16,17 @@ use simple_oris,         only: oris
 use simple_binoris,      only: binoris, binoris_seginfo
 use simple_binoris_io,   only: binread_oritab, binread_ctfparams_state_eo, binread_nlines, binwrite_oritab
 use simple_sp_project,   only: sp_project
+use simple_forked_process, only: forked_process, FORK_STATUS_FAILED, FORK_STATUS_STOPPED
+use simple_cmdline,      only: cmdline
 implicit none
 private
 public :: run_all_binoris_tests
+
+!> writes a particle segment one of whose rows carries a key no named slot holds
+type, extends(forked_process) :: nonslot_writer
+contains
+    procedure :: execute => write_nonslot_row
+end type nonslot_writer
 
 ! the file header: MAX_N_SEGMENTS (20) segment records of five 8-byte integers (simple_binoris)
 integer, parameter :: HEADER_NBYTES     = 20 * 5 * 8
@@ -40,6 +48,7 @@ contains
         call test_string_segment_roundtrip()
         call test_particle_segment_roundtrip()
         call test_cartesian_record_slots()
+        call test_nonslot_key_on_particle_row()
         call test_earlier_release_particle_records()
         call test_selected_project_copy()
         call test_write_segment_inside()
@@ -245,7 +254,6 @@ contains
         integer :: i
         write(*,'(A)') 'test_particle_segment_roundtrip'
         call make_ptcl_oris(os, NPTCLS)
-        call os%set(2, 'kv', 300.) ! not a fixed slot: particle records do not carry it
         call bos%open(string(BIN_FILE), del_if_exists=.true.)
         call bos%write_segment(PTCL2D_SEG, os, fromto=FROMTO)
         call bos%write_header
@@ -265,7 +273,6 @@ contains
         enddo
         call assert_int(0, os2%get_state(1),      'record outside the written range is untouched (state)')
         call assert_real(0., os2%get(1,'corr'), TOL, 'record outside the written range is untouched (corr)')
-        call assert_false(os2%isthere(2, 'kv'), 'non-slot key is not carried by a particle record')
         ! sub-range read
         call os3%new(NPTCLS, is_ptcl=.true.)
         call bos%read_segment(PTCL2D_SEG, os3, fromto=[3,4])
@@ -279,24 +286,68 @@ contains
         call os3%kill
     end subroutine test_particle_segment_roundtrip
 
-    !> A particle's 64-real record holds its named slots and zero padding. The record round-trips the Cartesian diagnostic
+    !> a particle row carries only its named slots: nonslot_key names another key, strip_nonslot_keys removes it,
+    !! and writing a row that still carries one stops in a Debug build (Release drops the key)
+    subroutine test_nonslot_key_on_particle_row()
+        type(oris)           :: os
+        type(nonslot_writer) :: child
+        type(string)         :: key
+        write(*,'(A)') 'test_nonslot_key_on_particle_row'
+        call make_ptcl_oris(os, NPTCLS)
+        key = os%nonslot_key(2)
+        call assert_int(0, key%strlen_trim(), 'a row of slots only has no other key')
+        call os%set(2, 'kv',    300.)
+        call os%set(2, 'frame', 7)
+        key = os%nonslot_key(2)
+        call assert_true(key == 'kv', 'nonslot_key names the key no slot holds (frame is a slot)')
+        call os%strip_nonslot_keys
+        key = os%nonslot_key(2)
+        call assert_int(0, key%strlen_trim(), 'strip_nonslot_keys removes it')
+        call assert_int(7, os%get_int(2, 'frame'), 'and keeps the slots')
+        call os%kill
+        call child%start(name=string('BINORIS_NONSLOT_ROW'))
+        call child%await_final_status()
+#ifdef _DEBUG
+        call assert_int(FORK_STATUS_FAILED, child%status(), 'a particle row with a non-slot key stops the writer (Debug)')
+#else
+        call assert_int(FORK_STATUS_STOPPED, child%status(), 'Release writes the row without the key')
+#endif
+        call child%destroy
+        call del_file(BIN_FILE)
+    end subroutine test_nonslot_key_on_particle_row
+
+    subroutine write_nonslot_row( self, cline )
+        class(nonslot_writer), intent(inout) :: self
+        class(cmdline),        intent(inout) :: cline
+        type(binoris) :: bos
+        type(oris)    :: os
+        call make_ptcl_oris(os, NPTCLS)
+        call os%set(2, 'kv', 300.)
+        call bos%open(string(BIN_FILE), del_if_exists=.true.)
+        call bos%write_segment(PTCL2D_SEG, os)
+        call bos%write_header
+        call bos%close
+    end subroutine write_nonslot_row
+
+    !> A particle holds the named slots 1-57 in memory; its record on disk is 64
+    !! reals, slots 58-64 being zero padding. The record round-trips the Cartesian diagnostic
     !! slots; spare slots are never "there".
     subroutine test_cartesian_record_slots()
         type(binoris) :: bos
         type(oris)    :: os, os2
         integer :: i
         write(*,'(A)') 'test_cartesian_record_slots'
-        call assert_int(54, N_PTCL_ORIPARAMS, 'a resident particle holds the 54 named slots')
+        call assert_int(57, N_PTCL_ORIPARAMS, 'a resident particle holds the 57 named slots')
         call assert_int(64, N_PTCL_RECORD_REALS, 'the particle record on disk is 64 reals')
-        call assert_int(54, I_LAST_NAMED_ORIPARAM, 'the last named slot is 54')
+        call assert_int(57, I_LAST_NAMED_ORIPARAM, 'the last named slot is 57 (contrast)')
         call assert_int(51, I_CORR_CART, 'corr_cart sits in slot 51 (O8)')
         call assert_int(52, I_POSE_CONT_IMPROVED, 'the improved flag sits in slot 52 (O8)')
         call assert_int(53, I_CFAR, 'cfar sits in slot 53')
         call assert_int(42, I_POSE_CONT_STATUS, 'the Cartesian transaction status sits in slot 42')
-        call assert_true(oriparam_is_spare(55) .and. oriparam_is_spare(64), 'the padding slots 55-64 are spare')
-        call assert_false(oriparam_is_spare(41) .or. oriparam_is_spare(42) .or. oriparam_is_spare(53) .or. &
-            &oriparam_is_spare(54), 'slots 41, 42, 53 and 54 are named')
-        call assert_false(oriparam_isthere(55, 1.0) .or. oriparam_isthere(60, 1.0), 'a spare slot is never there')
+        call assert_true(oriparam_is_spare(58) .and. oriparam_is_spare(64), 'the padding slots 58-64 are spare')
+        call assert_false(oriparam_is_spare(41) .or. oriparam_is_spare(42) .or. oriparam_is_spare(56) .or. &
+            &oriparam_is_spare(57), 'slots 41, 42, 56 and 57 are named')
+        call assert_false(oriparam_isthere(58, 1.0) .or. oriparam_isthere(60, 1.0), 'a spare slot is never there')
         call assert_true(oriparam_isthere(42, 4.0) .and. .not. oriparam_isthere(42, 0.0), &
             &'the status is there when a transaction ran')
         call make_ptcl_oris(os, NPTCLS)
@@ -305,6 +356,7 @@ contains
             call os%set(i, 'pose_cont_improved', real(mod(i,2)))
             call os%set(i, 'pose_cont_status',   real(mod(i,7) - 1))
             call os%set(i, 'cfar',               0.1*real(i))
+            call os%set(i, 'frame',              10 + i)
             call os%set(i, 'contrast',           0.5 + 0.01*real(i))
         enddo
         call bos%open(string(BIN_FILE), del_if_exists=.true.)
@@ -321,7 +373,8 @@ contains
             call assert_real(real(mod(i,2)), os2%get(i,'pose_cont_improved'), TOL, 'slot 52 (improved flag) round-trips')
             call assert_real(real(mod(i,7) - 1), os2%get(i,'pose_cont_status'), TOL, 'slot 42 (status) round-trips')
             call assert_real(0.1*real(i), os2%get(i,'cfar'), TOL, 'slot 53 (cfar) round-trips')
-            call assert_real(0.5 + 0.01*real(i), os2%get(i,'contrast'), TOL, 'slot 54 (contrast) round-trips')
+            call assert_int(10 + i, os2%get_int(i,'frame'), 'slot 56 (frame) round-trips')
+            call assert_real(0.5 + 0.01*real(i), os2%get(i,'contrast'), TOL, 'slot 57 (contrast) round-trips')
             call assert_real(os%get(i,'corr'), os2%get(i,'corr'), TOL, 'corr is untouched by the Cartesian slots')
         enddo
         call os2%kill

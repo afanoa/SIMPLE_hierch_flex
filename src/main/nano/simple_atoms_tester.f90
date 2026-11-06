@@ -9,6 +9,8 @@ use simple_string, only: string
 use simple_syslib, only: del_file
 use simple_image,  only: image, unmemoize_mask_coords
 use simple_atoms,  only: atoms, parse_element_list
+use simple_forked_process, only: forked_process, FORK_STATUS_FAILED
+use simple_cmdline, only: cmdline
 !$ use omp_lib,    only: omp_get_max_threads, omp_set_num_threads
 implicit none
 private
@@ -18,6 +20,12 @@ character(len=*), parameter :: TMP_PDB   = 'tmp_atoms_tester.pdb'
 character(len=*), parameter :: TMP_ANISO = 'tmp_atoms_tester_aniso.pdb'
 character(len=*), parameter :: TMP_PSEUDO = 'tmp_atoms_tester_pseudo.pdb'
 
+!> a lattice lookup of an element the table lacks, which must stop
+type, extends(forked_process) :: lattice_lookup
+contains
+    procedure :: execute => lookup_missing_lattice
+end type lattice_lookup
+
 contains
 
     subroutine run_all_atoms_tests()
@@ -25,16 +33,74 @@ contains
         call test_access()
         call test_geometry()
         call test_pdb_roundtrip()
+        call test_pdb_hetatm()
         call test_anisou()
         call test_validation()
         call test_pseudo_symbols()
         call test_pseudo_density()
+        call test_pseudo_halo()
         call test_pseudo_pdb_roundtrip()
         call test_element_bfac()
         call test_parse_element_list()
         call test_compound_selector()
         call test_lattice_cutoff()
+        call test_lattice_params_missing()
+        call test_graphene_keeps_process()
     end subroutine run_all_atoms_tests
+
+    !> graphene subtraction runs on the caller's parameters: the process keeps its threads and random stream
+    subroutine test_graphene_keeps_process()
+        use simple_parameters,             only: parameters
+        use simple_tseries_graphene_subtr, only: init_graphene_subtr, kill_graphene_subtr
+        use simple_rnd,                    only: seed_rnd_fixed, ran3
+        class(parameters), allocatable, target :: params
+        class(cmdline),    allocatable         :: cline
+        integer :: nthr_saved, nteam_saved
+        real    :: r_ref, r_after
+        write(*,'(A)') 'test_graphene_keeps_process'
+        nthr_saved  = nthr_glob
+        nteam_saved = 1
+        !$ nteam_saved = omp_get_max_threads()
+        allocate(params, cline)
+        call cline%set('prg',    'dummy')
+        call cline%set('mkdir',  'no')
+        call cline%set('smpd',   0.5)
+        call cline%set('box',    64)
+        call cline%set('nthr',   2)
+        call cline%set('ctf',    'no')
+        call cline%set('objfun', 'cc')
+        call params%new(cline, silent=.true.)
+        call seed_rnd_fixed(4242)
+        r_ref = ran3()
+        call seed_rnd_fixed(4242)
+        call init_graphene_subtr(params)
+        r_after = ran3()
+        call assert_int(2, nthr_glob, 'init_graphene_subtr keeps nthr_glob')
+        !$ call assert_int(2, omp_get_max_threads(), 'init_graphene_subtr keeps the OpenMP team')
+        call assert_true(r_after == r_ref, 'init_graphene_subtr does not reseed')
+        call kill_graphene_subtr
+        call cline%kill
+        nthr_glob = nthr_saved
+        !$ call omp_set_num_threads(nteam_saved)
+    end subroutine test_graphene_keeps_process
+
+    !> an element without lattice parameters stops instead of being analysed as fcc with a = 3.76 A
+    subroutine test_lattice_params_missing()
+        type(lattice_lookup) :: child
+        write(*,'(A)') 'test_lattice_params_missing'
+        call child%start(name=string('LATTICE_MISSING'))
+        call child%await_final_status()
+        call assert_int(FORK_STATUS_FAILED, child%status(), 'an element without lattice parameters stops')
+        call child%destroy
+    end subroutine test_lattice_params_missing
+
+    subroutine lookup_missing_lattice( self, cline )
+        class(lattice_lookup), intent(inout) :: self
+        class(cmdline),        intent(inout) :: cline
+        character(len=10) :: crystal_system
+        real :: a(3)
+        call get_lattice_params('ZN   ', crystal_system, a)
+    end subroutine lookup_missing_lattice
 
     ! three dummy atoms named C, O and N
     subroutine make_model( a )
@@ -97,8 +163,10 @@ contains
         call assert_true(all(abs(a%get_geom_center() - CEN) < 1.e-6), 'get_geom_center is the mean position')
         call a%translate([1., 2., 3.])
         call assert_true(all(abs(a%get_geom_center() - (CEN + [1., 2., 3.])) < 1.e-6), 'translate moves the centre by the shift')
+        call a%center_pdbcoord([32,32,32], SMPD)
+        call assert_true(all(abs(a%get_geom_center() - 16. * SMPD) < 1.e-5), 'center_pdbcoord puts the centre at ldim/2*smpd')
         call a%center_pdbcoord([33,33,33], SMPD)
-        call assert_true(all(abs(a%get_geom_center() - 16. * SMPD) < 1.e-5), 'center_pdbcoord puts the centre at (ldim-1)/2*smpd')
+        call assert_true(all(abs(a%get_geom_center() - 16. * SMPD) < 1.e-5), 'center_pdbcoord keeps an odd box on its centre voxel')
         call a%center_inbox(2, 20, SMPD)
         call assert_true(all(abs(a%get_coord(2) - 10. * SMPD) < 1.e-6), 'center_inbox puts the atom at box/2*smpd')
         call a%kill
@@ -126,6 +194,44 @@ contains
         call a%kill
         call b%kill
     end subroutine test_pdb_roundtrip
+
+    ! the record name of each atom (ATOM or HETATM) survives a read and a write
+    subroutine test_pdb_hetatm()
+        character(len=*), parameter :: FMT = '(A6,I5,1X,A4,A1,A3,1X,A1,I4,A1,3X,3F8.3,2F6.2,10X,A2,A2)'
+        type(atoms)       :: a
+        character(len=80) :: line
+        character(len=6)  :: tags(2)
+        integer :: funit, ios, n
+        write(*,'(A)') 'test_pdb_hetatm'
+        call del_file(TMP_PDB)
+        open(newunit=funit, file=TMP_PDB, status='replace', action='write')
+        write(funit, FMT) 'ATOM  ', 1, ' CA ', ' ', 'ALA', 'A', 1,   ' ', [1., 2., 3.], 1., 0., ' C', '  '
+        write(funit, FMT) 'HETATM', 2, 'PD  ', ' ', ' PD', 'A', 101, ' ', [4., 5., 6.], 1., 0., 'PD', '  '
+        close(funit)
+        call a%new(string(TMP_PDB))
+        call del_file(TMP_PDB)
+        call a%writepdb(string(TMP_PDB))
+        n    = 0
+        tags = ''
+        open(newunit=funit, file=TMP_PDB, status='old', action='read', iostat=ios)
+        call assert_int(0, ios, 'the rewritten PDB file opens')
+        if( ios == 0 )then
+            do
+                read(funit, '(A)', iostat=ios) line
+                if( ios /= 0 ) exit
+                if( line(1:6) == 'ATOM  ' .or. line(1:6) == 'HETATM' )then
+                    n = n + 1
+                    if( n <= 2 ) tags(n) = line(1:6)
+                endif
+            end do
+            close(funit)
+        endif
+        call assert_int(2, n, 'a PDB round trip writes one coordinate record per atom')
+        call assert_char('ATOM  ', tags(1), 'an ATOM record is written back as ATOM')
+        call assert_char('HETATM', tags(2), 'a HETATM record is written back as HETATM')
+        call del_file(TMP_PDB)
+        call a%kill
+    end subroutine test_pdb_hetatm
 
     ! one ANISOU record per atom, U in units of 1e-4 A**2 in columns 29-70 (PDB format)
     subroutine test_anisou()
@@ -179,9 +285,10 @@ contains
         integer, parameter :: B3 = 32
         real,    parameter :: SMPD = 1.0
         type(atoms) :: a
-        type(image) :: vol, vol2
+        type(image) :: vol, vol2, vol_full_oversampled
         integer     :: i, nthr_saved
-        real        :: beta_min
+        integer     :: ldim_before(3)
+        real        :: beta_min, beta_native(3), beta_fine(3), beta_full_oversampled(3), smpd_before
         logical     :: ok
         write(*,'(A)') 'test_validation'
         call make_model(a)
@@ -206,12 +313,53 @@ contains
         end do
         call assert_true(ok, 'map_validate of a map against itself scores every atom 1')
         call a%atom_validate(vol)
-        beta_min = minval([(a%get_beta(i), i=1,a%get_n())])
+        beta_native = [(a%get_beta(i), i=1,a%get_n())]
+        beta_min = minval(beta_native)
         write(logfhandle,'(A,F8.4)') 'atom_validate, lowest atom correlation: ', beta_min
         call assert_true(beta_min > 0.95, 'atom_validate: every atom correlates with its own simulated density')
+        ldim_before = vol%get_ldim()
+        smpd_before = vol%get_smpd()
+        call a%atom_validate(vol, smpd_target=0.5)
+        beta_fine = [(a%get_beta(i), i=1,a%get_n())]
+        call assert_true(minval(beta_fine) > 0.90, &
+            &'atom_validate: locally oversampled atom windows retain the model signal')
+        call assert_true(all(vol%get_ldim() == ldim_before) .and. vol%get_smpd() == smpd_before, &
+            &'atom_validate: local oversampling leaves the input volume unchanged')
+        call vol_full_oversampled%copy(vol)
+        call vol_full_oversampled%fft
+        call vol_full_oversampled%pad_inplace([2*B3, 2*B3, 2*B3], antialiasing=.false.)
+        call vol_full_oversampled%ifft
+        call a%atom_validate(vol_full_oversampled)
+        beta_full_oversampled = [(a%get_beta(i), i=1,a%get_n())]
+        call assert_true(maxval(abs(beta_fine - beta_full_oversampled)) < 0.002, &
+            &'atom_validate: local oversampling agrees with whole-volume Fourier oversampling')
+        call a%map_validate(vol, vol2, smpd_target=0.5)
+        ok = .true.
+        do i = 1,a%get_n()
+            if( abs(a%get_beta(i) - 1.) > 1.e-4 ) ok = .false.
+        enddo
+        call assert_true(ok, 'map_validate: identical maps remain identical after local oversampling')
+        call a%set_coord(1, [ 8.25, 16.125, 15.75])
+        call a%set_coord(2, [16.40, 16.300, 16.20])
+        call a%set_coord(3, [23.60, 15.800, 16.35])
+        call vol%kill
+        call vol_full_oversampled%kill
+        call vol%new([B3,B3,B3], SMPD, wthreads=.false.)
+        call a%convolve(vol, cutoff=8.*SMPD)
+        call a%atom_validate(vol, smpd_target=0.6)
+        beta_fine = [(a%get_beta(i), i=1,a%get_n())]
+        call vol_full_oversampled%copy(vol)
+        call vol_full_oversampled%fft
+        call vol_full_oversampled%pad_inplace([54, 54, 54], antialiasing=.false.)
+        call vol_full_oversampled%ifft
+        call a%atom_validate(vol_full_oversampled)
+        beta_full_oversampled = [(a%get_beta(i), i=1,a%get_n())]
+        call assert_true(maxval(abs(beta_fine - beta_full_oversampled)) < 0.01, &
+            &'atom_validate: local Fourier oversampling preserves fractional-phase scores at a non-integer scale')
         call a%kill
         call vol%kill
         call vol2%kill
+        call vol_full_oversampled%kill
         call unmemoize_mask_coords ! atom_validate memoised the mask of its 4-voxel windows
     end subroutine test_validation
 
@@ -294,6 +442,34 @@ contains
         call vol2%kill
     end subroutine test_pseudo_density
 
+    ! a pseudo-atom through the halo transfer: its peak and its integral q (1 - a) against the closed forms, and
+    ! a zero halo amplitude leaves the plain pseudo-atom
+    subroutine test_pseudo_halo()
+        integer, parameter :: BX = 48
+        real,    parameter :: SMPD = 0.358, B1 = 25., Q1 = 1.5, HAMP = 0.6, HBFAC = 200.
+        type(atoms)        :: a1
+        type(image)        :: vol, vol0
+        real :: cutoff, peak
+        write(*,'(A)') 'test_pseudo_halo'
+        cutoff = 4. * sqrt((B1 + HBFAC) / (8. * PI**2))
+        call vol%new([BX,BX,BX], SMPD, wthreads=.false.)
+        call vol0%new([BX,BX,BX], SMPD, wthreads=.false.)
+        call make_pseudo(a1, [24., 24., 24.] * SMPD, Q1, B1)
+        call a1%convolve(vol, cutoff, halo_amp=HAMP, halo_bfac=HBFAC)
+        peak = Q1 * ((4. * PI / B1)**1.5 - HAMP * (4. * PI / (B1 + HBFAC))**1.5)
+        call assert_real(peak, vol%get_rmat_at(25,25,25), 1.e-4 * peak, 'halo pseudo-atom peak is q [K(B) - a K(B + B_h)] at 0')
+        call make_pseudo(a1, [23.3, 24.6, 25.2] * SMPD, Q1, B1)
+        call a1%convolve(vol, cutoff, halo_amp=HAMP, halo_bfac=HBFAC)
+        call assert_real(Q1 * (1. - HAMP), sum(vol%get_rmat()) * SMPD**3, 0.01 * Q1 * (1. - HAMP),&
+            &'halo pseudo-atom integrates to q (1 - a), the transfer at zero frequency')
+        call a1%convolve(vol, cutoff, halo_amp=0., halo_bfac=HBFAC)
+        call a1%convolve(vol0, cutoff)
+        call assert_true(all(vol%get_rmat() == vol0%get_rmat()), 'a zero halo amplitude leaves the plain pseudo-atom')
+        call vol%kill
+        call vol0%kill
+        call a1%kill
+    end subroutine test_pseudo_halo
+
     subroutine make_pseudo( a, xyz, q, bfac )
         type(atoms), intent(inout) :: a
         real,        intent(in)    :: xyz(3), q, bfac
@@ -337,9 +513,8 @@ contains
         call b%kill
     end subroutine test_pseudo_pdb_roundtrip
 
-    ! bfac_pdb: a Pt atom's beta is added to every b_j beside the blur bfac = (8 smpd)**2 of convolve, so the voxel
-    ! sum is kept and the peak falls by sum a_j / (b_j + bfac + B)**1.5 over sum a_j / (b_j + bfac)**1.5; without
-    ! the flag beta is not read, and a pseudo-atom (whose beta is its width already) ignores the flag
+    ! bfac_pdb: a Pt atom's occupancy scales the amplitude and beta is added to every b_j beside the blur
+    ! bfac = (8 smpd)**2 of convolve; without the flag neither column is read, and a pseudo-atom ignores the flag
     subroutine test_element_bfac()
         integer, parameter :: BX = 64
         real,    parameter :: SMPD = 0.358, BFAC_PT = 20., CUTOFF = 10.
@@ -347,7 +522,7 @@ contains
         real,    parameter :: B_PT(5) = [0.2263, 1.3813, 5.3243, 17.5987, 60.0171]
         type(atoms) :: a
         type(image) :: vol0, vol20, vol_def0, vol_def20, volp, volp_flag
-        real :: blur, ratio, sum0, sum20
+        real :: blur, ratio, sum0, sum20, peak20
         write(*,'(A)') 'test_element_bfac'
         blur  = (8. * SMPD)**2
         ratio = sum(A_PT / (B_PT + blur + BFAC_PT)**1.5) / sum(A_PT / (B_PT + blur)**1.5)
@@ -370,12 +545,22 @@ contains
         call a%convolve(vol_def20, CUTOFF)
         sum0  = sum(vol0%get_rmat())
         sum20 = sum(vol20%get_rmat())
+        peak20 = vol20%get_rmat_at(33,33,33)
         call assert_true(all(vol0%get_rmat() == vol_def0%get_rmat()), 'bfac_pdb with B = 0 renders as the default')
         call assert_real(sum0, sum20, 0.01 * sum0, 'bfac_pdb: B = 20 A**2 keeps the voxel sum within 1%')
         call assert_real(ratio, vol20%get_rmat_at(33,33,33) / vol0%get_rmat_at(33,33,33), 0.01 * ratio,&
             &'bfac_pdb: the peak falls by sum a_j / (b_j + bfac + B)**1.5 over sum a_j / (b_j + bfac)**1.5 within 1%')
         call assert_real(0.243, ratio, 0.001, 'the Pt peak ratio at B = 20 A**2 and the default blur is 0.243')
         call assert_true(all(vol_def20%get_rmat() == vol_def0%get_rmat()), 'without bfac_pdb the B column is not read')
+        call a%set_occupancy(1, 0.25)
+        call a%convolve(vol20, CUTOFF, bfac_pdb=.true.)
+        call a%convolve(vol_def20, CUTOFF)
+        call assert_real(0.25 * sum20, sum(vol20%get_rmat()), 0.01 * sum20,&
+            &'bfac_pdb: occupancy 0.25 scales the voxel sum')
+        call assert_real(0.25 * peak20, vol20%get_rmat_at(33,33,33), 1.e-5 * peak20,&
+            &'bfac_pdb: occupancy 0.25 scales the peak')
+        call assert_true(all(vol_def20%get_rmat() == vol_def0%get_rmat()),&
+            &'without bfac_pdb the occupancy column is not read')
         call a%kill
         ! a pseudo-atom is unaffected by the flag
         call make_pseudo(a, [32., 32., 32.] * SMPD, 1., 13.9)

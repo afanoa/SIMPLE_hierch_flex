@@ -115,6 +115,25 @@ contains
         allocate(cmat(self%array_shape(1),self%array_shape(2),self%array_shape(3)), source=self%cmat)
     end function get_cmat
 
+    !>  \brief  pointer to the packed Fourier components, array_shape(1) x array_shape(2) x
+    !!          array_shape(3) = fdim(ldim(1)) x ldim(2) x ldim(3) with lower bounds 1 (physical
+    !!          addresses, see comp_addr_phys), the Fourier-space twin of get_rmat_ptr. Unlike rmat,
+    !!          the packed array has no padding rows: its physical shape is its logical one
+    !!          (get_array_shape, what get_cmat copies), so the pointer is the whole array and a
+    !!          whole-array expression on it is an expression on every component, none outside.
+    !!          A deliberate breach of the copy-in/copy-out
+    !!          encapsulation of get_cmat/set_cmat: those copy the whole packed array, and an operator
+    !!          that transforms a boxpd^3 volume several times per iteration (the PCG reconstructor's
+    !!          kernel apply, preconditioner and folds, 80 MB at box 108, 870 MB at box 300) paid more
+    !!          for the copies and their allocations than for the transforms. Contract: the caller
+    !!          reads and writes components in place only, never reallocates or frees the target,
+    !!          sets the Fourier flag through set_ft, and drops the pointer before kill or new
+    module subroutine get_cmat_ptr( self, cmat_ptr )
+        class(image), target,                   intent(in)  :: self
+        complex(kind=c_float_complex), pointer, intent(out) :: cmat_ptr(:,:,:)
+        cmat_ptr => self%cmat
+    end subroutine get_cmat_ptr
+
     module pure subroutine get_cmat_sub( self, cmat )
         class(image), intent(in)  :: self
         complex,      intent(out) :: cmat(self%array_shape(1),self%array_shape(2),self%array_shape(3))
@@ -162,7 +181,7 @@ contains
     ! Setters
     !===========================
 
-    module subroutine set_1( self, logi, val )
+    module subroutine set_real_at( self, logi, val )
         class(image), intent(inout) :: self
         integer,      intent(in)    :: logi(3)
         real,         intent(in)    :: val
@@ -170,15 +189,15 @@ contains
             .and. logi(2) >= 1 .and. logi(3) <= self%ldim(3) .and. logi(3) >= 1 )then
             self%rmat(logi(1),logi(2),logi(3)) = val
         endif
-    end subroutine set_1
+    end subroutine set_real_at
 
-    module subroutine set_2( self, self2set )
+    module subroutine set_img( self, self2set )
         class(image), intent(inout) :: self
         class(image), intent(in)    :: self2set
         self%ft       = self2set%ft
         self%rmat     = self2set%rmat
         self%wthreads = self2set%wthreads
-    end subroutine set_2
+    end subroutine set_img
 
     module subroutine set_rmat( self, rmat, ft )
         class(image), intent(inout) :: self
@@ -214,33 +233,33 @@ contains
         endif
     end subroutine set_cmat
 
-    module pure subroutine set_cmat_1( self, cmat )
+    module pure subroutine set_cmat_3d( self, cmat )
         class(image), intent(inout) :: self
         complex,      intent(in)    :: cmat(self%array_shape(1),self%array_shape(2),self%array_shape(3))
         self%ft   = .true.
         self%cmat = cmat
-    end subroutine set_cmat_1
+    end subroutine set_cmat_3d
 
-    module pure subroutine set_cmat_2( self, cval )
+    module pure subroutine set_cmat_scalar( self, cval )
         class(image), intent(inout) :: self
         complex,      intent(in)    :: cval
         self%ft   = .true.
         self%cmat = cval
-    end subroutine set_cmat_2
+    end subroutine set_cmat_scalar
 
-    module pure subroutine set_cmat_3( self, self2copy )
+    module pure subroutine set_cmat_img( self, self2copy )
         class(image), intent(inout) :: self
         class(image), intent(in)    :: self2copy
         self%ft   = .true.
         self%cmat = self2copy%cmat
-    end subroutine set_cmat_3
+    end subroutine set_cmat_img
 
-    module pure subroutine set_cmat_4( self, cmat )
+    module pure subroutine set_cmat_2d( self, cmat )
         class(image), intent(inout) :: self
         complex,      intent(in)    :: cmat(self%array_shape(1),self%array_shape(2))
         self%ft          = .true.
         self%cmat(:,:,1) = cmat
-    end subroutine set_cmat_4
+    end subroutine set_cmat_2d
 
     module pure subroutine set_cmat_at( self, h, k, l, comp)
         class(image), intent(inout) :: self
@@ -389,19 +408,7 @@ contains
     ! Serialization / misc
     !===========================
 
-    module function serialize_1( self ) result( vec )
-        class(image), intent(in) :: self
-        real,    allocatable :: vec(:)
-        complex, allocatable :: cvec(:)
-        if( self%is_ft() )then
-            cvec = pack(self%cmat(:self%array_shape(1),:self%array_shape(2),:self%array_shape(3)), mask=.true.)
-            vec  = sqrt(real(cvec * conjg(cvec)))
-        else
-            vec = pack(self%rmat(:self%ldim(1),:self%ldim(2),:self%ldim(3)), mask=.true.)
-        endif
-    end function serialize_1
-
-    module function serialize_2( self, l_msk )result( pcavec )
+    module function serialize_masked( self, l_msk )result( pcavec )
         class(image), intent(in) :: self
         logical,      intent(in) :: l_msk(self%ldim(1),self%ldim(2),self%ldim(3))
         real, allocatable :: pcavec(:)
@@ -419,124 +426,13 @@ contains
                 end do
             end do
         end do
-    end function serialize_2
+    end function serialize_masked
 
-    module function serialize_3( self, thres ) result( vec )
+    module function serialize_thres( self, thres ) result( vec )
         class(image), intent(in) :: self
         real,         intent(in) :: thres
         real, allocatable :: vec(:)
         vec = pack(self%rmat(:self%ldim(1),:self%ldim(2),:self%ldim(3)), mask=self%rmat(:self%ldim(1),:self%ldim(2),:self%ldim(3)) > thres)
-    end function serialize_3
-
-    module subroutine unserialize( self, pcavec, l_msk )
-        class(image),      intent(inout) :: self
-        real,              intent(in)    :: pcavec(:)
-        logical, optional, intent(in)    :: l_msk(self%ldim(1),self%ldim(2),self%ldim(3))
-        integer :: sz, sz_msk, i, j, k, cnt
-        if( present(l_msk) )then
-            sz     = size(pcavec)
-            sz_msk = count(l_msk)
-            if( sz /= sz_msk )then
-                write(logfhandle,*) 'ERROR! Nonconforming sizes'
-                write(logfhandle,*) 'sizeof(pcavec): ', sz
-                write(logfhandle,*) 'sizeof(l_msk) : ', sz_msk
-                THROW_HARD('unserialize')
-            endif
-        endif
-        if( self%ft ) self%ft = .false.
-        self%rmat = 0.
-        cnt = 0
-        if( present(l_msk) )then
-            do k=1,self%ldim(3)
-                do j=1,self%ldim(2)
-                    do i=1,self%ldim(1)
-                        if( l_msk(i,j,k) )then
-                            cnt = cnt + 1
-                            self%rmat(i,j,k) =  pcavec(cnt)
-                        endif
-                    end do
-                end do
-            end do
-        else
-            do k=1,self%ldim(3)
-                do j=1,self%ldim(2)
-                    do i=1,self%ldim(1)
-                        cnt = cnt + 1
-                        self%rmat(i,j,k) =  pcavec(cnt)
-                    end do
-                end do
-            end do
-        endif
-    end subroutine unserialize
-
-    !>  \brief winserialize is for packing/unpacking a serialized image vector for convolutional pca analysis
-    module subroutine winserialize( self, coord, winsz, pcavec )
-        class(image),      intent(inout) :: self
-        real, allocatable, intent(inout) :: pcavec(:)
-        integer,           intent(in)    :: coord(:), winsz
-        integer :: i, j, k, cnt, npix
-        logical :: pack
-        if( self%ft ) THROW_HARD('winserialization not yet implemented for Fourier')
-        if( self%is_2d() )then
-            npix = winsz**2
-            call set_action
-            cnt = 0
-            do i=coord(1),coord(1)+winsz-1
-                do j=coord(2),coord(2)+winsz-1
-                    cnt = cnt+1
-                    if( pack )then
-                        if( i > self%ldim(1) .or. j > self%ldim(2) )then
-                            pcavec(cnt) = 0.
-                        else
-                            pcavec(cnt) = self%rmat(i,j,1)
-                        endif
-                    else
-                        if( i > self%ldim(1) .or. j > self%ldim(2) )then
-                        else
-                            self%rmat(i,j,1) = self%rmat(i,j,1)+pcavec(cnt)
-                        endif
-                    endif
-                end do
-            end do
-        else
-            if( size(coord) < 3 ) THROW_HARD('need a 3D coordinate for a 3D image; winserialize')
-            npix = winsz**3
-            call set_action
-            cnt = 0
-            do i=coord(1),coord(1)+winsz-1
-                do j=coord(2),coord(2)+winsz-1
-                    do k=coord(3),coord(3)+winsz-1
-                        cnt = cnt+1
-                        if( pack )then
-                            if( i > self%ldim(1) .or. j > self%ldim(2) .or. k > self%ldim(3) )then
-                                pcavec(cnt) = 0.
-                            else
-                                pcavec(cnt) = self%rmat(i,j,k)
-                            endif
-                        else
-                            if( i > self%ldim(1) .or. j > self%ldim(2) .or. k > self%ldim(3) )then
-                            else
-                                self%rmat(i,j,k) = self%rmat(i,j,k)+pcavec(cnt)
-                            endif
-                        endif
-                    end do
-                end do
-            end do
-        endif
-
-        contains
-
-            subroutine set_action
-                if( allocated(pcavec) )then
-                    if( size(pcavec) /= npix ) THROW_HARD('size mismatch mask/npix; winserialize')
-                    pack = .false.
-                else
-                    pack = .true.
-                    allocate( pcavec(npix) )
-                    pcavec = 0.
-                endif
-            end subroutine set_action
-
-    end subroutine winserialize
+    end function serialize_thres
 
 end submodule simple_image_access

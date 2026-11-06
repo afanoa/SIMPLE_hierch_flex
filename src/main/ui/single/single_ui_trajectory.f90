@@ -4,32 +4,34 @@ use simple_ui_modules
 implicit none
 
 type(category_descriptor), parameter :: UI_CATEGORY = category_descriptor('trajectory', 'Trajectory Analysis', 20)
-type(ui_program), target :: extract_substk
-type(ui_program), target :: graphene_subtr
-type(ui_program), target :: import_trajectory
+type(ui_program), target :: trajectory_extract_substk
+type(ui_program), target :: trajectory_graphene_subtr
+type(ui_program), target :: trajectory_import
 type(ui_program), target :: trajectory_denoise
 type(ui_program), target :: trajectory_make_projavgs
 type(ui_program), target :: trajectory_reconstruct3D
 type(ui_program), target :: trajectory_swap_stack
+type(ui_program), target :: trajectory_solve3D
 
 contains
 
     subroutine construct_single_trajectory_programs(prgtab)
         class(ui_hash), intent(inout) :: prgtab
-        call new_extract_substk(prgtab)
-        call new_graphene_subtr(prgtab)
-        call new_import_trajectory(prgtab)
+        call new_trajectory_extract_substk(prgtab)
+        call new_trajectory_graphene_subtr(prgtab)
+        call new_trajectory_import(prgtab)
         call new_trajectory_denoise(prgtab)
         call new_trajectory_make_projavgs(prgtab)
         call new_trajectory_reconstruct3D(prgtab)
         call new_trajectory_swap_stack(prgtab)
+        call new_trajectory_solve3D(prgtab)
     end subroutine construct_single_trajectory_programs
 
-subroutine new_extract_substk( prgtab )
+subroutine new_trajectory_extract_substk( prgtab )
         class(ui_hash), intent(inout) :: prgtab
         ! PROGRAM SPECIFICATION
-        call extract_substk%new(&
-        &'extract_substk',&                                                                                            ! name
+        call trajectory_extract_substk%new(&
+        &'trajectory_extract_substk',&                                                                                            ! name
         &'extraction of a substack segment of time-series of metallic nanoparticles',&                                 ! summary
         &'is a shared-memory workflow for extraction of a substack segment of time-series of metallic nanoparticles',& ! help
         &'single_exec',&                                                                                               ! executable
@@ -39,13 +41,13 @@ subroutine new_extract_substk( prgtab )
         ! image input/output
         ! <empty>
         ! parameter input/output
-        call extract_substk%add_input(UI_FILE, projfile, &
+        call trajectory_extract_substk%add_input(UI_FILE, projfile, &
         &visibility=UI_VIS_STANDARD)
-        call extract_substk%add_input(UI_PARM, 'fromp', 'num', 'From index', 'Start index for stack copy', 'start index', .false., 1.0, &
+        call trajectory_extract_substk%add_input(UI_PARM, 'fromp', 'num', 'From index', 'Start index for stack copy', 'start index', .false., 1.0, &
         &visibility=UI_VIS_ADVANCED)
-        call extract_substk%add_input(UI_PARM, 'top',   'num', 'To index', 'Stop index for stack copy', 'stop index', .false., 1.0, &
+        call trajectory_extract_substk%add_input(UI_PARM, 'top',   'num', 'To index', 'Stop index for stack copy', 'stop index', .false., 1.0, &
         &visibility=UI_VIS_ADVANCED)
-        call extract_substk%add_input(UI_PARM, 'state', 'num', 'State index', 'Only particles with this state are extracted{1}', 'state index', .false., 1.0, &
+        call trajectory_extract_substk%add_input(UI_PARM, 'state', 'num', 'State index', 'Only particles with this state are extracted{1}', 'state index', .false., 1.0, &
         &visibility=UI_VIS_ADVANCED)
         ! <no additional inputs>
         ! <empty>
@@ -58,28 +60,30 @@ subroutine new_extract_substk( prgtab )
         ! computer controls
         ! <empty>
         ! add to ui_hash
-        call add_ui_program('extract_substk', extract_substk, prgtab, UI_CATEGORY)
-    end subroutine new_extract_substk
+        call add_ui_program('trajectory_extract_substk', trajectory_extract_substk, prgtab, UI_CATEGORY)
+    end subroutine new_trajectory_extract_substk
 
-    subroutine new_graphene_subtr( prgtab )
+    subroutine new_trajectory_graphene_subtr( prgtab )
         class(ui_hash), intent(inout) :: prgtab
         ! PROGRAM SPECIFICATION
-        call graphene_subtr%new(&
-        &'graphene_subtr',&                                  ! name
+        call trajectory_graphene_subtr%new(&
+        &'trajectory_graphene_subtr',&                                  ! name
         &'Suppress graphene Fourier peaks in nanoparticle time-series images',& ! summary
         &'Removes graphene Fourier peaks in time-series',&   ! help
         &'single_exec',&                                     ! executable
         &.false., visibility=UI_VIS_STANDARD, display_name='Remove Graphene Signal') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
-        call graphene_subtr%add_input(UI_IMG, stk_traj, &
-        &visibility=UI_VIS_STANDARD)
-        call graphene_subtr%add_input(UI_IMG, stk_backgr, &
-        &visibility=UI_VIS_STANDARD)
-        call graphene_subtr%add_input(UI_IMG, outstk, &
+        call trajectory_graphene_subtr%add_input(UI_IMG, stk, label_override='Tracked NP image stack', &
+        &help_override='xxx.mrc file with NP time-trajectory', placeholder_override='e.g. trajectory.mrcs', &
+        &required_override=.true., visibility=UI_VIS_STANDARD)
+        call trajectory_graphene_subtr%add_input(UI_IMG, stk2, label_override='Background power spectra stack', &
+        &help_override='background power spectra stack, one per image of the trajectory', &
+        &placeholder_override='e.g. background_pspec.mrcs', required_override=.true., visibility=UI_VIS_STANDARD)
+        call trajectory_graphene_subtr%add_input(UI_IMG, outstk, &
         &visibility=UI_VIS_ADVANCED)
         ! parameter input/output
-        call graphene_subtr%add_input(UI_PARM, smpd, &
+        call trajectory_graphene_subtr%add_input(UI_PARM, smpd, &
         &visibility=UI_VIS_STANDARD)
         ! <empty>
         ! <no additional inputs>
@@ -91,29 +95,29 @@ subroutine new_extract_substk( prgtab )
         ! mask controls
         ! <empty>
         ! computer controls
-        call graphene_subtr%add_input(UI_COMP, nthr, &
+        call trajectory_graphene_subtr%add_input(UI_COMP, nthr, &
         &visibility=UI_VIS_STANDARD)
         ! add to ui_hash
-        call add_ui_program('graphene_subtr', graphene_subtr, prgtab, UI_CATEGORY)
-    end subroutine new_graphene_subtr
+        call add_ui_program('trajectory_graphene_subtr', trajectory_graphene_subtr, prgtab, UI_CATEGORY)
+    end subroutine new_trajectory_graphene_subtr
 
-    subroutine new_import_trajectory( prgtab )
+    subroutine new_trajectory_import( prgtab )
         class(ui_hash), intent(inout) :: prgtab
         ! PROGRAM SPECIFICATION
-        call import_trajectory%new(&
-        &'import_trajectory',&                    ! name
+        call trajectory_import%new(&
+        &'trajectory_import',&                    ! name
         &'Import particle-image time-series data for trajectory analysis',& ! summary
         &'is a workflow for importing time-series data',&   ! help
         &'single_exec',&                                    ! executable
         &.true., visibility=UI_VIS_STANDARD, display_name='Import Particle Time Series') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
         ! image input/output
-        call import_trajectory%add_input(UI_IMG, stk, required_override=.true., &
+        call trajectory_import%add_input(UI_IMG, stk, required_override=.true., &
         &visibility=UI_VIS_STANDARD)
         ! parameter input/output
-        call import_trajectory%add_input(UI_PARM, smpd, &
+        call trajectory_import%add_input(UI_PARM, smpd, &
         &visibility=UI_VIS_STANDARD)
-        call import_trajectory%add_input(UI_FILE, deftab, &
+        call trajectory_import%add_input(UI_FILE, deftab, &
         &visibility=UI_VIS_ADVANCED)
         ! <no additional inputs>
         ! <empty>
@@ -126,16 +130,17 @@ subroutine new_extract_substk( prgtab )
         ! computer controls
         ! <empty>
         ! add to ui_hash
-        call add_ui_program('import_trajectory', import_trajectory, prgtab, UI_CATEGORY)
-    end subroutine new_import_trajectory
+        call add_ui_program('trajectory_import', trajectory_import, prgtab, UI_CATEGORY)
+    end subroutine new_trajectory_import
 
     subroutine new_trajectory_denoise( prgtab )
         class(ui_hash), intent(inout) :: prgtab
         ! PROGRAM SPECIFICATION
         call trajectory_denoise%new(&
         &'trajectory_denoise',&                                       ! name
-        &'Denoise time-series particle images with diffusion-map analysis',& ! summary
-        &'is a program for diffusion-map denoising of an image stack',& ! help
+        &'Denoise time-series particle images',&                      ! summary
+        &'is a program for denoising a particle trajectory: every frame becomes the kernel pre-image of the frames '//&
+        &'that look like it, without alignment',&                     ! help
         &'single_exec',&                                              ! executable
         &.false., visibility=UI_VIS_STANDARD, display_name='Denoise Particle Trajectories') ! requires sp_project
         ! INPUT PARAMETER SPECIFICATIONS
@@ -152,34 +157,21 @@ subroutine new_extract_substk( prgtab )
         ! search controls
         ! <empty>
         ! filter controls
-        call trajectory_denoise%add_input(UI_FILT, 'neigs', 'num', 'Number of diffusion-map components (0 => auto; default 0)', 'Number of diffusion-map components (0 => auto; default 0)', '# eigenvecs', .false., 0.0, &
+        call trajectory_denoise%add_input(UI_FILT, 'neigs', 'num', 'Largest latent rank (0 => 32; default 32)', &
+        &'The largest latent rank the cross-validation may choose (0 => 32; default 32)', '# eigenvecs', .false., 0.0, &
         &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'pca_mode', 'multi', 'PCA methods: diffusion maps, PPCA, PPCA plus residual kPCA, standard SVD PCA, or kernel PCA', 'PCA methods','', .false., 'diffusion_maps', &
-        &choices=ui_choices([character(len=15) :: 'diffusion_maps', 'ppca', 'ppca_kpca_resid', 'pca_svd', 'kpca']), &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'k_nn', 'num', 'Diffusion graph neighbors (default 5; try 5-30)', 'Local nearest neighbors used for pca_mode=diffusion_maps', '# neighbors', .false., 5.0, &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'kpca_ker', 'multi', 'Kernel PCA kernel', 'Kernel PCA kernel(rbf|cosine){rbf}','', .false., 'rbf', &
-        &choices=ui_choices([character(len=6) :: 'rbf', 'cosine']), &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'kpca_backend', 'multi', 'Kernel PCA backend', 'Kernel PCA backend(exact|nystrom){nystrom}','', .false., 'nystrom', &
-        &choices=ui_choices([character(len=7) :: 'exact', 'nystrom']), &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'kpca_rbf_gamma', 'num', 'RBF gamma (0 => auto)', 'RBF gamma (0 => auto)', 'gamma', .false., 0.0, &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'ppca_kpca_resid_alpha', 'num', 'Residual hybrid damping (0 => PPCA only; default 0.5)', 'Residual hybrid damping (0 => PPCA only; default 0.5)', 'hybrid alpha', .false., 0.5, &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'kpca_nystrom_npts', 'num', 'Nyström landmark count (0 => auto=max(128,2*neigs), capped at 512; try 256, 512)', 'Nyström landmark count (0 => auto=max(128,2*neigs), capped at 512; try 256, 512)', '# landmarks', .false., 512.0, &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, 'kpca_nystrom_local_nbrs', 'num', 'Nyström max local support neighbors (default 96; try 96, 128)', 'Nyström max local support neighbors (default 96; try 96, 128)', '# max local nbrs', .false., 96.0, &
-        &visibility=UI_VIS_ADVANCED)
-        call trajectory_denoise%add_input(UI_FILT, hp, &
-        &visibility=UI_VIS_ADVANCED)
+        call trajectory_denoise%add_input(UI_FILT, 'halfwin', 'num', 'Window half-width in frames (0 => the whole trajectory)', &
+        &'Frames pool only within this many frames of their block; 0 => every frame may pool with every frame (default 0)', &
+        &'# frames', .false., 0.0, visibility=UI_VIS_ADVANCED)
+        call trajectory_denoise%add_input(UI_FILT, 'eo_pool', 'binary', 'Pool by row parity', &
+        &'A frame pools only frames of its own row parity, so the even/odd halves stay independent(yes|no){yes}', '', .false., 'yes', &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), visibility=UI_VIS_ADVANCED)
         call trajectory_denoise%add_input(UI_FILT, lp, &
         &visibility=UI_VIS_ADVANCED)
         ! mask controls
         call trajectory_denoise%add_input(UI_MASK, mskdiam, required_override=.false., &
-        &visibility=UI_VIS_ADVANCED)
+        &help_override='Mask diameter in A (shapes the frame similarity only, the output is unmasked; '//&
+        &'default the inscribed circle)', visibility=UI_VIS_ADVANCED)
         ! computer controls
         call trajectory_denoise%add_input(UI_COMP, nthr, &
         &visibility=UI_VIS_STANDARD)
@@ -297,5 +289,75 @@ subroutine new_extract_substk( prgtab )
         ! add to ui_hash
         call add_ui_program('trajectory_swap_stack', trajectory_swap_stack, prgtab, UI_CATEGORY)
     end subroutine new_trajectory_swap_stack
+
+    subroutine new_trajectory_solve3D( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        ! PROGRAM SPECIFICATION
+        call trajectory_solve3D%new(&
+        &'trajectory_solve3D',&                                                                               ! name
+        &'De novo time-integrated map of a tracked nanoparticle from its graphene-subtracted frames',&      ! summary
+        &'is a shared-memory workflow from the graphene-subtracted frames of one tracked particle to its time-integrated '//&
+        &'map. On the raw frames: import, center2D_nano on ten time-chunk averages, the diameter on the centred averages, '//&
+        &'the start model simulated from it, refine2D_nano from the centering''s shifts, then two coupled gates on its '//&
+        &'class averages (the lattice gate, and the model gate: the class averages aligned to the start model, the ones '//&
+        &'far below the median correlation rejected) and the prune. Only the kept frames are then denoised (flex) and '//&
+        &'refined in 3D by autorefine3D_nano. One numbered subdirectory per stage; '//&
+        &'trajectory_solve3D.txt records each stage. Rerun with mkdir=no in the execution directory to resume after '//&
+        &'the last finished stage',&                                                                          ! help
+        &'single_exec',&                                                                                      ! executable
+        &.true., visibility=UI_VIS_STANDARD, display_name='Solve a Nanoparticle Trajectory') ! requires sp_project
+        ! INPUT PARAMETER SPECIFICATIONS
+        ! image input/output
+        call trajectory_solve3D%add_input(UI_IMG, 'stk', 'file', 'Graphene-subtracted frames', &
+        &'Graphene-subtracted frames of the tracked particle', 'e.g. subtr_frames.mrc', .true., '', &
+        &visibility=UI_VIS_STANDARD)
+        ! parameter input/output
+        call trajectory_solve3D%add_input(UI_PARM, smpd, &
+        &visibility=UI_VIS_STANDARD)
+        call trajectory_solve3D%add_input(UI_PARM, element, required_override=.false., &
+        &help_override='Atom kind of the simulated start model{Pt}', visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_PARM, 'moldiam', 'num', 'Particle diameter of the start model', &
+        &'Particle diameter (A) of the simulated start model; default the smallest diameter estimated on the centred '//&
+        &'time-chunk averages', 'diameter in A', .false., 0., visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_PARM, 'thres', 'num', 'Lattice-peak threshold of the lattice gate', &
+        &'Class averages whose lattice_peak (log10 of the strongest Fourier peak over its ring mean) is below this are '//&
+        &'rejected by the lattice gate; the default is the grade set for averages of raw frames{0.52}', &
+        &'log10 peak over ring{0.52}', .false., 0.52, visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_PARM, 'model_gate_nsd', 'num', 'Model-gate cut in robust spreads', &
+        &'The model gate rejects a class average whose correlation to its best reprojection of the start model lies '//&
+        &'more than this many robust spreads (1.4826 x MAD) below the median of the lattice gate''s survivors{3}', &
+        &'robust spreads{3}', .false., 3., visibility=UI_VIS_ADVANCED)
+        ! search controls
+        call trajectory_solve3D%add_input(UI_SRCH, nspace, &
+        &visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_SRCH, 'maxits', 'num', 'Max 3D refinement rounds', &
+        &'Rounds of refinement and atom detection of autorefine3D_nano', 'Max # rounds{5}', .false., 5., &
+        &visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_SRCH, 'maxits_between', 'num', 'Max iterations per 3D round', &
+        &'Refinement iterations between two atom detections of autorefine3D_nano', 'Max # iterations{10}', .false., 10., &
+        &visibility=UI_VIS_ADVANCED)
+        ! filter controls
+        call trajectory_solve3D%add_input(UI_FILT, 'lp', 'num', 'Initial 3D low-pass limit', &
+        &'Initial low-pass limit of autorefine3D_nano', 'low-pass limit in Angstroms{1.5}', .false., 1.5, &
+        &visibility=UI_VIS_STANDARD)
+        call trajectory_solve3D%add_input(UI_FILT, 'halfwin', 'num', 'Denoising window half-width in frames', &
+        &'Frames pool only within this many frames of their block; 0 => the whole trajectory (default 0)', &
+        &'# frames', .false., 0.0, visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_FILT, 'neigs', 'num', 'Denoising components', &
+        &'The largest latent rank the denoiser''s cross-validation may choose (default 32)', '# eigenvecs', .false., 0.0, &
+        &visibility=UI_VIS_ADVANCED)
+        call trajectory_solve3D%add_input(UI_FILT, 'eo_pool', 'binary', 'Denoise by row parity', &
+        &'A frame pools only frames of its own row parity(yes|no){yes}', '', .false., 'yes', &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), visibility=UI_VIS_ADVANCED)
+        ! mask controls
+        call trajectory_solve3D%add_input(UI_MASK, mskdiam, required_override=.false., &
+        &help_override='Mask diameter in A of every stage after the centering; default 1.5 x the largest diameter '//&
+        &'estimated on the centred time-chunk averages', visibility=UI_VIS_ADVANCED)
+        ! computer controls
+        call trajectory_solve3D%add_input(UI_COMP, nthr, &
+        &visibility=UI_VIS_STANDARD)
+        ! add to ui_hash
+        call add_ui_program('trajectory_solve3D', trajectory_solve3D, prgtab, UI_CATEGORY)
+    end subroutine new_trajectory_solve3D
 
 end module single_ui_trajectory

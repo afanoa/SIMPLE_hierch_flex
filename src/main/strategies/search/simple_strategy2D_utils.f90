@@ -10,6 +10,7 @@ use simple_pspecs,            only: pspecs
 use simple_segmentation,      only: otsu_img
 use simple_sp_project,        only: sp_project
 use simple_builder,           only: builder
+use simple_matcher_ptcl_io,   only: pass_team
 implicit none
 
 public :: id_junk_and_prep_cavgs4clust, prep_cavgs4clust, id_junk, flag_non_junk_cavgs, calc_cluster_cavgs_dmat
@@ -257,13 +258,13 @@ contains
         allocate(l_non_junk(ncls), source=.false.)
         kfromto(1) = calc_fourier_index(HP_SPEC, ldim(1), smpd)
         kfromto(2) = calc_fourier_index(LP_SPEC, ldim(1), smpd)
-        call alloc_imgarr(nthr_glob, ldim, smpd, cavg_threads)
+        call alloc_imgarr(pass_team(), ldim, smpd, cavg_threads)
         call cavg_threads(1)%memoize_mask_coords
         !$omp parallel do default(shared) proc_bind(close) schedule(static)&
         !$omp private(icls,ithr,pspec,dynrange,l_dens_inoutside,nin,nout,nmsk,cen,ave,sdev,maxv,minv)
         do icls = 1, ncls
             ithr = omp_get_thread_num() + 1
-            call cavg_threads(ithr)%copy(cavgs(icls))
+            call cavg_threads(ithr)%copy_fast(cavgs(icls))
             ! variance criterion
             call cavg_threads(ithr)%stats('foreground', ave, sdev, maxv, minv, large_msk)
             l_non_junk(icls) = sdev*sdev <=  ABS_VAR_THRESHOLD
@@ -731,7 +732,7 @@ contains
         integer,     parameter           :: MAXITS_SH = 60
         real,        allocatable         :: inpl_corrs(:)
         type(image), allocatable         :: imgs_mirr(:)
-        type(pftc_shsrch_grad)           :: grad_shsrch_obj(nthr_glob)
+        type(pftc_shsrch_grad), allocatable ::  grad_shsrch_obj(:)
         type(builder)                    :: build
         type(inpl_struct), allocatable   :: algninfo(:), algninfo_mirr(:)
         integer :: ldim(3), ldim_ref(3), box, kfromto(2), ithr, i, loc(1), nrots, irot, irot_seed, n, pdim_srch(3)
@@ -754,7 +755,7 @@ contains
         call alloc_imgarr(n, ldim, smpd, imgs_mirr)
         !$omp parallel do default(shared) private(i) schedule(static) proc_bind(close)
         do i = 1, n
-            call imgs_mirr(i)%copy(imgs(i))
+            call imgs_mirr(i)%copy_fast(imgs(i))
             call imgs_mirr(i)%mirror('x')
         end do
         !$omp end parallel do
@@ -770,7 +771,8 @@ contains
         nrots = build%pftc%get_nrots()
         joint_lims(1:2,:) = lims
         joint_lims(3,:) = [1.-2., real(nrots)+2.]
-        do ithr = 1, nthr_glob
+        allocate(grad_shsrch_obj(pass_team()))   ! one search object per thread of the team in use
+        do ithr = 1, size(grad_shsrch_obj)
             if( trim(params%inpl_cont) == 'yes' )then
                 call grad_shsrch_obj(ithr)%new_joint(build, joint_lims, MAXITS_SH)
             else
@@ -849,9 +851,10 @@ contains
         where( algninfo_mirr(:)%corr > algninfo(:)%corr ) algninfo = algninfo_mirr
         ! destruct
         call dealloc_imgarr(imgs_mirr)
-        do ithr = 1, nthr_glob
+        do ithr = 1, size(grad_shsrch_obj)
             call grad_shsrch_obj(ithr)%kill
         end do
+        deallocate(grad_shsrch_obj)
         call build%pftc%kill
     end function match_imgs2ref
 
@@ -868,7 +871,7 @@ contains
         real,         parameter         :: FRC_CRIT = 0.5
         real,         allocatable       :: inpl_corrs(:), frc(:)
         type(image),  allocatable       :: imgs_targ_mirr(:)
-        type(pftc_shsrch_grad)          :: grad_shsrch_obj(nthr_glob)
+        type(pftc_shsrch_grad), allocatable ::  grad_shsrch_obj(:)
         type(builder)                   :: build
         type(inpl_struct), allocatable  :: algninfo(:,:), algninfo_mirr(:,:)
         integer :: ldim(3), box, kfromto(2), ithr, i, j, k, m, loc, nrots, irot, irot_seed, nrefs, ntargets, pdim_srch(3)
@@ -901,7 +904,8 @@ contains
         nrots = build%pftc%get_nrots()
         joint_lims(1:2,:) = lims
         joint_lims(3,:) = [1.-2., real(nrots)+2.]
-        do ithr = 1, nthr_glob
+        allocate(grad_shsrch_obj(pass_team()))   ! one search object per thread of the team in use
+        do ithr = 1, size(grad_shsrch_obj)
             if( trim(params%inpl_cont) == 'yes' )then
                 call grad_shsrch_obj(ithr)%new_joint(build, joint_lims, MAXITS_SH)
             else
@@ -928,7 +932,7 @@ contains
             if( .not. l_mirr_srch ) cycle
             ! target mirror
             m = ntargets+i
-            call imgs_targ_mirr(i)%copy(imgs_targ(i))
+            call imgs_targ_mirr(i)%copy_fast(imgs_targ(i))
             call imgs_targ_mirr(i)%mirror('x')
             call imgs_targ_mirr(i)%fft()
             call build%pftc%polarize_ptcl_pft(imgs_targ_mirr(i), m, pdim=pdim_srch, oversamp=.false.)
@@ -941,8 +945,8 @@ contains
         ! register imgs
         allocate(inpl_corrs(nrots), algninfo(nrefs,ntargets),&
         &algninfo_mirr(nrefs,ntargets), frc(kfromto(1):kfromto(2)))
-        !$omp parallel do private(i,j,k,m,ithr,inpl_corrs,loc,irot,cxy,frc,l_rot_shvec,rotind_frac,inpl_angle,joint_lims_loc)&
-        !$omp default(shared) collapse(2) schedule(static) proc_bind(close)
+        !$omp parallel do private(i,j,k,m,ithr,inpl_corrs,loc,irot,irot_seed,cxy,frc,l_rot_shvec,rotind_frac,inpl_angle,&
+        !$omp joint_lims_loc,rotmat) default(shared) collapse(2) schedule(static) proc_bind(close)
         do i = 1, npfts        ! ptcls, then their mirrors
             do j = 1, nrefs    ! refs
                 ithr = omp_get_thread_num() + 1
@@ -1021,9 +1025,10 @@ contains
             where( algninfo_mirr(:,:)%corr > algninfo(:,:)%corr ) algninfo = algninfo_mirr
         endif
         ! destruct
-        do ithr = 1, nthr_glob
+        do ithr = 1, size(grad_shsrch_obj)
             call grad_shsrch_obj(ithr)%kill
         end do
+        deallocate(grad_shsrch_obj)
         call build%pftc%kill
         deallocate(algninfo_mirr)
     end function match_imgs

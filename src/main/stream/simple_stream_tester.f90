@@ -10,7 +10,7 @@ use simple_core_module_api
 use simple_cmdline,    only: cmdline
 use simple_sp_project, only: sp_project
 use simple_image,      only: image
-use simple_test_utils
+use simple_test_utils, only: assert_int, assert_real, assert_true, enter_fixture, leave_fixture, tests_failed
 implicit none
 private
 public :: run_all_stream_optics_tests, run_all_stream_pickrefs_tests, run_all_stream_pick_extract_tests
@@ -49,12 +49,13 @@ contains
         real,             parameter :: SHIFT_Y(STREAM_NMOVS_SET) = [0.0,-0.1, 5.0, 4.9, 5.1]
         integer,          parameter :: TILT_GROUP(STREAM_NMOVS_SET) = [1, 1, 2, 2, 2]
         type(commander_stream_p02_assign_optics) :: xassign_optics
-        type(cmdline)                  :: cline_assign
-        type(sp_project)               :: upstream, result
+        class(cmdline), allocatable    :: cline_assign
+        class(sp_project), allocatable :: upstream, result
         type(string)                   :: cwd_saved, fixture_root, preproc_root, completed_dir
         type(string)                   :: batch_path, project_path, output_dir, fname
         integer                        :: i, nfail0, group_a, group_b
         logical                        :: l_groups
+        allocate(cline_assign, upstream, result)
         write(*,'(A)') 'test_assign_optics_two_shift_clusters'
         nfail0 = tests_failed
         call enter_fixture('test_assign_optics', cwd_saved, fixture_root)
@@ -128,6 +129,7 @@ contains
                     call assert_int(group_b, result%os_mic%get_int(5, 'ogid'), 'micrograph 5 is in the (5,5) group')
                     call assert_int(2, nint(result%os_optics%get(group_a, 'pop')), 'the (0,0) group holds two micrographs')
                     call assert_int(3, nint(result%os_optics%get(group_b, 'pop')), 'the (5,5) group holds three micrographs')
+                    ! the means of the planted shifts; 0.01 is slack, not derived
                     call assert_real( 0.05, result%os_optics%get(group_a, 'opcx'), 0.01, 'the (0,0) group centroid, x')
                     call assert_real(-0.05, result%os_optics%get(group_a, 'opcy'), 0.01, 'the (0,0) group centroid, y')
                     call assert_real( 5.00, result%os_optics%get(group_b, 'opcx'), 0.01, 'the (5,5) group centroid, x')
@@ -163,13 +165,14 @@ contains
         integer,          parameter :: NSOURCE_REFS   = 3
         integer,          parameter :: NROTS          = 4
         type(commander_make_pickrefs) :: xmake_pickrefs
-        type(cmdline)                 :: cline_make_pickrefs
+        class(cmdline), allocatable   :: cline_make_pickrefs
         type(image)                   :: reference, feature
         type(oris)                    :: moldiam_meta
         type(string)                  :: cwd_saved, fixture_root, source_path, output_dir, output_path, moldiam_path
         integer                       :: i, nfail0, ldim(3), nrefs, box_for_pick, box_for_extract
         real                          :: diam_max, mskdiam
         logical                       :: l_fields
+        allocate(cline_make_pickrefs)
         write(*,'(A)') 'test_make_pickrefs_expansion'
         nfail0 = tests_failed
         call enter_fixture('test_gen_pickrefs', cwd_saved, fixture_root)
@@ -208,6 +211,7 @@ contains
             call assert_int(NSOURCE_REFS * NROTS * 2, nrefs, 'every source image in every rotation, mirrored and not')
             call assert_true(ldim(1) > 0 .and. ldim(1) == ldim(2) .and. ldim(1) <= SOURCE_BOX, &
                 &'the references are square and no larger than the source box')
+            ! 0.01 A: slack, not derived
             call assert_real(SMPD, find_img_smpd(output_path), 0.01, 'the references keep the source sampling')
         endif
         call assert_true(file_exists(moldiam_path), 'the diameter metadata exists')
@@ -240,7 +244,8 @@ contains
     !! extracted: the micrograph kept, three particles in the micrograph record, the 2D and 3D
     !! particle segments and the extracted stack (64^2, source sampling, finite non-zero data),
     !! the box file and the thumbnail. nboxes_max=3 caps the picks at the number asserted, so the
-    !! count cannot catch over-picking; the handover asks for the positions.
+    !! count cannot catch over-picking; every recovered centre must also match a distinct planted
+    !! particle centre within POSITION_TOL pixels.
     subroutine test_pick_extract_three_particles()
         use simple_commanders_pick, only: commander_pick_extract
         character(len=*), parameter :: MICROGRAPH_FILE = 'synthetic_micrograph.mrc'
@@ -251,15 +256,18 @@ contains
         integer,          parameter :: PICKREF_BOX     = 64
         integer,          parameter :: EXTRACT_BOX     = 64
         integer,          parameter :: NPARTICLES      = 3
-        integer,          parameter :: PARTICLE_COORDS(2, NPARTICLES) = reshape([32, 32, 160, 40, 96, 152], [2, NPARTICLES])
+        integer,          parameter :: PARTICLE_CORNERS(2, NPARTICLES) = reshape([32, 32, 160, 40, 96, 152], [2, NPARTICLES])
+        real,             parameter :: POSITION_TOL    = 4.0
         type(commander_pick_extract) :: xpick_extract
-        type(cmdline)                :: cline_pick_extract
+        class(cmdline), allocatable  :: cline_pick_extract
         type(image)                  :: micrograph, reference, feature, extracted
-        type(sp_project)             :: fixture, result
+        class(sp_project), allocatable:: fixture, result
         type(string)                 :: cwd_saved, fixture_root, micrograph_path, pickrefs_path
         type(string)                 :: project_path, boxfile_path, thumbnail_path, stack_path
         integer                      :: i, nfail0, npicked, nimages, ldim(3)
-        real                         :: extracted_variance
+        real                         :: extracted_variance, picked_centres(2, NPARTICLES)
+        logical                      :: positions_match
+        allocate(cline_pick_extract, fixture, result)
         write(*,'(A)') 'test_pick_extract_three_particles'
         nfail0 = tests_failed
         call enter_fixture('test_pick_extract', cwd_saved, fixture_root)
@@ -275,7 +283,7 @@ contains
         call micrograph%new([MICROGRAPH_BOX, MICROGRAPH_BOX, 1], SMPD, wthreads=.false.)
         call micrograph%gauran(0., 0.02)
         do i = 1, NPARTICLES
-            call micrograph%add_window(reference, PARTICLE_COORDS(:, i))
+            call micrograph%add_window(reference, PARTICLE_CORNERS(:, i))
         enddo
         call micrograph%write(string(MICROGRAPH_FILE), 1, del_if_exists=.true.)
         call feature%kill
@@ -331,6 +339,16 @@ contains
                 call assert_int(npicked, result%os_ptcl2D%get_noris(), 'one 2D particle record per pick')
                 call assert_int(npicked, result%os_ptcl3D%get_noris(), 'one 3D particle record per pick')
                 call assert_int(1, result%os_stk%get_noris(), 'one extracted stack record')
+                if( result%os_ptcl2D%get_noris() == NPARTICLES )then
+                    do i = 1, NPARTICLES
+                        ! Both APIs store window corners; compare their centres when the boxes differ.
+                        picked_centres(:, i) = [result%os_ptcl2D%get(i, 'xpos'), result%os_ptcl2D%get(i, 'ypos')] &
+                            &+ 0.5 * real(EXTRACT_BOX)
+                    enddo
+                    positions_match = distinct_position_match(picked_centres,&
+                        &real(PARTICLE_CORNERS) + 0.5 * real(PICKREF_BOX), POSITION_TOL)
+                    call assert_true(positions_match, 'the three picks match the three planted particle positions')
+                endif
                 if( result%os_stk%get_noris() == 1 )then
                     stack_path = result%os_stk%get_str(1, 'stk')
                     call assert_true(file_exists(stack_path), 'the extracted stack exists')
@@ -338,6 +356,7 @@ contains
                         call find_ldim_nptcls(stack_path, ldim, nimages)
                         call assert_int(npicked, nimages, 'one extracted image per pick')
                         call assert_true(all(ldim(1:2) == [EXTRACT_BOX, EXTRACT_BOX]), 'the extracted particles are 64^2')
+                        ! 0.01 A: slack, not derived
                         call assert_real(SMPD, find_img_smpd(stack_path), 0.01, 'extraction keeps the sampling')
                         if( nimages >= 1 .and. all(ldim(1:2) == [EXTRACT_BOX, EXTRACT_BOX]) )then
                             call extracted%new([EXTRACT_BOX, EXTRACT_BOX, 1], SMPD, wthreads=.false.)
@@ -355,5 +374,25 @@ contains
         call cline_pick_extract%kill
         call leave_fixture(cwd_saved, fixture_root, nfail0)
     end subroutine test_pick_extract_three_particles
+
+    !> Whether the three unordered recovered centres can be paired one-to-one with the three
+    !! planted centres, with every Euclidean error no larger than tol. The explicit permutations
+    !! keep this oracle independent of the picker's output order.
+    logical function distinct_position_match( observed, truth, tol ) result( matches )
+        real, intent(in) :: observed(2, 3), truth(2, 3), tol
+        integer, parameter :: PERMUTATIONS(3, 6) = reshape([1,2,3, 1,3,2, 2,1,3, 2,3,1, 3,1,2, 3,2,1], [3,6])
+        integer :: iperm, i
+        matches = .false.
+        do iperm = 1, size(PERMUTATIONS, 2)
+            matches = .true.
+            do i = 1, 3
+                if( norm2(observed(:, i) - truth(:, PERMUTATIONS(i, iperm))) > tol )then
+                    matches = .false.
+                    exit
+                endif
+            enddo
+            if( matches ) return
+        enddo
+    end function distinct_position_match
 
 end module simple_stream_tester

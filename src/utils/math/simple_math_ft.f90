@@ -8,11 +8,11 @@ use simple_srch_sort_loc
 implicit none
 
 interface csq_fast
-    module procedure csq_fast_1, csq_fast_2
+    module procedure csq_fast_sp, csq_fast_dp
 end interface
 
 interface csq
-    module procedure csq_1, csq_2
+    module procedure csq_sp, csq_dp
 end interface
 
 contains
@@ -58,19 +58,19 @@ contains
     end function calc_lowpass_lim
 
     ! faster unsafe complex magnitude, single precision
-    real(sp) elemental function csq_fast_1( comp )
+    real(sp) elemental function csq_fast_sp( comp )
         complex(sp), intent(in) :: comp
-        csq_fast_1 = real(comp*conjg(comp))
-    end function csq_fast_1
+        csq_fast_sp = real(comp*conjg(comp))
+    end function csq_fast_sp
 
     ! faster unsafe complex magnitude, double precision
-    real(dp) elemental function csq_fast_2( comp )
+    real(dp) elemental function csq_fast_dp( comp )
         complex(dp), intent(in) :: comp
-        csq_fast_2 = real(comp*conjg(comp),dp)
-    end function csq_fast_2
+        csq_fast_dp = real(comp*conjg(comp),dp)
+    end function csq_fast_dp
 
     !>   is for complex squaring
-    elemental function csq_1( a ) result( sq )
+    elemental function csq_sp( a ) result( sq )
         complex(sp), intent(in) :: a !< complx component
         real(sp) :: sq, x, y, frac
         x = abs(real(a))
@@ -86,10 +86,10 @@ contains
             frac = x/y
             sq = y*y*(1.+frac*frac)
         endif
-    end function csq_1
+    end function csq_sp
 
     !>  is for double complex squaring
-    elemental function csq_2( a ) result( sq )
+    elemental function csq_dp( a ) result( sq )
         complex(dp), intent(in) :: a !< complx component
         real(dp) :: sq, x, y, frac
         x = abs(real(a))
@@ -105,7 +105,7 @@ contains
             frac = x/y
             sq = y*y*(1.+frac*frac)
         endif
-    end function csq_2
+    end function csq_dp
 
     !>   one-dimensional cyclic index generation
     !! \param lims limits
@@ -157,6 +157,65 @@ contains
             c = conjg( fpl%cmplx_plane(-h,-k) )
         end if
     end function fplane_get_cmplx
+
+    !> The plane of a particle at another shift: the numerator re-shifted by dshift (the new shift minus the one
+    !! the plane was generated at, in the pixels of the plane's padded box, the cropped ones when cropped) with
+    !! the phase gen_fplane4rec applies, exp(i (h p1 + k p2)) at padded sample (h,k) with p = -dshift shconst,
+    !! the stored index (hn,kn) holding the padded sample (hn stride, kn stride); the CTF^2 plane is shift-free and
+    !! copied, the forward transfer (when stored) carries the same phase. The weighted insertion (topk > 1)
+    !! inserts a particle at its extra poses from this plane, without reading or transforming the particle again
+    subroutine fplane_shift( fpl, dshift, stride, fpl_out )
+        use, intrinsic :: iso_c_binding, only: c_float_complex, c_float
+        use simple_type_defs, only: fplane_type
+        type(fplane_type), intent(in)    :: fpl
+        real,              intent(in)    :: dshift(2)
+        integer,           intent(in)    :: stride
+        type(fplane_type), intent(inout) :: fpl_out
+        complex(c_float_complex) :: w1, w2, ph0, ph_h, ph_k
+        real(dp) :: pshift(2)
+        integer  :: hlo, hhi, klo, h, k
+        if( .not. allocated(fpl%cmplx_plane) ) return
+        hlo = lbound(fpl%cmplx_plane,1); hhi = ubound(fpl%cmplx_plane,1)
+        klo = lbound(fpl%cmplx_plane,2)
+        fpl_out%frlims  = fpl%frlims
+        fpl_out%shconst = fpl%shconst
+        fpl_out%nyq     = fpl%nyq
+        if( allocated(fpl_out%cmplx_plane) )then
+            if( any(lbound(fpl_out%cmplx_plane) /= lbound(fpl%cmplx_plane)) .or. &
+               &any(ubound(fpl_out%cmplx_plane) /= ubound(fpl%cmplx_plane)) ) deallocate(fpl_out%cmplx_plane)
+        endif
+        if( .not. allocated(fpl_out%cmplx_plane) ) allocate(fpl_out%cmplx_plane(hlo:hhi,klo:0))
+        if( allocated(fpl_out%ctfsq_plane) )then
+            if( any(lbound(fpl_out%ctfsq_plane) /= lbound(fpl%ctfsq_plane)) .or. &
+               &any(ubound(fpl_out%ctfsq_plane) /= ubound(fpl%ctfsq_plane)) ) deallocate(fpl_out%ctfsq_plane)
+        endif
+        if( .not. allocated(fpl_out%ctfsq_plane) ) allocate(fpl_out%ctfsq_plane(hlo:hhi,klo:0))
+        fpl_out%ctfsq_plane = fpl%ctfsq_plane
+        if( allocated(fpl%transfer_plane) )then
+            if( allocated(fpl_out%transfer_plane) )then
+                if( any(lbound(fpl_out%transfer_plane) /= lbound(fpl%transfer_plane)) .or. &
+                   &any(ubound(fpl_out%transfer_plane) /= ubound(fpl%transfer_plane)) ) deallocate(fpl_out%transfer_plane)
+            endif
+            if( .not. allocated(fpl_out%transfer_plane) ) allocate(fpl_out%transfer_plane(hlo:hhi,klo:0))
+        else if( allocated(fpl_out%transfer_plane) )then
+            deallocate(fpl_out%transfer_plane)
+        endif
+        ! the phase recurrence of gen_fplane4rec on the stored lattice
+        pshift = real(-dshift * fpl%shconst(1:2), dp)
+        w1   = cmplx(real(cos(real(stride,dp)*pshift(1)), c_float), real(sin(real(stride,dp)*pshift(1)), c_float), kind=c_float_complex)
+        w2   = cmplx(real(cos(real(stride,dp)*pshift(2)), c_float), real(sin(real(stride,dp)*pshift(2)), c_float), kind=c_float_complex)
+        ph0  = cmplx(real(cos(real(hlo*stride,dp)*pshift(1)), c_float), real(sin(real(hlo*stride,dp)*pshift(1)), c_float), kind=c_float_complex)
+        ph_k = cmplx(real(cos(real(klo*stride,dp)*pshift(2)), c_float), real(sin(real(klo*stride,dp)*pshift(2)), c_float), kind=c_float_complex)
+        do k = klo, 0
+            ph_h = ph0
+            do h = hlo, hhi
+                fpl_out%cmplx_plane(h,k) = fpl%cmplx_plane(h,k) * (ph_k * ph_h)
+                if( allocated(fpl%transfer_plane) ) fpl_out%transfer_plane(h,k) = fpl%transfer_plane(h,k) * (ph_k * ph_h)
+                ph_h = ph_h * w1
+            enddo
+            ph_k = ph_k * w2
+        enddo
+    end subroutine fplane_shift
 
     pure function fplane_get_ctfsq( fpl, h, k ) result(v)
         use, intrinsic :: iso_c_binding, only: c_float

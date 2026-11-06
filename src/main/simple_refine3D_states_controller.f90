@@ -59,7 +59,6 @@ type :: refine3D_states_controller
     integer :: total_iter         = 0
     integer :: gui_stage          = 0
     real    :: local_ang_bound    = -1.
-    real    :: local_inpl_bound   = -1.
     real    :: local_shift_bound  = -1.
     logical :: l_maxits_defined   = .false.
     logical :: l_nstates_on_cline = .false.
@@ -132,10 +131,9 @@ contains
                 THROW_HARD(self%label()//' supports pose_policy=local|global')
         end select
         if( cline%defined('local_ang_bound') ) self%local_ang_bound = cline%get_rarg('local_ang_bound')
-        if( cline%defined('local_inpl_bound') ) self%local_inpl_bound = cline%get_rarg('local_inpl_bound')
         if( cline%defined('local_shift_bound') ) self%local_shift_bound = cline%get_rarg('local_shift_bound')
         if( trim(pose_policy_arg%to_char()).ne.'local' .and. &
-            &any([self%local_ang_bound, self%local_inpl_bound, self%local_shift_bound] >= 0.) )then
+            &any([self%local_ang_bound, self%local_shift_bound] >= 0.) )then
             THROW_HARD('local pose-bound overrides require pose_policy=local')
         endif
         if( self%local_ang_bound >= 0. )then
@@ -147,7 +145,6 @@ contains
                     &max(1.e-6, 1. - cos(deg2rad(self%local_ang_bound))))))
             endif
         endif
-        if( self%local_inpl_bound >= 0. ) call cline%set('prob_athres', self%local_inpl_bound)
         if( self%local_shift_bound >= 0. ) call cline%set('trs', self%local_shift_bound)
         call pose_policy_arg%kill
     end subroutine normalize_inputs
@@ -328,7 +325,6 @@ contains
         self%total_iter         = 0
         self%gui_stage          = 0
         self%local_ang_bound    = -1.
-        self%local_inpl_bound   = -1.
         self%local_shift_bound  = -1.
         self%l_maxits_defined   = .false.
         self%l_nstates_on_cline = .false.
@@ -880,9 +876,6 @@ contains
     end subroutine read_update_coverage
 
     subroutine run_missing_update( self, params, cline, xrefine3D, nmissing, nactive )
-        use simple_defs_fname, only: ASSIGNMENT_FBODY, DIST_FBODY
-        use simple_fileio,     only: del_files
-        use simple_syslib,     only: del_file
         class(refine3D_states_controller), intent(in)    :: self
         class(parameters),                 intent(in)    :: params
         class(cmdline),                    intent(inout) :: cline
@@ -914,10 +907,6 @@ contains
         call cline_missing%set('greedy_sampling',   'yes')
         call cline_missing%set('update_missing',    'yes')
         call xrefine3D%execute(cline_missing)
-        call del_files(DIST_FBODY,       params%nparts, ext='.dat')
-        call del_files(ASSIGNMENT_FBODY, params%nparts, ext='.dat')
-        call del_file(DIST_FBODY//'.dat')
-        call del_file(ASSIGNMENT_FBODY//'.dat')
         call cline_missing%kill
     end subroutine run_missing_update
 

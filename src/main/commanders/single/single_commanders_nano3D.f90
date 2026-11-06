@@ -71,20 +71,40 @@ contains
         real,             allocatable :: rstates(:), corrs(:)
         logical,          allocatable :: state_mask(:)
         type(string) :: fbody, fbody_split, fname_recvol, fname_even, fname_odd, fname_simvol
-        type(string) :: fname_atoms, fname_binary, fname_ccs, fname_reprojs, fname_reprojs_sim
-        type(string) :: fname_cvags_vs_reprojs
+        type(string) :: fname_recvol_base, fname_even_base, fname_odd_base, fname_res, fname_atmprior
+        type(string) :: fname_atoms, fname_binary, fname_ccs, fname_reprojs, fname_reprojs_fit
+        type(string) :: fname_fit, fname_resmap, fname_atoms_csv, fname_model_txt, fname_extrema, fname_transfer
+        type(string) :: fname_cvags_vs_reprojs, fname_atoms_iter
         integer      :: i, iter, cnt, cnt2, funit, io_stat, ncavgs
         real         :: smpd
-        logical      :: fall_over
+        logical      :: fall_over, l_atm_stage
         fbody       = refine3D_state_vol_fbody(1)
         fbody_split = get_fbody(SPLITTED, 'mrc')
         fname_recvol = refine3D_state_vol_fname(1)
         fname_even   = refine3D_state_halfvol_fname(1, 'even')
         fname_odd    = refine3D_state_halfvol_fname(1, 'odd')
+        fname_recvol_base = add2fbody(fname_recvol, MRC_EXT, '_base')
+        fname_even_base   = add2fbody(fname_even,   MRC_EXT, '_base')
+        fname_odd_base    = add2fbody(fname_odd,    MRC_EXT, '_base')
+        fname_res         = add2fbody(fname_recvol, MRC_EXT, '_res')
+        fname_atmprior    = fbody//'_atmprior.txt'
         fname_simvol = fbody//'_SIM.mrc'
         fname_atoms  = fbody//'_ATMS.pdb'
         fname_binary = fbody//'_BIN.mrc'
         fname_ccs    = fbody//'_CC.mrc'
+        ! the density model's products of detect_atoms (atomic_density_model.md, section 5)
+        fname_fit       = fbody//'_FIT.mrc'
+        fname_resmap    = fbody//'_RES.mrc'
+        fname_atoms_csv = fbody//'_atoms.csv'
+        fname_model_txt = fbody//'_model.txt'
+        fname_extrema   = fbody//'_resid_extrema.csv'
+        fname_transfer  = fbody//'_transfer.tsv'
+        ! the loop is agnostic to the atomic species: every round's model is the density model of detect_atoms (every
+        ! atom with its own intensity and width, no element), and species are called afterwards on the final model
+        if( cline%defined('element') .or. cline%defined('nspecies') .or. cline%defined('min_nbrs') .or.&
+            &cline%defined('vol_even') .or. cline%defined('vol_odd') )then
+            THROW_HARD('autorefine3D_nano builds species-agnostic models: element, nspecies, min_nbrs, vol_even and vol_odd are not accepted; call the species on the final model with detect_atomic_species')
+        endif
         if(       cline%defined('nparts')         ) call cline%delete('nparts') ! shared-memory workflow
         if( .not. cline%defined('maxits')         ) call cline%set('maxits',          5)
         if( .not. cline%defined('maxits_between') ) call cline%set('maxits_between', 10)
@@ -93,8 +113,13 @@ contains
         call cline%set('objfun', 'cc') ! avoids a missing sigma2_it_10.star file
         if( .not. cline%defined('trail_rec')      ) call cline%set('trail_rec',   'yes') 
         if( .not. cline%defined('ufrac_trec')     ) call cline%set('ufrac_trec',    0.5)
-        call cline%set('mkdir', 'yes') ! because we want to create the directory X_autorefine3D_nano & copy the project file
-        call params%new(cline)         ! because the parameters class manages directory creation and project file copying, mkdir = yes
+        ! by default the directory X_autorefine3D_nano with a copy of the project; a workflow that gives mkdir=no (trajectory_solve3D)
+        ! runs it in its own stage directory on its own copy
+        if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
+        call params%new(cline)         ! the parameters class manages directory creation and project file copying
+        if( params%l_atm_prior )then
+            if( params%maxits < 2 ) THROW_HARD('autorefine3D_nano atm_prior=yes requires maxits of at least 2')
+        endif
         params%mkdir = 'no'            ! to prevent the input vol to be appended with ../
         call cline%set('mkdir', 'no')  ! because we do not want a nested directory structure in the execution directory
         if( cline%defined('mskdiam_detect') ) call cline%delete('mskdiam_detect')
@@ -118,20 +143,27 @@ contains
         call cline_refine3D_nano%set('keepvol',  'yes')
         call cline_refine3D_nano%set('maxits',   params%maxits_between) ! turn maxits_between into maxits (max # iterations between model building)
         call cline_refine3D_nano%delete('maxits_between')
+        if( cline_refine3D_nano%defined('pdbfile') ) call cline_refine3D_nano%delete('pdbfile')
+        call cline_refine3D_nano%set('atm_prior', 'no')
         ! then update cline_detect_atoms accordingly
         call cline_detect_atms%set('prg', 'detect_atoms')
-        call cline_detect_atms%set('vol1', fname_recvol)         ! this is ALWYAS going to be the input volume to detect_atoms
+        call cline_detect_atms%set('mkdir', 'no')
+        call cline_detect_atms%set('vol1', fname_recvol)
+        if( cline_detect_atms%defined('pdbfile') ) call cline_detect_atms%delete('pdbfile')
+        call cline_detect_atms%set('atm_prior', 'no')
         if( params%mskdiam_detect > 0. ) call cline_detect_atms%set('mskdiam', params%mskdiam_detect)
         iter = 0
+        l_atm_stage = .false.
         do i = 1, params%maxits
             ! first refinement pass on the initial volume uses the low-pass limit defined by the user
             call xrefine3D_nano%execute(cline_refine3D_nano)
-            call cline_refine3D_nano%set('vol1', fname_simvol)   ! the reference volume is ALWAYS SIMVOL
             call cline_refine3D_nano%delete('lp')                ! uses the default 1.0 A low-pass limit
             call cline_refine3D_nano%delete('endit')             ! used internally but not technically allowed
             call cline_refine3D_nano%set('prg', 'refine3D_nano') ! because the command line is modified refine3D_nano -> refine3D internally
             ! model building
+            call set_detection_inputs(l_atm_stage)
             call xdetect_atms%execute(cline_detect_atms)
+            call normalize_detection_products(l_atm_stage)
             ! copy critical output
             iter_dir = 'iteration_'//int2str_pad(i,2)//'/'
             call simple_mkdir(iter_dir)
@@ -143,15 +175,29 @@ contains
             call simple_copy_file(fname_binary,      iter_dir//fbody//'_iter'//int2str_pad(i,3)//'_BIN.mrc')
             call simple_copy_file(fname_ccs,         iter_dir//fbody//'_iter'//int2str_pad(i,3)//'_CC.mrc')
             call simple_copy_file(string(SPLITTED), iter_dir//fbody_split//'_iter'//int2str_pad(i,3)//'.mrc')
+            call copy_model_products(iter_dir, i)
+            if( l_atm_stage ) call copy_atomic_prior_products(iter_dir, i)
+            ! Use the saved full fit as the next reference; the working model products are deleted below.
+            ! The atomic prior reads this round's _ATMS.pdb and _atoms.csv.
+            fname_atoms_iter = iter_dir//fbody//'_iter'//int2str_pad(i,3)//'_ATMS.pdb'
+            call cline_refine3D_nano%set('vol1', iter_dir//fbody//'_iter'//int2str_pad(i,3)//'_FIT.mrc')
+            if( params%l_atm_prior .and. i < params%maxits )then
+                call cline_refine3D_nano%set('atm_prior', 'yes')
+                call cline_refine3D_nano%set('pdbfile', fname_atoms_iter)
+                l_atm_stage = .true.
+            endif
             ! clean
             call exec_cmdline(string('rm -f ')//fbody//'_iter*')
             call del_file(fname_atoms)
             call del_file(fname_binary)
             call del_file(fname_ccs)
+            call delete_model_products
             call del_file(SPLITTED)
             iter = iter + 1
         end do
+        call set_detection_inputs(l_atm_stage)
         call xdetect_atms%execute(cline_detect_atms)
+        call normalize_detection_products(l_atm_stage)
         call simple_mkdir(FINAL_MAPS)
         call simple_copy_file(fname_recvol,      string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'.mrc')
         call simple_copy_file(fname_even,        string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'_even.mrc')
@@ -161,6 +207,8 @@ contains
         call simple_copy_file(fname_binary,      string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'_BIN.mrc')
         call simple_copy_file(fname_ccs,         string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'_CC.mrc')
         call simple_copy_file(string(SPLITTED), string(FINAL_MAPS)//fbody_split//'_iter'//int2str_pad(iter,3)//'.mrc')
+        call copy_model_products(string(FINAL_MAPS), iter)
+        if( l_atm_stage ) call copy_atomic_prior_products(string(FINAL_MAPS), iter)
         ! for visualization - generate three-view volume JPEGs
         call spproj%read_segment('out', params%projfile)
         call gen_ortho_reprojs4viz(params, spproj)
@@ -169,11 +217,14 @@ contains
         call del_file(fname_atoms)
         call del_file(fname_binary)
         call del_file(fname_ccs)
+        call delete_model_products
         call del_file(SPLITTED)
         ! Align existing 2D class averages from the project against the final 3D volume.
         call spproj%get_cavgs_stk(cavgs_stk, ncavgs, smpd, fail=.false.)
         if( ncavgs > 0 )then
             cline_refine3D_cavgs = cline_refine3D_nano
+            call cline_refine3D_cavgs%set('atm_prior', 'no')
+            if( cline_refine3D_cavgs%defined('pdbfile') ) call cline_refine3D_cavgs%delete('pdbfile')
             call cline_refine3D_cavgs%set('prg',      'refine3D_nano')
             call cline_refine3D_cavgs%set('vol1',     string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'.mrc')
             call cline_refine3D_cavgs%set('pgrp',     params%pgrp)
@@ -200,8 +251,8 @@ contains
             call cline_reproject%set('pgrp',   params%pgrp)
             call cline_reproject%set('nthr',   params%nthr)
             call xreproject%execute(cline_reproject)
-            call cline_reproject%set('vol1',   string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'_SIM.mrc')
-            call cline_reproject%set('outstk', 'reprojs_SIM.mrc')
+            call cline_reproject%set('vol1',   string(FINAL_MAPS)//fbody//'_iter'//int2str_pad(iter,3)//'_FIT.mrc')
+            call cline_reproject%set('outstk', 'reprojs_FIT.mrc')
             ! re-project
             call xreproject%execute(cline_reproject)
             ! write cavgs & reprojections in triplets
@@ -212,15 +263,15 @@ contains
             cnt  = 0
             cnt2 = 1
             fname_reprojs          = 'reprojs_recvol.mrc'
-            fname_reprojs_sim      = 'reprojs_SIM.mrc'
-            fname_cvags_vs_reprojs = 'cavgs_vs_reprojections_rec_and_sim.mrc'
+            fname_reprojs_fit      = 'reprojs_FIT.mrc'
+            fname_cvags_vs_reprojs = 'cavgs_vs_reprojections_rec_and_fit.mrc'
             do i = 1,3*ncavgs,3
                 cnt = cnt + 1
                 if( rstates(cnt) > 0.5 )then
                     state_mask(cnt) = .true.
                     call imgs(1)%read(cavgs_stk,         cnt)
                     call imgs(2)%read(fname_reprojs,     cnt)
-                    call imgs(3)%read(fname_reprojs_sim, cnt)
+                    call imgs(3)%read(fname_reprojs_fit, cnt)
                     call imgs(1)%norm
                     call imgs(2)%norm
                     call imgs(3)%norm
@@ -265,6 +316,84 @@ contains
         call cavgs_stk%kill
         ! end gracefully
         call simple_end('**** AUTOREFINE3D_NANO NORMAL STOP ****')
+
+      contains
+
+        !> atoms are detected on the prior-free map: after a prior'd stage that is the _base map
+        subroutine set_detection_inputs( from_atomic_stage )
+            logical, intent(in) :: from_atomic_stage
+            if( from_atomic_stage )then
+                call cline_detect_atms%set('vol1', fname_recvol_base)
+            else
+                call cline_detect_atms%set('vol1', fname_recvol)
+            endif
+        end subroutine set_detection_inputs
+
+        subroutine normalize_detection_products( from_atomic_stage )
+            logical, intent(in) :: from_atomic_stage
+            type(string) :: base_stem
+            if( .not. from_atomic_stage ) return
+            base_stem = fbody//'_base'
+            call simple_copy_file(base_stem//'_SIM.mrc', fname_simvol)
+            call simple_copy_file(base_stem//'_ATMS.pdb', fname_atoms)
+            call simple_copy_file(base_stem//'_BIN.mrc', fname_binary)
+            call simple_copy_file(base_stem//'_CC.mrc', fname_ccs)
+            call simple_copy_file(base_stem//'_FIT.mrc',           fname_fit)
+            call simple_copy_file(base_stem//'_RES.mrc',           fname_resmap)
+            call simple_copy_file(base_stem//'_atoms.csv',         fname_atoms_csv)
+            call simple_copy_file(base_stem//'_model.txt',         fname_model_txt)
+            call simple_copy_file(base_stem//'_resid_extrema.csv', fname_extrema)
+            call simple_copy_file(base_stem//'_transfer.tsv',      fname_transfer)
+            call del_file(base_stem//'_SIM.mrc')
+            call del_file(base_stem//'_ATMS.pdb')
+            call del_file(base_stem//'_BIN.mrc')
+            call del_file(base_stem//'_CC.mrc')
+            call del_file(base_stem//'_FIT.mrc')
+            call del_file(base_stem//'_RES.mrc')
+            call del_file(base_stem//'_atoms.csv')
+            call del_file(base_stem//'_model.txt')
+            call del_file(base_stem//'_resid_extrema.csv')
+            call del_file(base_stem//'_transfer.tsv')
+            call base_stem%kill
+        end subroutine normalize_detection_products
+
+        subroutine copy_atomic_prior_products( destination, iteration )
+            type(string), intent(in) :: destination
+            integer,      intent(in) :: iteration
+            type(string) :: stem
+            stem = destination//fbody//'_iter'//int2str_pad(iteration,3)
+            call simple_copy_file(fname_recvol_base, stem//'_base.mrc')
+            call simple_copy_file(fname_even_base,   stem//'_even_base.mrc')
+            call simple_copy_file(fname_odd_base,    stem//'_odd_base.mrc')
+            call simple_copy_file(fname_res,         stem//'_res.mrc')
+            call simple_copy_file(fname_atmprior,    stem//'_atmprior.txt')
+            call stem%kill
+        end subroutine copy_atomic_prior_products
+
+        !> the density model's products beside _ATMS.pdb and _SIM.mrc (atomic_density_model.md, section 5)
+        subroutine copy_model_products( destination, iteration )
+            type(string), intent(in) :: destination
+            integer,      intent(in) :: iteration
+            type(string) :: stem
+            stem = destination//fbody//'_iter'//int2str_pad(iteration,3)
+            call simple_copy_file(fname_fit,       stem//'_FIT.mrc')
+            call simple_copy_file(fname_resmap,    stem//'_RES.mrc')
+            call simple_copy_file(fname_atoms_csv, stem//'_atoms.csv')
+            call simple_copy_file(fname_model_txt, stem//'_model.txt')
+            call simple_copy_file(fname_extrema,   stem//'_resid_extrema.csv')
+            call simple_copy_file(fname_transfer,  stem//'_transfer.tsv')
+            call stem%kill
+        end subroutine copy_model_products
+
+        subroutine delete_model_products
+            call del_file(fname_fit)
+            call del_file(fname_resmap)
+            call del_file(fname_atoms_csv)
+            call del_file(fname_model_txt)
+            call del_file(fname_extrema)
+            call del_file(fname_transfer)
+        end subroutine delete_model_products
+
     end subroutine exec_autorefine3D_nano
 
     subroutine exec_refine3D_nano( self, cline )
@@ -289,8 +418,6 @@ contains
         if( .not. cline%defined('trs')            ) call cline%set('trs',             5.0)
         call cline%set('objfun', 'cc') ! best objfun for this kind of data
         call cline%set('ml_reg', 'no') ! ml_reg=yes -> too few atoms
-        if( .not. cline%defined('icm')            ) call cline%set('icm',           'yes') ! ICM regualrization works 
-        if( .not. cline%defined('lambda')         ) call cline%set('lambda',          0.1) ! this is an empirically determined regularization parameter
         call xrefine3D%execute(cline)
     end subroutine exec_refine3D_nano
 

@@ -4,7 +4,6 @@ use simple_commanders_api
 use simple_solve3D_utils
 use simple_final_rec,                              only: calc_final_rec, calc_final_rec_addon
 use simple_external_reference_pose_initialization, only: initialize_poses_against_external_references
-use simple_procimgstk,                             only: shift_imgfile
 use simple_commanders_project_core,                only: commander_selection
 use simple_commanders_reproject,                   only: commander_reproject
 use simple_commanders_refine3D,                    only: commander_refine3D, commander_bootstrap_rec3D
@@ -78,7 +77,7 @@ contains
         type(commander_bootstrap_rec3D) :: xbootstrap_rec3D
         type(commander_reproject) :: xreproject
         ! other
-        type(string)              :: stk, orig_stk, shifted_stk, stk_even, stk_odd, ext
+        type(string)              :: stk, orig_stk, stk_even, stk_odd, ext
         integer, allocatable      :: states(:)
         type(ori)                 :: o, o_even, o_odd
         type(parameters)          :: params
@@ -197,7 +196,6 @@ contains
         if( .not. file_exists(stk_odd)  ) THROW_HARD('Odd cavgs stk: '//stk_odd%to_char()//' does not exist!')
         ctfvars%ctfflag = CTFFLAG_NO
         ctfvars%smpd    = params%smpd
-        shifted_stk     = basename(add2fbody(stk, ext, '_shifted'))
         if( count(states==0) .eq. ncavgs )then
             THROW_HARD('no class averages detected in project file: '//params%projfile%to_char()//'; solve3D_cavgs')
         endif
@@ -249,6 +247,17 @@ contains
         call rndstart(cline_refine3D)
         l_reseeded = .false.
         do istage = 1, nstages_ini3D
+            ! Omit the stage when the halves already agree past its planned limit, as the particle
+            ! route does (2026-10-26): never the first or last stage, nor the axis-search stage, nor
+            ! any stage of a multi-state run; the res05 the stages write is the work project's
+            if( istage > 1 .and. istage < nstages_ini3D .and. &
+                &.not.( l_srch4symaxis .and. istage == solve3D_symsrch_stage(.true.) ) )then
+                if( solve3D_stage_behind_fsc05(params, istage, projfile=work_projfile) )then
+                    write(logfhandle,'(A,I3,A,F5.1,A)')'>>> SOLVE3D OMITTING STAGE ', istage, &
+                        &': PLANNED LP ', lpinfo(istage)%lp, ' A ALREADY REACHED AT FSC=0.5'
+                    cycle
+                endif
+            endif
             write(logfhandle,'(A)')'>>>'
             write(logfhandle,'(A,I3,A,F5.1,A)')'>>> STAGE ', istage,' WITH LP ', lpinfo(istage)%lp, ' A'
             ! Preparation of command line for probabilistic search
@@ -388,10 +397,6 @@ contains
             call stkio_r%close
             call stkio_r2%close
             call stkio_w%close
-            ! produce shifted stack
-            call shift_imgfile(orig_stk, shifted_stk, spproj%os_cls3D, cavg_smpd)
-            ! add shifted stack to project
-            call spproj%add_cavgs2os_out(simple_abspath(shifted_stk), cavg_smpd, 'cavg_shifted')
         endif
         ! write results (this needs to be a full write as multiple segments are updated)
         call spproj%write()
@@ -963,10 +968,6 @@ contains
         l_force_full_sampling = .false.
         sampled_active_frac   = 0.
         l_state_continue_mode = .false.
-        ! Particle caching is a 2D-only feature; reject rather than silently ignore
-        if( cline%defined('cache') .or. cline%defined('cache_dir') )then
-            THROW_HARD('cache=yes (downscaled particle cache) is not supported for 3D workflows')
-        endif
         call cline%set('objfun',    'euclid') ! use noise normalized Euclidean distances from the start
         call cline%set('bfac',            0.) ! because de novo maps should not be sharpened
         if( .not. cline%defined('mkdir')       ) call cline%set('mkdir',                    'yes')
@@ -978,16 +979,11 @@ contains
         if( .not. cline%defined('pgrp')        ) call cline%set('pgrp',                      'c1')
         if( .not. cline%defined('pgrp_start')  ) call cline%set('pgrp_start',                'c1')
         if( .not. cline%defined('filt_mode')   ) call cline%set('filt_mode',         'nonuniform')
-        ! the pcg-backend automasking veto must be read BEFORE the default
-        ! below is injected into the cline; after injection every run looks
-        ! like an explicit automsk=no and the stage policy can never engage
-        l_automsk_off = (cline%defined('automsk') .and. cline%get_carg('automsk') .eq. 'no')
-        if( .not. cline%defined('automsk')     ) call cline%set('automsk',                   'no')
+        call cline%set('automsk', 'no') ! spherical support throughout solve3D
         if( .not. cline%defined('gauref')      ) call cline%set('gauref',                   'yes')
         ! balance defaults once the project is read (set_balance_default):
-        ! cavg with a 2D solution (class with input volumes, which bring random
-        ! classes and no class averages to group), none without one
-        if( .not. cline%defined('envfsc')      ) call cline%set('envfsc',                    'no')
+        ! class with a 2D solution (input volumes bring random classes), none without one
+        call cline%set('envfsc', 'no')
         if( .not. cline%defined('envmsklp')    ) call cline%set('envmsklp',      ENVMSKLP_DEFAULT)
         if( cline%defined('nsample_start') .or. cline%defined('nsample_stop') )then
             THROW_HARD('solve3D does not take nsample_start/nsample_stop; set nsample instead')
@@ -1002,6 +998,12 @@ contains
             ! Stop independent multi-state starts after the first prob_neigh stage, before NU, by default.
             if( .not. l_user_nstages ) call cline%set('nstages', solve3D_independent_nstages_default())
             if( .not. l_user_lpstop  ) call cline%set('lpstop',  solve3D_independent_lpstop_default())
+        endif
+        if( cline%defined('gold_standard') )then
+            if( cline%get_carg('gold_standard') == 'yes' )then
+                if( nstates_on_cline /= 1 ) THROW_HARD('gold_standard=yes requires nstates=1')
+                if( cline%defined('lp') ) THROW_HARD('gold_standard=yes selects an adaptive matching band; use lpstop instead of lp')
+            endif
         endif
         ! make master parameters
         call params%new(cline)
@@ -1155,11 +1157,6 @@ contains
         ! particles no earlier stage updated): it gets the final reconstruction
         ! and its run manifest, so it can be the frozen input of solve3D_addon
         if( cline%defined('nstages') .and. nstages_refine3D >= solve3D_symsrch_stage(l_srch4symaxis) ) l_run_final_rec = .true.
-        ! automasking is per state (state-specific masks), single or multi-state alike
-        l_automsk     = (cline%defined('automsk') .and. trim(params%automsk).ne.'no')
-        ! l_automsk_off (the EXPLICIT automsk=no veto of the pcg-backend
-        ! automasking default) is set where the workflow defaults are
-        ! injected, BEFORE automsk=no lands on the cline as a default
         ! prepare class command lines
         call prep_class_command_lines(params, cline, params%projfile)
         ! fall over if there are no particles
@@ -1382,7 +1379,7 @@ contains
                     write(logfhandle,'(A,I3,A,F5.1,A)')'>>> STAGE ', istage,' WITH LP ', cline_refine3D%get_rarg('lp'), ' A'
                 endif
             else
-                write(logfhandle,'(A,I3,A)')'>>> STAGE ', istage,' WITH NU-SELECTED MATCHING LP'
+                write(logfhandle,'(A,I3,A)')'>>> STAGE ', istage,' WITH HALF-SPECIFIC REFERENCES AND ADAPTIVE MATCHING LP'
             endif
             if( cline_refine3D%get_iarg('box_crop') < params%box )then
                 write(logfhandle,'(A,I3,A1,I3)')'>>> ORIGINAL/CROPPED IMAGE SIZE (pixels): ',params%box,'/',&
@@ -1410,7 +1407,7 @@ contains
         enddo
         if( L_BENCH_GLOB ) t_phase = tic()
         if( l_run_final_rec )then
-            if( params%nstates > 1 ) call ensure_multistate_particle_assignments
+            call ensure_all_particle_assignments
             ! the shared ending: final all-particle reconstruction at original
             ! sampling, project registration, final products and reprojections;
             ! solve3D_addon reconstructs incrementally from its own particles and
@@ -2174,10 +2171,8 @@ contains
             if( cline%defined('balance') ) return
             if( l_no2D )then
                 params%balance = 'none'
-            else if( cline%defined('vol1') )then
-                params%balance = 'class'
             else
-                params%balance = 'cavg'
+                params%balance = 'class'
             endif
             call cline%set('balance', trim(params%balance))
         end subroutine set_balance_default
@@ -2215,47 +2210,54 @@ contains
             if( nactive < 1 ) THROW_HARD('No active particles selected in ptcl2D for solve3D')
         end subroutine reset_ptcl3D_from_ptcl2D_selection
 
-        subroutine ensure_multistate_particle_assignments
+        !> every active particle carries a pose (and a label) before the final reconstruction, which leaves out
+        !! the rows no stage updated: a greedy pass against the last references assigns the rows the stages missed
+        subroutine ensure_all_particle_assignments
             integer :: nactive, nupdated, nmissing
-            call read_multistate_update_coverage(nactive, nupdated, nmissing)
+            call read_update_coverage(nactive, nupdated, nmissing)
             if( nactive < 1 )then
-                THROW_HARD('multistate solve3D has no active particles after staged refinement')
+                THROW_HARD('solve3D has no active particles after staged refinement')
             endif
             if( nmissing > 0 )then
-                call run_multistate_missing_update(nmissing, nactive)
-                call read_multistate_update_coverage(nactive, nupdated, nmissing)
+                call run_missing_update(nmissing, nactive)
+                call read_update_coverage(nactive, nupdated, nmissing)
                 if( nmissing > 0 )then
-                    THROW_HARD('multistate solve3D final missing-update pass failed to update every active particle')
+                    THROW_HARD('solve3D final missing-update pass failed to update every active particle')
                 endif
             endif
-        end subroutine ensure_multistate_particle_assignments
+        end subroutine ensure_all_particle_assignments
 
-        subroutine read_multistate_update_coverage( nactive, nupdated, nmissing )
+        subroutine read_update_coverage( nactive, nupdated, nmissing )
             integer, intent(out) :: nactive, nupdated, nmissing
             integer, allocatable :: states(:), updatecnts(:)
             call spproj%read_segment('ptcl3D', params%projfile)
-            if( .not. spproj%os_ptcl3D%isthere('updatecnt') )then
-                THROW_HARD('multistate solve3D requires post-label particle assignments before final reconstruction')
+            states  = spproj%os_ptcl3D%get_all_asint('state')
+            nactive = count(states > 0)
+            if( spproj%os_ptcl3D%isthere('updatecnt') )then
+                updatecnts = spproj%os_ptcl3D%get_all_asint('updatecnt')
+                nupdated   = count(states > 0 .and. updatecnts > 0)
+            else
+                if( params%nstates > 1 ) &
+                    &THROW_HARD('multistate solve3D requires post-label particle assignments before final reconstruction')
+                nupdated = 0
             endif
-            states     = spproj%os_ptcl3D%get_all_asint('state')
-            updatecnts = spproj%os_ptcl3D%get_all_asint('updatecnt')
-            nactive    = count(states > 0)
-            nupdated   = count(states > 0 .and. updatecnts > 0)
-            nmissing   = nactive - nupdated
+            nmissing = nactive - nupdated
+            ! single state without any update: the final reconstruction takes every active row (sample4rec)
+            if( params%nstates == 1 .and. nupdated == 0 ) nmissing = 0
             write(logfhandle,'(A,I0,A,I0,A,I0,A,I0)') &
-                &'>>> SOLVE3D MULTISTATE ASSIGNMENT COVERAGE NSTATES=', params%nstates, &
+                &'>>> SOLVE3D ASSIGNMENT COVERAGE NSTATES=', params%nstates, &
                 &' UPDATED/ACTIVE/MISSING: ', nupdated, '/', nactive, '/', nmissing
             if( allocated(states)     ) deallocate(states)
             if( allocated(updatecnts) ) deallocate(updatecnts)
-        end subroutine read_multistate_update_coverage
+        end subroutine read_update_coverage
 
-        subroutine run_multistate_missing_update( nmissing, nactive )
+        subroutine run_missing_update( nmissing, nactive )
             integer, intent(in) :: nmissing, nactive
             type(cmdline) :: cline_missing
             integer       :: iter_missing
             iter_missing = next_refine3D_iteration()
             write(logfhandle,'(A,I0,A,I0,A,I0,A,I0)') &
-                &'>>> SOLVE3D MULTISTATE FINAL MISSING-UPDATE GREEDY ASSIGNMENT NSTATES=', params%nstates, &
+                &'>>> SOLVE3D FINAL MISSING-UPDATE GREEDY ASSIGNMENT NSTATES=', params%nstates, &
                 &' MISSING/ACTIVE/ITER: ', nmissing, '/', nactive, '/', iter_missing
             call flush(logfhandle)
             cline_missing = cline_refine3D
@@ -2276,12 +2278,8 @@ contains
             call cline_missing%set('extr_iter',     iter_missing)
             call cline_missing%delete('endit')
             call xrefine3D%execute(cline_missing)
-            call del_files(DIST_FBODY,      params%nparts, ext='.dat')
-            call del_files(ASSIGNMENT_FBODY,params%nparts, ext='.dat')
-            call del_file(DIST_FBODY//'.dat')
-            call del_file(ASSIGNMENT_FBODY//'.dat')
             call cline_missing%kill
-        end subroutine run_multistate_missing_update
+        end subroutine run_missing_update
 
         integer function next_refine3D_iteration() result(iter)
             iter = 1

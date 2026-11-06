@@ -9,15 +9,20 @@ contains
     ! Constructors / lifecycle
     !========================================
 
-    module subroutine new( self, ldim, smpd, wthreads, fft_nthreads )
+    !> fft_measure: plans by measurement (FFTW_MEASURE under FFTW_MEASURE_TIME_LIMIT) instead of the
+    !! estimate heuristic; for large, repeated transforms. The trial transforms clobber the buffer,
+    !! which is zeroed again after planning, and the plan's wisdom serves every later plan of the
+    !! same problem (size, threads, alignment) in this process
+    module subroutine new( self, ldim, smpd, wthreads, fft_nthreads, fft_measure )
         class(image),      intent(inout) :: self
         integer,           intent(in)    :: ldim(3)
         real,              intent(in)    :: smpd
         logical, optional, intent(in)    :: wthreads
         integer, optional, intent(in)    :: fft_nthreads
-        integer(kind=c_int) :: rc
+        logical, optional, intent(in)    :: fft_measure
+        integer(kind=c_int) :: rc, planner_flags
         integer             :: i, plan_nthreads
-        logical             :: do_allocate
+        logical             :: do_allocate, l_measure
         ! we need to be clever about allocation (because it is costly)
         if( self%existence )then
             if( any(self%ldim /= ldim) )then
@@ -35,6 +40,10 @@ contains
         endif
         plan_nthreads = nthr_glob
         if( present(fft_nthreads) ) plan_nthreads = max(1, fft_nthreads)
+        l_measure = .false.
+        if( present(fft_measure) ) l_measure = fft_measure
+        planner_flags = FFTW_ESTIMATE
+        if( l_measure ) planner_flags = FFTW_MEASURE
         self%wthreads = .true.
         if( present(wthreads) ) self%wthreads = wthreads
         self%wthreads = self%wthreads .and. plan_nthreads > 1
@@ -67,29 +76,30 @@ contains
             rc = fftwf_init_threads()
             call fftwf_plan_with_nthreads(plan_nthreads)
         endif
+        if( l_measure ) call fftwf_set_timelimit(FFTW_MEASURE_TIME_LIMIT)
         if(self%ldim(3) > 1)then
-            self%plan_fwd = fftwf_plan_dft_r2c_3d(self%ldim(3), self%ldim(2), self%ldim(1), self%rmat, self%cmat, FFTW_ESTIMATE)
-            self%plan_bwd = fftwf_plan_dft_c2r_3d(self%ldim(3), self%ldim(2), self%ldim(1), self%cmat, self%rmat, FFTW_ESTIMATE)
+            self%plan_fwd = fftwf_plan_dft_r2c_3d(self%ldim(3), self%ldim(2), self%ldim(1), self%rmat, self%cmat, planner_flags)
+            self%plan_bwd = fftwf_plan_dft_c2r_3d(self%ldim(3), self%ldim(2), self%ldim(1), self%cmat, self%rmat, planner_flags)
         else
-            self%plan_fwd = fftwf_plan_dft_r2c_2d(self%ldim(2), self%ldim(1), self%rmat, self%cmat, FFTW_ESTIMATE)
-            self%plan_bwd = fftwf_plan_dft_c2r_2d(self%ldim(2), self%ldim(1), self%cmat, self%rmat, FFTW_ESTIMATE)
+            self%plan_fwd = fftwf_plan_dft_r2c_2d(self%ldim(2), self%ldim(1), self%rmat, self%cmat, planner_flags)
+            self%plan_bwd = fftwf_plan_dft_c2r_2d(self%ldim(2), self%ldim(1), self%cmat, self%rmat, planner_flags)
         endif
+        if( l_measure ) call fftwf_set_timelimit(FFTW_NO_TIME_LIMIT)
         if( self%wthreads .and. (any(ldim >= 200) .or. ldim(3) >= 100) )then
             ! disable threads for subsequent plans
             call fftwf_plan_with_nthreads(1)
         endif
         !$omp end critical
+        ! a measured plan ran trial transforms on the buffer
+        if( l_measure ) self%rmat = 0.
         ! set shift constant (shconst)
         do i=1,3
             if( self%ldim(i) == 1 )then
                 self%shconst(i) = 0.
                 cycle
             endif
-            if( is_even(self%ldim(i)) )then
-                self%shconst(i) = PI/real(self%ldim(i)/2.)
-            else
-                self%shconst(i) = PI/real((self%ldim(i)-1)/2.)
-            endif
+            ! 2 pi/n, an odd box included (the same bits as pi/(n/2) for an even one)
+            self%shconst(i) = PI/(real(self%ldim(i))/2.)
         end do
         self%existence = .true.
     end subroutine new
@@ -145,7 +155,7 @@ contains
     module subroutine copy( self, self_in )
         class(image), intent(inout) :: self
         class(image), intent(in)    :: self_in
-        call self%new(self_in%ldim, self_in%smpd, self%wthreads)
+        call self%new(self_in%ldim, self_in%smpd, wthreads=self_in%wthreads)
         self%rmat = self_in%rmat
         self%ft   = self_in%ft
     end subroutine copy
@@ -167,7 +177,7 @@ contains
     ! Shape / generator helpers
     !========================================
 
-    module subroutine disc_1( self, ldim, smpd, radius, npix )
+    module subroutine disc_img( self, ldim, smpd, radius, npix )
         class(image),      intent(inout) :: self
         integer,           intent(in)    :: ldim(3)
         real,              intent(in)    :: smpd, radius
@@ -182,9 +192,9 @@ contains
             self%rmat(:ldim(1),:ldim(2),:ldim(3)) = 0.
         end where
         if( present(npix) ) npix = count(self%rmat(:ldim(1),:ldim(2),:ldim(3)) > 0.5)
-    end subroutine disc_1
+    end subroutine disc_img
 
-    module subroutine disc_2( self, ldim, smpd, radius, lmsk, npix )
+    module subroutine disc_lmsk( self, ldim, smpd, radius, lmsk, npix )
         class(image),         intent(inout) :: self
         integer,              intent(in)    :: ldim(3)
         real,                 intent(in)    :: smpd, radius
@@ -202,7 +212,7 @@ contains
             lmsk = .false.
         end where
         if( present(npix) ) npix = count(lmsk)
-    end subroutine disc_2
+    end subroutine disc_lmsk
 
     module subroutine ring( self, ldim, smpd, outer_radius, inner_radius, npix )
         class(image),      intent(inout) :: self

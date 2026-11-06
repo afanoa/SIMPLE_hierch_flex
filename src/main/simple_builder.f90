@@ -46,6 +46,8 @@ type :: builder
     real,                   allocatable :: fsc(:,:)               !< Fourier Shell Correlation
     real,                   allocatable :: inpl_rots(:)           !< in-plane rotations
     logical,                allocatable :: lmsk(:,:,:)            !< logical circular 2D mask
+    logical,                allocatable :: lmsk_box(:,:,:)        !< the box's (shift_sigma > 0: a particle on the disk)
+    integer,                allocatable :: obs_mask(:)            !< per particle, the mask its preparation in this process normalised it under (-1 none, 0 lmsk, 1 lmsk_box)
     logical,                allocatable :: lmsk_crop(:,:,:)       !< logical circular 2D mask for cropped image
 
     ! PRIVATE EXISTENCE VARIABLES
@@ -62,12 +64,15 @@ type :: builder
     ! LOW-LEVEL BUILDERS
     procedure                           :: build_spproj
     procedure                           :: build_general_tbox
+    procedure                           :: build_eulspace
     procedure                           :: new_vols
     procedure                           :: kill_general_tbox
     procedure                           :: build_strategy3D_tbox
     procedure                           :: kill_strategy3D_tbox
     procedure                           :: build_strategy2D_tbox
     procedure                           :: kill_strategy2D_tbox
+    procedure                           :: note_obs_mask
+    procedure                           :: obs_on_box
 end type builder
 
 contains
@@ -264,8 +269,7 @@ contains
         if( ddo3d )then
             select case(trim(params%refine))
                 case DEFAULT
-                    call self%eulspace%new(params%nspace, is_ptcl=.false.)
-                    call self%pgrpsyms%build_refspiral(self%eulspace)
+                    call self%build_eulspace(params)
                     if( params%l_neigh .and. (.not. l_direct_prob_neigh) )then
                         call eulspace_sub%new(params%nspace_sub, is_ptcl=.false.)
                         call self%pgrpsyms%build_refspiral(eulspace_sub)
@@ -289,6 +293,13 @@ contains
             call self%img_pad%new([params%boxpd,params%boxpd,1],params%smpd)
             ! generate logical circular 2D mask
             call mskimg%disc([params%box,params%box,1], params%smpd, params%msk, self%lmsk)
+            if( params%l_shift_map )then
+                call mskimg%disc([params%box,params%box,1], params%smpd, params%msk_box, self%lmsk_box)
+                if( associated(self%spproj_field) )then
+                    if( allocated(self%obs_mask) ) deallocate(self%obs_mask)
+                    allocate(self%obs_mask(self%spproj_field%get_noris()), source=-1)
+                endif
+            endif
             call mskimg%kill
             ! mask memoization
             call self%img%memoize_mask_coords
@@ -312,6 +323,17 @@ contains
         self%general_tbox_exists = .true.
         if( L_VERBOSE_GLOB ) write(logfhandle,'(A)') '>>> DONE BUILDING GENERAL TOOLBOX'
     end subroutine build_general_tbox
+
+    !> the discrete projection direction space: nspace directions, the point group's spiral; the general toolbox
+    !! builds it with its 3D part, and the probabilistic alignment's masters, which build the toolbox without 3D,
+    !! build it on their own since the weighted insertion measures its candidates' poses in it
+    subroutine build_eulspace( self, params )
+        class(builder),    intent(inout) :: self
+        class(parameters), intent(in)    :: params
+        if( self%pgrpsyms%get_nsym() < 1 ) THROW_HARD('the point group is not built; build_eulspace')
+        call self%eulspace%new(params%nspace, is_ptcl=.false.)
+        call self%pgrpsyms%build_refspiral(self%eulspace)
+    end subroutine build_eulspace
 
     !> the general toolbox's volumes at box_crop, made again after a reprojection model's clean-up released them
     subroutine new_vols( self, params )
@@ -349,6 +371,8 @@ contains
             if( allocated(self%subspace_full2sub_map) ) deallocate(self%subspace_full2sub_map)
             if( allocated(self%fsc)                   ) deallocate(self%fsc)
             if( allocated(self%lmsk)                  ) deallocate(self%lmsk)
+            if( allocated(self%lmsk_box)              ) deallocate(self%lmsk_box)
+            if( allocated(self%obs_mask)              ) deallocate(self%obs_mask)
             if( allocated(self%lmsk_crop)             ) deallocate(self%lmsk_crop)
             self%general_tbox_exists = .false.
         endif
@@ -407,5 +431,28 @@ contains
             self%strategy3D_tbox_exists = .false.
         endif
     end subroutine kill_strategy3D_tbox
+
+    !> The mask particle iptcl's preparation normalised it under (the box's for a particle on the disk), so the
+    !! reconstructions and the class sums of this process re-prepare it the same way whether or not its record is
+    !! kept; distinct particles from parallel threads
+    subroutine note_obs_mask( self, iptcl, l_box )
+        class(builder), intent(inout) :: self
+        integer,        intent(in)    :: iptcl
+        logical,        intent(in)    :: l_box
+        if( .not. allocated(self%obs_mask) ) return
+        if( iptcl < 1 .or. iptcl > size(self%obs_mask) ) return
+        self%obs_mask(iptcl) = merge(1, 0, l_box)
+    end subroutine note_obs_mask
+
+    !> whether particle iptcl's observation is normalised under the box's mask: its preparation's choice in this
+    !! process (note_obs_mask), the ordinary mask without one
+    pure logical function obs_on_box( self, iptcl )
+        class(builder), intent(in) :: self
+        integer,        intent(in) :: iptcl
+        obs_on_box = .false.
+        if( .not. allocated(self%obs_mask) ) return
+        if( iptcl < 1 .or. iptcl > size(self%obs_mask) ) return
+        obs_on_box = self%obs_mask(iptcl) == 1
+    end function obs_on_box
 
 end module simple_builder

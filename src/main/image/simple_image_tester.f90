@@ -15,9 +15,19 @@ use simple_syslib,       only: del_file
 use simple_image,        only: image, unmemoize_mask_coords
 use simple_projector,    only: projector
 use simple_ori,          only: ori
+use simple_forked_process, only: forked_process, FORK_STATUS_FAILED
+use simple_cmdline,      only: cmdline
 implicit none
 private
 public :: run_all_image_tests
+
+!> a CTF application to an image of another box (what=1) or sampling (what=2) than the memoised Fourier maps,
+!! which must stop
+type, extends(forked_process) :: ctf_box_mismatch
+    integer :: what = 1
+contains
+    procedure :: execute => apply_ctf_other_box
+end type ctf_box_mismatch
 
 integer, parameter :: BOX  = 64
 real,    parameter :: SMPD = 1.0
@@ -37,10 +47,13 @@ contains
     subroutine run_all_image_tests()
         write(*,'(A)') '**** running all image tests ****'
         call test_construct_and_access()
+        call test_copy_and_inplace_threading()
         call test_checkups_and_stats()
         call test_fft_roundtrip_and_nyquist()
         call test_bandpass()
         call test_apply_filter()
+        call test_dose_weighing_modes()
+        call test_frame_bfactor_weights()
         call test_power_spectrum()
         call test_shifts()
         call test_flip()
@@ -48,6 +61,7 @@ contains
         call test_rotations_and_roavg()
         call test_masscen()
         call test_corr()
+        call test_win2arr_rad()
         call test_file_roundtrip()
         call test_file_roundtrip_sizes()
         call test_fproject()
@@ -59,6 +73,8 @@ contains
         call test_padding_after_pad_and_collage()
         call test_rmat_ptr_is_box()
         call test_plane_storage_reuse()
+        call test_odd_box_shift_constant()
+        call test_ctf_maps_box_check()
     end subroutine run_all_image_tests
 
     subroutine test_plane_storage_reuse()
@@ -195,6 +211,73 @@ contains
         end subroutine same_plane
     end subroutine test_plane_storage_reuse
 
+    !> the shift constant is 2 pi/n for an odd dimension too: a shift by the box length is the identity
+    subroutine test_odd_box_shift_constant()
+        type(image) :: img
+        real        :: shc(3)
+        complex     :: ph
+        integer     :: h
+        logical     :: l_identity
+        write(*,'(A)') 'test_odd_box_shift_constant'
+        call img%new([65,64,1], SMPD, wthreads=.false.)
+        shc = img%get_shconst()
+        call assert_real(TWOPI/65., shc(1), 1.e-7, 'the shift constant of an odd dimension is 2 pi/n')
+        call assert_real(TWOPI/64., shc(2), 1.e-7, 'the shift constant of an even dimension is 2 pi/n')
+        l_identity = .true.
+        do h = 1, 32
+            ph = img%oshift([real(h),0.,0.], [65.,0.,0.])
+            if( abs(ph - cmplx(1.,0.)) > 1.e-3 ) l_identity = .false.
+        end do
+        call assert_true(l_identity, 'a shift by the box length is the identity on an odd box')
+        call img%kill
+    end subroutine test_odd_box_shift_constant
+
+    !> apply_ctf reads Fourier maps memoised for the image's box: another box stops (in a child)
+    subroutine test_ctf_maps_box_check()
+        use simple_memoize_ft_maps, only: memoize_ft_maps, forget_ft_maps
+        type(ctf_box_mismatch) :: child
+        write(*,'(A)') 'test_ctf_maps_box_check'
+        call memoize_ft_maps([BOX,BOX,1], SMPD)
+        call child%start(name=string('CTF_BOX_MISMATCH'))
+        call child%await_final_status()
+        call assert_int(FORK_STATUS_FAILED, child%status(), 'apply_ctf on another box than the memoised maps stops')
+        call assert_int(1, child%get_exit_code(), 'apply_ctf stops by its check')
+        call child%destroy
+        child%what = 2
+        call child%start(name=string('CTF_SMPD_MISMATCH'))
+        call child%await_final_status()
+        call assert_int(FORK_STATUS_FAILED, child%status(), 'apply_ctf at another sampling than the memoised maps stops')
+        call assert_int(1, child%get_exit_code(), 'apply_ctf stops by its sampling check')
+        call child%destroy
+        call forget_ft_maps
+    end subroutine test_ctf_maps_box_check
+
+    subroutine apply_ctf_other_box( self, cline )
+        use simple_ctf,       only: ctf
+        use simple_type_defs, only: ctfparams
+        class(ctf_box_mismatch), intent(inout) :: self
+        class(cmdline),          intent(inout) :: cline
+        type(image)     :: img
+        type(ctf)       :: tfun
+        type(ctfparams) :: ctfparms
+        if( self%what == 1 )then
+            call img%new([BOX+32,BOX+32,1], SMPD, wthreads=.false.)
+        else
+            call img%new([BOX,BOX,1], 2.*SMPD, wthreads=.false.)
+        endif
+        call img%zero_and_flag_ft
+        tfun = ctf(SMPD, 300., 2.7, 0.1)
+        ctfparms%smpd    = SMPD
+        ctfparms%kv      = 300.
+        ctfparms%cs      = 2.7
+        ctfparms%fraca   = 0.1
+        ctfparms%dfx     = 2.
+        ctfparms%dfy     = 2.
+        ctfparms%angast  = 0.
+        ctfparms%phshift = 0.
+        call img%apply_ctf(tfun, 'ctf', ctfparms)
+    end subroutine apply_ctf_other_box
+
     !---------------- construction and access ----------------
 
     subroutine test_construct_and_access()
@@ -235,6 +318,95 @@ contains
         call assert_false(img%exists(), 'a killed 2D image does not exist')
         call assert_false(vol%exists(), 'a killed 3D image does not exist')
     end subroutine test_construct_and_access
+
+    ! Copying clones the source policy; fast copies and in-place replacements keep the receiver policy.
+    subroutine test_copy_and_inplace_threading()
+        integer, parameter :: COPY_DIMS(3) = [8,6,1]
+        logical, parameter :: THREAD_MODES(2) = [.false., .true.]
+        type(image) :: threaded, serial, dest, assigned, padded, filtered, upsampled
+        real,    allocatable :: input(:,:,:), output(:,:,:)
+        complex, allocatable :: source_ft(:,:,:), dest_ft(:,:,:)
+        integer :: i, imode, nthr_saved
+        write(*,'(A)') 'test_copy_and_inplace_threading'
+        nthr_saved = nthr_glob
+        nthr_glob  = 2
+        input = reshape([(real(i), i=1,product(COPY_DIMS))], COPY_DIMS)
+        call threaded%new(COPY_DIMS, SMPD, wthreads=.true.)
+        call threaded%set_rmat(input, .false.)
+        call serial%new(COPY_DIMS, SMPD, wthreads=.false.)
+        call serial%set_rmat(input + 100., .false.)
+
+        call dest%new(COPY_DIMS, SMPD, wthreads=.false.)
+        call dest%copy(threaded)
+        call assert_true(dest%is_wthreads(), 'copy inherits a threaded source policy')
+        call assert_true(all(dest%get_rmat() == input), 'copy clones real-space data from a threaded source')
+        call dest%new(COPY_DIMS, SMPD, wthreads=.true.)
+        call dest%copy(serial)
+        call assert_false(dest%is_wthreads(), 'copy inherits a serial source policy')
+        call assert_true(all(dest%get_rmat() == input + 100.), 'copy clones real-space data from a serial source')
+
+        call assigned%new(COPY_DIMS, SMPD, wthreads=.false.)
+        assigned = threaded
+        call assert_true(assigned%is_wthreads(), 'defined assignment inherits a threaded source policy')
+        call assert_true(all(assigned%get_rmat() == input), 'defined assignment clones the source data')
+        call assigned%new(COPY_DIMS, SMPD, wthreads=.true.)
+        assigned = serial
+        call assert_false(assigned%is_wthreads(), 'defined assignment inherits a serial source policy')
+
+        call dest%new(COPY_DIMS, SMPD, wthreads=.false.)
+        call dest%copy_fast(threaded)
+        call assert_false(dest%is_wthreads(), 'copy_fast keeps a serial destination policy')
+        call assert_true(all(dest%get_rmat() == input), 'copy_fast copies real-space data')
+        call threaded%fft
+        call dest%copy_fast(threaded)
+        source_ft = threaded%get_cmat()
+        dest_ft   = dest%get_cmat()
+        call assert_true(dest%is_ft(), 'copy_fast copies the Fourier-state flag')
+        call assert_true(all(dest_ft == source_ft), 'copy_fast copies Fourier-space data')
+        call dest%new(COPY_DIMS, SMPD, wthreads=.true.)
+        call dest%copy_fast(serial)
+        call assert_true(dest%is_wthreads(), 'copy_fast keeps a threaded destination policy')
+        call assert_true(all(dest%get_rmat() == input + 100.), 'copy_fast copies into a threaded destination')
+
+        do imode = 1,size(THREAD_MODES)
+            input = reshape([(real(i), i=1,16)], [4,4,1])
+            call padded%new([4,4,1], SMPD, wthreads=THREAD_MODES(imode))
+            call padded%set_rmat(input, .false.)
+            call padded%pad_mirr([6,6,1])
+            output = padded%get_rmat()
+            call assert_true(padded%is_wthreads() .eqv. THREAD_MODES(imode), 'pad_mirr keeps the receiver policy')
+            call assert_true(all(output(2:5,2:5,1) == input(:,:,1)), 'pad_mirr keeps the source pixels centred')
+            call padded%kill
+
+            input = 3.
+            call filtered%new([4,4,1], SMPD, wthreads=THREAD_MODES(imode))
+            call filtered%set_rmat(input, .false.)
+            call filtered%real_space_filter(1, 'average')
+            call assert_true(filtered%is_wthreads() .eqv. THREAD_MODES(imode), &
+                &'real_space_filter keeps the receiver policy')
+            call assert_true(all(abs(filtered%get_rmat() - 3.) < 1.e-6), &
+                &'an average real-space filter keeps a constant image')
+            call filtered%kill
+
+            input = 2.
+            call upsampled%new([4,4,1], SMPD, wthreads=THREAD_MODES(imode))
+            call upsampled%set_rmat(input, .false.)
+            call upsampled%upsample_square_background([8,8])
+            call assert_true(upsampled%is_wthreads() .eqv. THREAD_MODES(imode), &
+                &'upsample_square_background keeps the receiver policy')
+            call assert_true(all(upsampled%get_ldim() == [8,8,1]), 'upsample_square_background changes the dimensions')
+            call assert_real(2. * SMPD, upsampled%get_smpd(), 0., 'upsample_square_background changes the sampling')
+            call assert_true(all(abs(upsampled%get_rmat() - 0.5) < 1.e-6), &
+                &'upsample_square_background scales a constant image by the area ratio')
+            call upsampled%kill
+        enddo
+
+        call threaded%kill
+        call serial%kill
+        call dest%kill
+        call assigned%kill
+        nthr_glob = nthr_saved
+    end subroutine test_copy_and_inplace_threading
 
     !---------------- dimension checks and statistics ----------------
 
@@ -361,6 +533,182 @@ contains
         call assert_true(ok, 'apply_filter scales every component by the filter of its shell')
         call vol%kill
     end subroutine test_apply_filter
+
+    ! Closed-form weights pin the legacy GG branch and the normalized CryoSPARC curve.
+    subroutine test_dose_weighing_modes()
+        integer, parameter :: NFRAMES = 5
+        integer, parameter :: NVOLTAGES = 3
+        integer, parameter :: LDIM(3) = [8,6,1]
+        integer, parameter :: FRANGE(2) = [2,4]
+        real,    parameter :: PIXEL_SIZE = 1.25
+        real,    parameter :: TOTAL_DOSE = 25.
+        real,    parameter :: VOLTAGES(NVOLTAGES) = [100.,200.,300.]
+        character(len=2), parameter :: CS_MODES(NVOLTAGES) = ['CS','cs','CS']
+        real(dp), parameter :: DOSE_DIVISORS(NVOLTAGES) = [0.64d0,0.8d0,1.0d0]
+        real(dp), parameter :: A = 0.245d0, B = -1.665d0, C = 2.81d0
+        complex, parameter :: BASE = cmplx(1.25,-0.75)
+        type(image) :: gg_upper(NFRAMES,NVOLTAGES), gg_lower(NFRAMES,NVOLTAGES)
+        type(image) :: cs(NFRAMES,NVOLTAGES)
+        real(dp) :: s, freq, twoNe, critical_exposure, dose_per_frame
+        real(dp) :: r_gg, r_cs, gg_sumsq, cs_sum, expected_gg, expected_cs
+        real     :: max_gg_error, max_gg_case_error, max_gg_norm_error
+        real     :: max_cs_error, max_cs_norm_error, actual_gg_sumsq, actual_cs_sum
+        integer  :: array_shape(3), hphys, kphys, h, k, iframe, ivoltage, j
+        integer  :: ldimx_half, ldimy_half, nsel
+        complex  :: actual_gg, actual_gg_lower, actual_cs
+        write(*,'(A)') 'test_dose_weighing_modes'
+        do ivoltage = 1,NVOLTAGES
+            do iframe = 1,NFRAMES
+                call gg_upper(iframe,ivoltage)%new(LDIM, PIXEL_SIZE, wthreads=.false.)
+                call gg_lower(iframe,ivoltage)%new(LDIM, PIXEL_SIZE, wthreads=.false.)
+                call cs(iframe,ivoltage)%new(LDIM, PIXEL_SIZE, wthreads=.false.)
+                call gg_upper(iframe,ivoltage)%set_cmat(BASE)
+                call gg_lower(iframe,ivoltage)%set_cmat(BASE)
+                call cs(iframe,ivoltage)%set_cmat(BASE)
+            enddo
+            call gg_upper(1,ivoltage)%apply_dose_weighing(NFRAMES, gg_upper(:,ivoltage), FRANGE, &
+                &TOTAL_DOSE, VOLTAGES(ivoltage), mode='GG')
+            call gg_lower(1,ivoltage)%apply_dose_weighing(NFRAMES, gg_lower(:,ivoltage), FRANGE, &
+                &TOTAL_DOSE, VOLTAGES(ivoltage), mode='gg')
+            call cs(1,ivoltage)%apply_dose_weighing(NFRAMES, cs(:,ivoltage), FRANGE, &
+                &TOTAL_DOSE, VOLTAGES(ivoltage), mode=CS_MODES(ivoltage))
+        enddo
+        array_shape      = gg_upper(1,1)%get_array_shape()
+        ldimx_half       = LDIM(1) / 2
+        ldimy_half       = LDIM(2) / 2
+        nsel             = FRANGE(2) - FRANGE(1) + 1
+        max_gg_error      = 0.
+        max_gg_case_error = 0.
+        max_gg_norm_error = 0.
+        max_cs_error      = 0.
+        max_cs_norm_error = 0.
+        do ivoltage = 1,NVOLTAGES
+            dose_per_frame = real(TOTAL_DOSE,dp) / real(NFRAMES,dp) / DOSE_DIVISORS(ivoltage)
+            do kphys = 1,array_shape(2)
+                k = kphys - 1 - merge(LDIM(2), 0, kphys - 1 > ldimy_half)
+                do hphys = 1,array_shape(1)
+                    h = hphys - 1 - merge(LDIM(1), 0, hphys - 1 > ldimx_half)
+                    freq = sqrt((real(h,dp)/(real(LDIM(1),dp)*real(PIXEL_SIZE,dp)))**2 + &
+                        &(real(k,dp)/(real(LDIM(2),dp)*real(PIXEL_SIZE,dp)))**2)
+                    if( h == 0 .and. k == 0 )then
+                        r_gg = 1.0d0
+                        r_cs = 1.0d0
+                    else
+                        s                 = freq * freq
+                        twoNe             = 2.0d0 * (A * s**(0.5d0*B) + C)
+                        r_gg              = exp(-dose_per_frame / twoNe)
+                        critical_exposure = 0.67586d0 * freq**(-1.31489d0)
+                        r_cs              = exp(-dose_per_frame / (2.0d0*critical_exposure))
+                    endif
+                    gg_sumsq = 0.0d0
+                    cs_sum   = 0.0d0
+                    do j = 0,nsel-1
+                        gg_sumsq = gg_sumsq + r_gg**(2*j)
+                        cs_sum   = cs_sum + r_cs**j
+                    enddo
+                    actual_gg_sumsq = 0.
+                    actual_cs_sum   = 0.
+                    do iframe = 1,NFRAMES
+                        if( iframe < FRANGE(1) .or. iframe > FRANGE(2) )then
+                            expected_gg = 1.0d0
+                            expected_cs = 1.0d0
+                        else
+                            j = iframe - FRANGE(1)
+                            expected_gg = r_gg**j / sqrt(gg_sumsq)
+                            expected_cs = real(nsel,dp) * r_cs**j / cs_sum
+                        endif
+                        actual_gg       = gg_upper(iframe,ivoltage)%get_cmat_at(hphys,kphys,1)
+                        actual_gg_lower = gg_lower(iframe,ivoltage)%get_cmat_at(hphys,kphys,1)
+                        actual_cs       = cs(iframe,ivoltage)%get_cmat_at(hphys,kphys,1)
+                        max_gg_error = max(max_gg_error, abs(actual_gg-BASE*real(expected_gg)))
+                        max_gg_case_error = max(max_gg_case_error, abs(actual_gg-actual_gg_lower))
+                        max_cs_error = max(max_cs_error, abs(actual_cs-BASE*real(expected_cs)))
+                        if( iframe >= FRANGE(1) .and. iframe <= FRANGE(2) )then
+                            actual_gg_sumsq = actual_gg_sumsq + real(actual_gg/BASE)**2
+                            actual_cs_sum   = actual_cs_sum + real(actual_cs/BASE)
+                        endif
+                    enddo
+                    max_gg_norm_error = max(max_gg_norm_error, abs(actual_gg_sumsq-1.))
+                    max_cs_norm_error = max(max_cs_norm_error, abs(actual_cs_sum-real(nsel)))
+                enddo
+            enddo
+        enddo
+        call assert_real(0., max_gg_error, 2.e-6, 'GG dose weights preserve the legacy closed form')
+        call assert_real(0., max_gg_case_error, 0., 'gg and GG select identical dose weights')
+        call assert_real(0., max_gg_norm_error, 2.e-6, 'GG dose weights have unit squared sum')
+        call assert_real(0., max_cs_error, 2.e-6, 'CS dose weights match the critical-exposure closed form')
+        call assert_real(0., max_cs_norm_error, 2.e-6, 'CS dose weights have mean one')
+        do ivoltage = 1,NVOLTAGES
+            do iframe = 1,NFRAMES
+                call gg_upper(iframe,ivoltage)%kill()
+                call gg_lower(iframe,ivoltage)%kill()
+                call cs(iframe,ivoltage)%kill()
+            enddo
+        enddo
+    end subroutine test_dose_weighing_modes
+
+    ! Per-frame contrast and B-factor weights in closed form on a rectangular frame; frames outside the range
+    ! are untouched, and a thread team gives the serial result bit for bit.
+    subroutine test_frame_bfactor_weights()
+        !$ use omp_lib, only: omp_get_max_threads, omp_set_num_threads
+        integer,  parameter :: NFRAMES = 5
+        integer,  parameter :: LDIM(3) = [10,6,1]
+        integer,  parameter :: FRANGE(2) = [2,4]
+        real,     parameter :: PIXEL_SIZE = 1.25
+        real(dp), parameter :: CFRAC(NFRAMES) = [1.0_dp, 0.9_dp, 0.8_dp, 0.6_dp, 0.5_dp]
+        real(dp), parameter :: BFRAC(NFRAMES) = [0._dp, 5._dp, 20._dp, 60._dp, 90._dp]
+        complex,  parameter :: BASE = cmplx(1.25,-0.75)
+        type(image) :: serial(NFRAMES), team(NFRAMES)
+        real(dp) :: s, e(NFRAMES), sumsq, expected
+        real     :: max_error, max_norm_error, max_team_diff, actual_sumsq
+        integer  :: array_shape(3), hphys, kphys, h, k, iframe
+        complex  :: actual
+        !$ integer :: nthr_saved
+        write(*,'(A)') 'test_frame_bfactor_weights'
+        do iframe = 1,NFRAMES
+            call serial(iframe)%new(LDIM, PIXEL_SIZE, wthreads=.false.)
+            call team(iframe)%new(LDIM, PIXEL_SIZE, wthreads=.false.)
+            call serial(iframe)%set_cmat(BASE)
+            call team(iframe)%set_cmat(BASE)
+        enddo
+        !$ nthr_saved = omp_get_max_threads()
+        !$ call omp_set_num_threads(1)
+        call serial(1)%apply_frame_bfactor_weights(NFRAMES, serial, FRANGE, CFRAC, BFRAC)
+        !$ call omp_set_num_threads(4)
+        call team(1)%apply_frame_bfactor_weights(NFRAMES, team, FRANGE, CFRAC, BFRAC)
+        !$ call omp_set_num_threads(nthr_saved)
+        array_shape    = serial(1)%get_array_shape()
+        max_error      = 0.
+        max_norm_error = 0.
+        max_team_diff  = 0.
+        do kphys = 1,array_shape(2)
+            k = kphys - 1 - merge(LDIM(2), 0, kphys - 1 > LDIM(2)/2)
+            do hphys = 1,array_shape(1)
+                h = hphys - 1 - merge(LDIM(1), 0, hphys - 1 > LDIM(1)/2)
+                s = (real(h,dp)/(real(LDIM(1),dp)*real(PIXEL_SIZE,dp)))**2 + &
+                    &(real(k,dp)/(real(LDIM(2),dp)*real(PIXEL_SIZE,dp)))**2
+                e     = CFRAC * exp(-BFRAC * s / 4._dp)
+                sumsq = sum(e(FRANGE(1):FRANGE(2))**2)
+                actual_sumsq = 0.
+                do iframe = 1,NFRAMES
+                    expected = 1._dp
+                    if( iframe >= FRANGE(1) .and. iframe <= FRANGE(2) ) expected = e(iframe) / sqrt(sumsq)
+                    actual        = serial(iframe)%get_cmat_at(hphys,kphys,1)
+                    max_error     = max(max_error, abs(actual - BASE*real(expected)))
+                    max_team_diff = max(max_team_diff, abs(actual - team(iframe)%get_cmat_at(hphys,kphys,1)))
+                    if( iframe >= FRANGE(1) .and. iframe <= FRANGE(2) ) actual_sumsq = actual_sumsq + real(actual/BASE)**2
+                enddo
+                max_norm_error = max(max_norm_error, abs(actual_sumsq - 1.))
+            enddo
+        enddo
+        call assert_real(0., max_error, 2.e-6, 'frame B-factor weights match the closed form; outside frames untouched')
+        call assert_real(0., max_norm_error, 2.e-6, 'frame B-factor weights have unit squared sum')
+        call assert_real(0., max_team_diff, 0., 'frame B-factor weights of a thread team equal the serial ones')
+        do iframe = 1,NFRAMES
+            call serial(iframe)%kill()
+            call team(iframe)%kill()
+        enddo
+    end subroutine test_frame_bfactor_weights
 
     !---------------- power spectrum ----------------
 
@@ -651,6 +999,80 @@ contains
         call g2%kill
         call g3%kill
     end subroutine test_corr
+
+    ! win2arr_rad returns exactly the pixels within maxrad of the centre: their count is the ball's (closed form by
+    ! counting), the values are the image's, and nothing of an earlier call leaks in. Before 2026-10-26 the count was
+    ! one too many, so every per-atom valid_corr of detect_atoms carried one stale pixel
+    subroutine test_win2arr_rad()
+        integer, parameter :: B3 = 16, C = B3/2 + 1, WINSZ = 3
+        real,    parameter :: MAXRAD = 2.5
+        type(image)       :: vol, img
+        real, allocatable :: vmat(:,:,:), pix(:)
+        integer :: i, j, k, npix_in, npix_out, nball, ndisc, nmismatch
+        write(*,'(A)') 'test_win2arr_rad'
+        ! every voxel its own value, so a wrong pixel is seen
+        allocate(vmat(B3,B3,B3))
+        do k = 1,B3
+            do j = 1,B3
+                do i = 1,B3
+                    vmat(i,j,k) = real(i + B3 * (j - 1) + B3 * B3 * (k - 1))
+                end do
+            end do
+        end do
+        call vol%new([B3,B3,B3], SMPD, wthreads=.false.)
+        call vol%set_rmat(vmat, .false.)
+        npix_in = (2 * WINSZ + 1)**3
+        allocate(pix(npix_in), source=-1.)
+        ! the count of lattice points within MAXRAD of the centre, in the order win2arr_rad visits them
+        nball     = 0
+        nmismatch = 0
+        call vol%win2arr_rad(C, C, C, WINSZ, npix_in, MAXRAD, npix_out, pix)
+        do i = C-WINSZ,C+WINSZ
+            do j = C-WINSZ,C+WINSZ
+                do k = C-WINSZ,C+WINSZ
+                    if( real((i-C)**2 + (j-C)**2 + (k-C)**2) <= MAXRAD**2 )then
+                        nball = nball + 1
+                        if( nball <= npix_out )then
+                            if( abs(pix(nball) - vmat(i,j,k)) > 0. ) nmismatch = nmismatch + 1
+                        endif
+                    endif
+                end do
+            end do
+        end do
+        call assert_int(nball, npix_out, 'win2arr_rad returns one pixel per lattice point within maxrad (3D)')
+        call assert_int(0, nmismatch,    'win2arr_rad returns the image values in its visiting order (3D)')
+        ! a second call at another centre overwrites every returned pixel: no stale value from the first call
+        call vol%win2arr_rad(C+1, C, C, WINSZ, npix_in, MAXRAD, npix_out, pix)
+        nmismatch = 0
+        nball     = 0
+        do i = C+1-WINSZ,C+1+WINSZ
+            do j = C-WINSZ,C+WINSZ
+                do k = C-WINSZ,C+WINSZ
+                    if( real((i-C-1)**2 + (j-C)**2 + (k-C)**2) <= MAXRAD**2 )then
+                        nball = nball + 1
+                        if( nball <= npix_out )then
+                            if( abs(pix(nball) - vmat(i,j,k)) > 0. ) nmismatch = nmismatch + 1
+                        endif
+                    endif
+                end do
+            end do
+        end do
+        call assert_int(nball, npix_out, 'win2arr_rad count at a shifted centre (3D)')
+        call assert_int(0, nmismatch,    'win2arr_rad values at a shifted centre, none from the earlier call (3D)')
+        ! 2D: the disc, with the squared distance (not the squared sum of displacements) as the test
+        call img%new([B3,B3,1], SMPD, wthreads=.false.)
+        call img%set_rmat(vmat(:,:,1:1), .false.)
+        call img%win2arr_rad(C, C, 1, WINSZ, npix_in, MAXRAD, npix_out, pix)
+        ndisc = 0
+        do i = C-WINSZ,C+WINSZ
+            do j = C-WINSZ,C+WINSZ
+                if( real((i-C)**2 + (j-C)**2) <= MAXRAD**2 ) ndisc = ndisc + 1
+            end do
+        end do
+        call assert_int(ndisc, npix_out, 'win2arr_rad returns one pixel per lattice point within maxrad (2D)')
+        call vol%kill
+        call img%kill
+    end subroutine test_win2arr_rad
 
     !---------------- file I/O ----------------
 

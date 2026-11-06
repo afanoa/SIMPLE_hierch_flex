@@ -1,5 +1,14 @@
 # Particle Cache Policy
 
+**Retired 2026-11-02.** The downscaled particle disk cache (`cache=yes`,
+`simple_ptcl_cache`) was removed with the dynamic centring (ruling 19 of
+`doc/implementation_notes/completed/polar_shift_search.md`), which prepares each
+particle under its own mask; the cropped-particle path in memory
+(`crop_particles2D`, the pass's records) stays. `cache_dir` remains as the flex
+PCA plane cache's location (`simple_flex_pca_plane_cache`). The code is in git
+history before that date; this document is kept as its record.
+
+
 ## 1. Purpose and Scope
 
 This document defines the policy for the downscaled particle disk cache
@@ -12,10 +21,9 @@ and was removed from those paths.
 
 The samplers draw a fresh ~nsample subset of the particles every iteration and
 each selected particle is read at full box and Fourier-cropped to `box_crop`.
-In probabilistic mode the same particle is read twice per iteration:
-probabilistic scoring (`prob_tab2D`) and search, whose batch also feeds
-class-average restoration; in shared memory without the cache the particle
-buffer serves the second read (`particle_read_path_policy.md`). The cache writes
+In probabilistic mode the particle is read once per iteration since the batch
+pipeline (2026-11-04): the matcher's batch serves the probabilistic scoring,
+the search and the class-average restoration (`particle_read_path_policy.md`). The cache writes
 the iteration-independent prefix of that preprocessing to disk once and serves
 all subsequent reads from it, trading disk space at `cache_dir` for a roughly
 `(box/box_crop)^2` reduction in read volume.
@@ -44,8 +52,8 @@ directory).
 
 ## 3. Consumers
 
-- 2D alignment (`prob_tab2D`, `refine2D_exec` search): substitution equal to
-  rounding (Section 2).
+- 2D alignment (`refine2D_exec`: the probabilistic fill and the search):
+  substitution equal to rounding (Section 2).
 - 2D class-average restoration (`cavger_update_sums` with
   `cropped_ptcls=.true.`): deliberate numerics change — edge taper and
   gridding source grid live at `box_crop`, no second noise normalization,
@@ -109,9 +117,8 @@ cleanup can never leave a cache that still validates.
 the owner fast path reuse one cache for every stage; there is no per-stage
 invalidation.
 
-Per-iteration `prob_align2D` calls hit an ownership fast path in
-`ptcl_cache_ensure` (same owned key name, key file exists) and skip the full
-revalidation.
+Per-iteration calls hit an ownership fast path in `ptcl_cache_ensure` (same
+owned key name, key file exists) and skip the full revalidation.
 
 ## 6. Space Budget and Uniform Fallback
 

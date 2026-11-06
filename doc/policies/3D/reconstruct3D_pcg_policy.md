@@ -46,12 +46,16 @@ once into its state/half accumulation and is never reread during PCG iterations.
 In distributed execution, each worker atomically publishes one versioned raw
 artifact per `(state,half,part)`. It contains the unfolded complex `B`, real
 `D`, contributor count, applied weight mass, weight-set identity, geometry, and
-provenance. The format is version 2 (magic `SIMPLE_PCG_RAW02`, 2026-10-07). Its
+provenance. The format is version 3 (magic `SIMPLE_PCG_RAW03`, 2026-10-26). Its
 header carries the applied mass as a 64-bit real beside the integer contributor
 count; under hard labels the mass is the count. It also carries the identity of
 the state weight set the part was built under, its generation and layout
-digest, both zero under hard labels. The payload is unchanged and is present
-only when the contributor count is positive. No reader of version 1 is kept.
+digest, both zero under hard labels. The payload, present only when the
+contributor count is positive, is the half of each accumulator the fold reads:
+for every `m`-slice the rows `h = 0 .. lims3(1,2)-1` followed by the wrapped
+Nyquist mate stored at `h = lims3(1,1)` (the row `lims3(1,2)` is never
+scattered into); version 2 wrote the full both-sign-`h` lattice. No reader of
+an earlier version is kept: a chain of an earlier version is stale and re-seeded.
 The master validates and adds these artifacts in ascending part-number order,
 and stops when a part's weight-set identity differs from its own. Only after
 the complete state/half reduction does it fold the RHS, calculate rho floors,
@@ -193,7 +197,7 @@ rho shell statistics, then produces the reciprocal preconditioner and packed
 | File | Contents |
 | --- | --- |
 | `src/main/volume/simple_reconstructor_pcg.f90` | `reconstructor_pcg` operator/solver type, raw accumulator format, `PCG_WEIGHT_THRESHOLD` |
-| `src/main/volume/simple_pcg_lattice.f90` | `pcg_lattice`, which `reconstructor_pcg` extends: padded-lattice geometry, KB window, wrap table and solve support (`set_window_sphere`, `set_window_volume`), shared with the FLEX PCG operator |
+| `src/main/volume/simple_pcg_lattice.f90` | `pcg_lattice`, which `reconstructor_pcg` extends: padded-lattice geometry, KB window, wrap table and solve support (`set_window_sphere`, `set_window_volume`); the plane gather and scatter (`gather_plane`, `scatter_plane`, under `forward_plane` and `adjoint_plane_add`), the wrap test and rim radius (`win_wraps`, `rim_free`, `sq_rim`) and the fold of the scatter accumulator (`fold_lattice_accum`); shared with the FLEX PCG operator and the wave operators, which sample the Ewald paraboloid with the same gather at a nonzero curvature (`doc/policies/3D/wave_model_policy.md`); at zero curvature, the PCG backend's case, the code is the PCG code bitwise |
 | `src/main/opt/simple_pcg_solver.f90` | the preconditioned conjugate-gradient engine and `pcg_solver_outcome` |
 | `src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90` | PCG worker accumulation and master reduction and solve, for both execution modes |
 | `src/main/strategies/parallelization/simple_rec3D_service.f90` | reconstruction service: weight source, dispatch, naming, registration |
@@ -493,16 +497,43 @@ removing edge artefacts where deapodization amplifies hardest, it shrinks the
 problem: at `mskdiam` 180 in a 256 box the sphere is ~18% of the volume. Edge
 profile is production's `cosedge_r2_3d`.
 
-**Scatter reproducibility.** Every scatter into a Fourier accumulator is
-parallelized by h-strided colouring, whose separation guarantee holds on
-*unwrapped* coordinates only. The accumulator is periodic, so windows that reach
-the wrap boundary can collide after folding even in the same colour. All scatter
-sites therefore split: the parallel colour sweep skips any window `win_wraps`
-flags, and a serial pass handles the rim (pre-filtered by `sq_rim`, a radius
+**Scatter reproducibility.** The production accumulations
+(`accumulate_rhs_density`, `accumulate_absT2`) are parallelized by slab
+ownership (`pcg_lattice`, `slab_count`/`slab_planes`/`slab_k_range`): the
+accumulator's third axis, its slowest in memory, is cut into slabs `wdim`
+planes thick, a window belongs to the slab its first plane lies in, even
+slabs are scattered before odd ones and each slab by one thread, which walks
+only the `k`-intervals of each plane row that reach its slabs. Concurrent
+windows are a whole plane apart — no race and no shared cache line — and
+every element receives its windows in one fixed order at any thread count.
+The lattice's generic scatters (`scatter_plane`, `scatter_cube`, the
+matrix-free reference, flex) keep h-strided colouring, whose separation
+guarantee holds on *unwrapped* coordinates only, with stride
+`ceiling(sqrt(3) wdim)`: rows a stride apart are more than a window apart along
+one axis under any rotation, and far enough apart that the concurrent rows of
+one sweep do not share cache lines along the contiguous axis (at half the
+stride they do for a sixth of the orientations, and the scatter runs three
+times slower, 2026-10-26). The accumulator is periodic, so windows that reach
+the wrap boundary can collide after folding under either scheme. All scatter
+sites therefore split: the parallel pass skips any window `win_wraps`
+(in `pcg_lattice`) flags, and a serial pass handles the rim (pre-filtered by `sq_rim`, a radius
 below which wrapping is provably impossible). Serial, not `atomic` — an atomic
 would fix the race but leave summation order thread-dependent, and bitwise
 run-to-run reproducibility is what makes a residual trace usable as a regression
 signal. The rim is a thin outer shell, so the serial cost is small.
+
+**Half-lattice accumulation of Hermitian planes.** The `B` and `D` accumulators
+of the production route (`accumulate_rhs_density`, `accumulate_absT2`) are
+read only as their `h >= 0` half plus the wrapped Nyquist mate at
+`lims3(1,1)` (`fold_and_ifft`, `finalize_density_accum`). The planes they
+deposit are Hermitian (central sections of real images, real even `|T|^2`), so
+the mirrored window of each plane point's Friedel mate deposits the conjugate
+and the `h < 0` half carries nothing the fold needs. Windows wholly inside that
+dead half are therefore skipped (`win_below_fold`, 2026-10-26), halving the
+scatter with bit-identical sums; the raw artifact (above) carries only the
+read half. The exact adjoint pair `forward_plane`/`adjoint_plane_add` and the
+matrix-free reference operator keep the full both-sign-`h` scatter, as does the
+two-cap fold of a wave model (`l_hermitian`).
 
 ## 5. Preconditioner and kernelized operator
 
@@ -566,7 +597,7 @@ and FSC; a similar operator is not enough.
 Point-group symmetry is applied by **coordinate replication** inside the
 operator: each plane pixel is gathered and scattered at all `M` orientations
 `R_i . S_g`. Replication is applied to `H` (`accumulate_absT2`,
-`apply_normal_matrixfree`) and to `b` (`scatter_plane`, reached from
+`apply_normal_matrixfree`) and to `b` (`scatter_plane` of `pcg_lattice`, reached from
 `apply_adjoint_all` and `accumulate_rhs_density`), so the system solved is consistently
 symmetrized.
 
@@ -752,6 +783,25 @@ implemented and tested here rather than repurposed from production gridding.
   gridding/storage conversions, not established linear adjoints.
 
 ## 12. Execution-path identity and performance rules
+
+### Work image and FFTW plans (2026-10-26)
+
+The operator's `boxpd^3` work image is made on first use by the routines
+that transform (`ensure_wimg`); a worker, which only accumulates and
+publishes raw artifacts, never allocates it. Every padded transform runs in
+place on the image's buffers through `get_rmat_ptr`/`get_cmat_ptr`
+(`embed_fft`, `ifft_crop`, the folds, `finalize_khat`): no copy in or out.
+From `PCG_FFT_MEASURE_MIN_BOXPD` (200 in `simple_pcg_lattice`, the size from
+which the image threads its plans) the work image's plans are measured
+(`FFTW_MEASURE` under the image's time budget) instead of estimated, and the
+measured plan's wisdom serves every later operator of the same size in the
+process, so a run pays the planning once per crop. A measured plan is chosen
+by timing, so the rounding of a solve is fixed within a process but may
+differ between processes; small fixtures stay on the estimate heuristic and
+remain run-to-run identical. The wave projector's work image follows the
+same rule, and its `transform` and gradient zeroing run in place and in
+parallel like the PCG operator's; its two-cap gradient scatter keeps the
+full both-sign-h lattice (section 4).
 
 ### Backend comparison protocol (review 2026-09-09)
 

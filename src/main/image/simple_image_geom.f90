@@ -229,12 +229,13 @@ contains
         end do
     end function win2arr
 
-    !>  \brief win2arr_rad extracts a small window into an array (circular indexing) with radial thres
+    !>  \brief win2arr_rad extracts the pixels within maxrad of (i,j,k) into pixels(1:npix_out), circular indexing;
+    !!  the window is the cube (or square) of half-width winsz around the centre and npix_in is pixels' size
     module subroutine win2arr_rad( self, i, j, k, winsz, npix_in, maxrad, npix_out, pixels )
         class(image), intent(in)    :: self
         integer,      intent(in)    :: i, j, k, winsz, npix_in
         real,         intent(in)    :: maxrad ! in pixels
-        integer,      intent(inout) :: npix_out
+        integer,      intent(out)   :: npix_out
         real,         intent(inout) :: pixels(npix_in)
         integer :: s, ss, t, tt, u, uu
         real    :: vec_cen(3), vec_displ(3), maxradsq
@@ -245,7 +246,7 @@ contains
             vec_cen = real([i,j,1])
         endif
         maxradsq = maxrad**2.
-        npix_out = 1
+        npix_out = 0
         do s = i - winsz,i + winsz
             ss = cyci_1d_static(self%ldim(1), s)
             do t = j - winsz, j + winsz
@@ -254,16 +255,18 @@ contains
                     do u = k - winsz, k + winsz
                         vec_displ = real([s,t,u]) - vec_cen
                         if( sum(vec_displ**2.) <= maxradsq )then
-                            uu               = cyci_1d_static(self%ldim(3), u)
+                            uu       = cyci_1d_static(self%ldim(3), u)
+                            npix_out = npix_out + 1
+                            if( npix_out > npix_in ) THROW_HARD('more pixels within maxrad than pixels holds; win2arr_rad')
                             pixels(npix_out) = self%rmat(ss,tt,uu)
-                            npix_out         = npix_out + 1
                         endif
                     end do
                 else
                     vec_displ = real([s,t,1]) - vec_cen
-                    if( sum(vec_displ(1:2))**2. <= maxradsq )then
+                    if( sum(vec_displ(1:2)**2.) <= maxradsq )then
+                        npix_out = npix_out + 1
+                        if( npix_out > npix_in ) THROW_HARD('more pixels within maxrad than pixels holds; win2arr_rad')
                         pixels(npix_out) = self%rmat(ss,tt,1)
-                        npix_out         = npix_out + 1
                     endif
                 endif
             end do
@@ -313,7 +316,7 @@ contains
         self%ft = .false.
     end subroutine corners
 
-    module subroutine gauimg_1( self, wsz , alpha )
+    module subroutine gauimg_center( self, wsz , alpha )
         class(image), intent(inout) :: self
         integer,      intent(in)    :: wsz
         real, intent(in), optional  :: alpha
@@ -343,9 +346,9 @@ contains
         end do
         self%ft = .false.
         call self%zero_padding
-    end subroutine gauimg_1
+    end subroutine gauimg_center
 
-    module subroutine gauimg_2( self, wsz, offx,offy)
+    module subroutine gauimg_offset( self, wsz, offx,offy)
         class(image), intent(inout) :: self
         integer,      intent(in)    :: wsz, offx, offy
         real    :: x, y, z, xw, yw, zw
@@ -372,7 +375,7 @@ contains
         end do
         self%ft = .false.
         call self%zero_padding
-    end subroutine gauimg_2
+    end subroutine gauimg_offset
 
     module subroutine gauimg2D( self, xsigma, ysigma, cutoff )
         class(image),   intent(inout) :: self
@@ -539,7 +542,7 @@ contains
         call tmp%kill()
     end subroutine pad_inplace
 
-    module subroutine pad_mirr_1( self_in, self_out )
+    module subroutine pad_mirr_into( self_in, self_out )
         class(image), intent(inout) :: self_in, self_out
         integer :: starts(3), stops(3)
         integer :: i,j, i_in, j_in
@@ -588,17 +591,17 @@ contains
         else
             THROW_HARD('inconsistent dimensions; pad_mirr')
         endif
-    end subroutine pad_mirr_1
+    end subroutine pad_mirr_into
 
-    module subroutine pad_mirr_2( self, ldim )
+    module subroutine pad_mirr_inplace( self, ldim )
         class(image), intent(inout) :: self
         integer,      intent(in)    :: ldim(3)
         type(image) :: tmp
-        call tmp%new(ldim , self%smpd)
-        call self%pad_mirr_1(tmp)
+        call tmp%new(ldim, self%smpd, wthreads=self%wthreads)
+        call self%pad_mirr_into(tmp)
         call self%copy(tmp)
         call tmp%kill
-    end subroutine pad_mirr_2
+    end subroutine pad_mirr_inplace
 
     ! For reconstruction: pads fourier self_prev & rho_prev array, it is assumed self & rho have been zeroed
     module subroutine pad_mats( self, rho, self_prev, rho_prev)
@@ -1185,7 +1188,7 @@ contains
         if( didft ) call self%ifft()
     end subroutine shift
 
-    module subroutine shift2Dserial_1( self, shvec  )
+    module subroutine shift2Dserial_inplace( self, shvec  )
         class(image), intent(inout) :: self
         real,         intent(in)    :: shvec(2)
         real(dp),allocatable :: hcos(:), hsin(:)
@@ -1210,7 +1213,7 @@ contains
                     &* cmplx(ck*hcos(h)-sk*hsin(h), ck*hsin(h)+sk*hcos(h),sp)
             end do
         end do
-    end subroutine shift2Dserial_1
+    end subroutine shift2Dserial_inplace
 
     module subroutine shift2D_demoivre( self, shvec  )
         class(image), intent(inout) :: self
@@ -1243,7 +1246,7 @@ contains
         enddo
     end subroutine shift2D_demoivre
 
-    module subroutine shift2Dserial_2( self, shvec, self_out )
+    module subroutine shift2Dserial_into( self, shvec, self_out )
         class(image), intent(inout) :: self, self_out
         real,         intent(in)    :: shvec(2)
         real(dp),allocatable :: hcos(:), hsin(:)
@@ -1268,7 +1271,7 @@ contains
                     &* cmplx(ck*hcos(h)-sk*hsin(h), ck*hsin(h)+sk*hcos(h),sp)
             end do
         end do
-    end subroutine shift2Dserial_2
+    end subroutine shift2Dserial_into
 
     module subroutine masscen( self, xyz, mask_in )
         class(image),      intent(inout) :: self

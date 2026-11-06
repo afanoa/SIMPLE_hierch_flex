@@ -39,20 +39,28 @@ subroutine exec_test_single_atoms_stats( self, cline )
     character(len=*), parameter :: DET_CC_VOL    = 'outvol_CC.mrc'
     character(len=*), parameter :: DET_SIM_VOL   = 'outvol_SIM.mrc'
     character(len=*), parameter :: DET_PDB       = 'outvol_ATMS.pdb'
+    character(len=*), parameter :: DET_FIT_VOL   = 'outvol_FIT.mrc'
+    character(len=*), parameter :: DET_RES_VOL   = 'outvol_RES.mrc'
+    character(len=*), parameter :: DET_TABLE     = 'outvol_atoms.csv'
+    character(len=*), parameter :: DET_MODEL     = 'outvol_model.txt'
     character(len=*), parameter :: ATOM_STATS    = 'atoms_stats.csv'
     character(len=*), parameter :: NP_STATS      = 'nanoparticle_stats.csv'
     character(len=*), parameter :: CN_STATS      = 'cn_dependent_stats.csv'
     integer,          parameter :: CN_MIN         = 3
     integer,          parameter :: CN_MAX         = 13
+    ! gross-breakage floors from the first version, which the floor rule cannot place: the map is noise-free,
+    ! so every seed gives recall 1.0 (rocksalt 0.97), RMS 0.013-0.015 A and density correlation 0.98-0.9997
+    ! (profile of 2026-10-16); atoms shifted by half a bond must fail them (shifted_control)
     real,             parameter :: POSITION_TOL  = 1.0
     real,             parameter :: MIN_RECALL    = 0.90
     real,             parameter :: MIN_PRECISION = 0.90
     real,             parameter :: MAX_RMS_ERROR = 0.75
     real,             parameter :: MIN_DENSITY_CORR = 0.80
     real,             parameter :: INNER_FRAC    = 0.30 ! binary crystals: interior atoms, by distance from the centre
+    ! the 2 % of the phase-4 ruling (species_discovery_completed.md); measured 0.4-0.5 %
     real,             parameter :: MAX_A_ERR     = 0.02 ! binary crystals: fitted lattice constant against the table
-    type(cmdline)                         :: cline_sim, cline_detat, cline_atstats
-    type(parameters)                      :: params
+    class(cmdline), allocatable           :: cline_sim, cline_detat, cline_atstats
+    class(parameters), allocatable        :: params
     type(commander_simulate_nanoparticle) :: xsim_nptcl
     type(commander_detect_atoms)          :: xdetat
     type(commander_atoms_stats)           :: xatstats
@@ -62,8 +70,8 @@ subroutine exec_test_single_atoms_stats( self, cline )
     integer                               :: status, nsimulated, ndetected
     real                                  :: recall, precision, rms_error, density_corr
     logical                               :: all_ok
+    allocate(cline_sim, cline_detat, cline_atstats, params)
     write(logfhandle,'(a)') '>>> TEST_SINGLE_ATOMS_STATS:'
-    call set_fixed_seed(20260925)
     call simple_getcwd(cwd_saved)
     call gate%new(filepath(cwd_saved, 'metrics.tsv'))
     fixture_root = filepath(cwd_saved, 'test_single_atoms_stats_'//int2str(get_process_id()))
@@ -74,6 +82,8 @@ subroutine exec_test_single_atoms_stats( self, cline )
     if( .not. cline%defined('smpd') )    call cline%set('smpd', 0.358)
     if( .not. cline%defined('element') ) call cline%set('element', 'Pt')
     call params%new(cline)
+    ! after params%new, which reseeds; propagated, so the commanders below reseed from it
+    call set_fixed_seed(20260925, propagate=.true.)
     all_ok = .true.
     density_corr = 0.0
     call cline_sim%set('prg',      'simulate_nanoparticle')
@@ -97,9 +107,9 @@ subroutine exec_test_single_atoms_stats( self, cline )
         call fail(SIM_PDB//' was not generated')
     endif
     call cline_detat%set('prg',             'detect_atoms')
+    call cline_detat%set('mkdir',                   'no')
     call cline_detat%set('vol1',                    SIM_VOL)
     call cline_detat%set('smpd',               params%smpd)
-    call cline_detat%set('element',         params%element)
     call cline_detat%set('nthr',                      params%nthr)
     call xdetat%execute(cline_detat)
     call cline_detat%kill()
@@ -116,6 +126,7 @@ subroutine exec_test_single_atoms_stats( self, cline )
         call fail(DET_PDB//' was not generated')
     endif
     if( nsimulated > 0 .and. ndetected > 0 ) call compare_atom_coordinates
+    if( ndetected > 0 ) call check_model_products
     call cline_atstats%set('prg',             'atoms_stats')
     call cline_atstats%set('vol1',                  SIM_VOL)
     call cline_atstats%set('vol2',               DET_CC_VOL)
@@ -277,6 +288,7 @@ subroutine exec_test_single_atoms_stats( self, cline )
         shifted_recall = real(nmatched) / real(nsimulated)
         call gate%report('control_recall_of_atoms_shifted_by_half_a_bond', shifted_recall)
         call gate%check('control_shifted_atoms_fail_the_recall_floor', .not. (shifted_recall >= MIN_RECALL))
+        if( shifted_recall >= MIN_RECALL ) call fail('atoms shifted by half a bond pass the recall floor')
     end subroutine shifted_control
 
     subroutine check_statistics_files( expected_atoms )
@@ -482,6 +494,52 @@ subroutine exec_test_single_atoms_stats( self, cline )
         enddo
     end subroutine column_of
 
+    ! the density model's products: the full model and its residual, one table row per atom, the particle's
+    ! parameters, and in _ATMS.pdb a positive occupancy (intensity over the scale) and width per atom; the contact-score
+    ! ceiling detect_atoms derived from the data is reported
+    subroutine check_model_products
+        integer :: funit, ios, i, ceil
+        real    :: ratio
+        logical :: l_found
+        character(len=STDLEN) :: line
+        call check_volume(DET_FIT_VOL, 'density-model')
+        call check_volume(DET_RES_VOL, 'model-residual')
+        call check_line_count(DET_TABLE, ndetected + 1)
+        l_found = .false.
+        ratio   = -1.
+        ios     = 1
+        if( file_exists(DET_MODEL) ) call fopen(funit, file=string(DET_MODEL), status='old', action='read', iostat=ios)
+        if( ios == 0 )then
+            do while( ios == 0 )
+                read(funit,'(a)', iostat=ios) line
+                if( ios /= 0 ) exit
+                if( index(line, 'resid_over_noise =') == 1 )then
+                    read(line(index(line, '=')+1:),*,iostat=ios) ratio
+                    l_found = ios == 0
+                endif
+                if( index(line, 'contact_ceiling =') == 1 )then
+                    read(line(index(line, '=')+1:),*,iostat=ios) ceil
+                    if( ios == 0 )then
+                        call gate%report('contact_ceiling_from_the_data', real(ceil))
+                        write(logfhandle,'(a,i0)') '    contact-score ceiling from the data: ', ceil
+                    endif
+                    ios = 0
+                endif
+            enddo
+            call fclose(funit)
+        endif
+        l_found = l_found .and. ieee_is_finite(ratio) .and. ratio > 0.
+        call gate%check('model_parameters_written', l_found)
+        if( .not. l_found ) call fail(DET_MODEL//' lacks a positive residual over the noise')
+        write(logfhandle,'(a,f8.4)') '    model residual over the noise in the envelope: ', ratio
+        do i = 1,ndetected
+            if( .not. (detected_atoms%get_occupancy(i) > 0. .and. detected_atoms%get_beta(i) > 0.) )then
+                call fail(DET_PDB//' holds an atom without a positive occupancy and width')
+                exit
+            endif
+        enddo
+    end subroutine check_model_products
+
     subroutine check_line_count( filename, expected_lines )
         character(len=*), intent(in) :: filename
         integer,          intent(in) :: expected_lines
@@ -497,13 +555,14 @@ subroutine exec_test_single_atoms_stats( self, cline )
 end subroutine exec_test_single_atoms_stats
 
 subroutine exec_test_species_discovery( self, cline )
-    use simple_commanders_atoms, only: commander_detect_atoms
+    use simple_commanders_atoms, only: commander_detect_atoms, commander_detect_atomic_species
     use simple_commanders_sim,   only: commander_simulate_nanoparticle
     use simple_atoms,            only: atoms
     use simple_test_utils,       only: set_fixed_seed
     use simple_test_gate,        only: test_gate
     use simple_rnd,              only: ran3
-    use simple_nano_species,     only: gauss_filter3D, fit_gauss_width, enclosed_fraction
+    use simple_nano_species,     only: fit_gauss_width, enclosed_fraction
+    use simple_nano_density,     only: gauss_filter3D
     use simple_nanoparticle_utils, only: find_rMax
     class(commander_test_species_discovery), intent(inout) :: self
     class(cmdline),                          intent(inout) :: cline
@@ -521,6 +580,7 @@ subroutine exec_test_species_discovery( self, cline )
     real,    parameter :: MIN_AL_RECALL    = 0.88
     real,    parameter :: MAX_PLAIN_LIGHT  = 0.90   ! light case: element=Pt finds fewer than this of the eligible Al
     real,    parameter :: MIN_HALF_AGREE   = 0.95   ! label agreement between the half maps
+    real,    parameter :: UNCERTAIN_POST   = 0.9    ! a call with a lower largest posterior is uncertain (sixth ruling)
     real,    parameter :: MIN_ELIG_SNR     = 6.5    ! eligibility: filtered peak of the atom's own kernel over filtered noise
     real,    parameter :: MATCH_NN_FRAC    = 0.3    ! found atom matches a generating atom within this many d_NN
     real,    parameter :: SIGMA_REF        = 0.4196 ! A, width of the detection template (B 13.9 A**2)
@@ -546,24 +606,28 @@ subroutine exec_test_species_discovery( self, cline )
     real,    parameter :: NZ_RES(12)  = [20., 10., 5., 3.3, 2.5, 2., 1.6, 1.3, 1.1, 0.95, 0.8, 0.72]
     real,    parameter :: NZ_V(11)    = [0.364, 0.339, 0.415, 0.322, 0.249, 0.172, 0.136, 0.119, 0.105, 0.096, 0.088]
     real,    parameter :: CUTOFF_ELIG = 12. * SMPD_FIX ! the kernel cutoff of simulate_nanoparticle pdbfile=
-    integer, parameter :: NELEM = 3, NCASES = 4, NRUNS = 16
+    ! the runs of a case share one detect_atoms run (directory det); every run but the species-free one (noel) then
+    ! calls detect_atomic_species on copies of its atoms, table and model: with the element list (RUN_EL, its length
+    ! the class count), or with the class count free (RUN_DISC), on the half maps' noise where RUN_HALVES
+    integer, parameter :: NELEM = 3, NCASES = 4, NRUNS = 15
     character(len=2),  parameter :: ELEMS(NELEM)       = ['PT', 'NI', 'AL']
     character(len=5),  parameter :: CASES(NCASES)      = ['pure ', 'alloy', 'core ', 'light']
     character(len=2),  parameter :: SECOND(NCASES)     = ['  ', 'NI', 'NI', 'AL']
-    integer,           parameter :: RUN_CASE(NRUNS)    = [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4]
-    character(len=11), parameter :: RUN_NAME(NRUNS)    = [character(len=11) :: 'pt', 'pt_disc', 'ptni', 'noel',&
-        &'noel_disc', 'pt', 'ptni', 'ptni_halves', 'noel', 'noel_disc', 'pt', 'ptni', 'pt', 'ptal', 'noel', 'noel_disc']
-    character(len=5),  parameter :: RUN_EL(NRUNS)      = [character(len=5) :: 'Pt', 'Pt', 'Pt,Ni', '', '', 'Pt',&
-        &'Pt,Ni', 'Pt,Ni', '', '', 'Pt', 'Pt,Ni', 'Pt', 'Pt,Al', '', '']
-    logical,           parameter :: RUN_KEY(NRUNS)     = [.false., .true., .false., .false., .true., .false., .false.,&
+    integer,           parameter :: RUN_CASE(NRUNS)    = [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4]
+    character(len=11), parameter :: RUN_NAME(NRUNS)    = [character(len=11) :: 'pt', 'ptni', 'noel', 'noel_disc',&
+        &'pt', 'ptni', 'ptni_halves', 'noel', 'noel_disc', 'pt', 'ptni', 'pt', 'ptal', 'noel', 'noel_disc']
+    character(len=5),  parameter :: RUN_EL(NRUNS)      = [character(len=5) :: 'Pt', 'Pt,Ni', '', '', 'Pt', 'Pt,Ni',&
+        &'Pt,Ni', '', '', 'Pt', 'Pt,Ni', 'Pt', 'Pt,Al', '', '']
+    logical,           parameter :: RUN_DISC(NRUNS)    = [.false., .false., .false., .true., .false., .false.,&
         &.false., .false., .true., .false., .false., .false., .false., .false., .true.]
-    logical,           parameter :: RUN_HALVES(NRUNS)  = [.false., .false., .false., .false., .false., .false., .false.,&
+    logical,           parameter :: RUN_HALVES(NRUNS)  = [.false., .false., .false., .false., .false., .false.,&
         &.true., .false., .false., .false., .false., .false., .false., .false., .false.]
-    character(len=*),  parameter :: PRODUCTS(5) = [character(len=12) :: 'map_ATMS.pdb', 'map_BIN.mrc', 'map_CC.mrc',&
-        &'map_MSK.mrc', 'map_SIM.mrc']
+    ! the detect_atoms products a species run reads, copied into its directory and left unchanged by it
+    character(len=*),  parameter :: PRODUCTS(3) = [character(len=13) :: 'map_ATMS.pdb', 'map_atoms.csv', 'map_model.txt']
     type(commander_simulate_nanoparticle) :: xsim
     type(commander_detect_atoms)          :: xdet
-    type(cmdline)                         :: cline_sim, cline_det
+    type(commander_detect_atomic_species) :: xspec
+    class(cmdline), allocatable           :: cline_sim, cline_det
     type(test_gate)                       :: gate
     type(atoms)                           :: lattice
     type(string)                          :: cwd_saved, fixture_root, case_dir
@@ -573,6 +637,7 @@ subroutine exec_test_species_discovery( self, cline )
     real    :: dnn_gen, cen(3), rmax, int_el(NELEM), peak_el(NELEM), nz_s(11)
     integer :: status, nthr, nlat, icase, ir, i
     logical :: l_passed
+    allocate(cline_sim, cline_det)
     write(logfhandle,'(a)') '>>> TEST_SPECIES_DISCOVERY:'
     call set_fixed_seed(20261008)
     nthr = 8
@@ -618,8 +683,9 @@ subroutine exec_test_species_discovery( self, cline )
         if( status /= 0 ) THROW_HARD('TEST_SPECIES_DISCOVERY FAILED: could not enter a case directory')
         write(logfhandle,'(a)') '>>> CASE '//trim(CASES(icase))
         call make_fixture(icase)
+        call run_detect
         do ir = 1,NRUNS
-            if( RUN_CASE(ir) == icase ) call run_detect(ir)
+            if( RUN_CASE(ir) == icase ) call run_species(ir)
         enddo
         call compare_products(icase)
         do ir = 1,NRUNS
@@ -629,6 +695,14 @@ subroutine exec_test_species_discovery( self, cline )
         deallocate(gxyz, gb, gel, elig)
         call simple_chdir(fixture_root, status)
     enddo
+    ! the density model through detect_atoms: the floors of its unit tests on the Pt lattice
+    ! the ceilings of the measured transfer's error, by the floor rule from the profile of 2026-11-02
+    ! (20 seed offsets, 8 threads, at least the worst run plus s and the median plus 3s): uniform
+    ! median 0.0269, s 0.0077, worst 0.0497 (admissible from 0.057); gradient median 0.0499, s 0.0114,
+    ! worst 0.0826 (from 0.094). Control: a transfer not measured (flat at 1) errs by 0.6 exp(-50 s**2)
+    ! against the notch, above 0.134 below 0.17 A**-1, where the particle has its strongest power
+    call density_case('density_uniform',   0.05,  0.,   .false., 31, 0.005, 0.06)
+    call density_case('density_gradient', -0.03,  0.03, .true.,  47, 0.01,  0.10)
     call simple_chdir(cwd_saved, status)
     if( status /= 0 ) THROW_HARD('TEST_SPECIES_DISCOVERY FAILED: could not restore original directory')
     ! the fixture tree goes, pass or fail; metrics.tsv stays in the test's directory
@@ -709,7 +783,7 @@ subroutine exec_test_species_discovery( self, cline )
         enddo
     end subroutine ground_truth
 
-    ! the aperture intensity of discover_species for an atom alone at voxel c: the voxel sum within d_NN / 2 times
+    ! the aperture intensity of detect_atomic_species for an atom alone at voxel c: the voxel sum within d_NN / 2 times
     ! smpd**3 over the enclosed fraction of the Gaussian fitted in the same sphere
     real function aperture_intensity( r, c )
         real, intent(in) :: r(:,:,:), c
@@ -986,6 +1060,172 @@ subroutine exec_test_species_discovery( self, cline )
         endif
     end subroutine prune_eligibility
 
+    ! The lattice rendered by the density model with known profiles (beta0, gamma0), transfer (the notch
+    ! 1 - 0.6 exp(-200 s**2/4)) and noise at the real maps' level (atomic_density_model.md, Progress of phase 1);
+    ! detect_atoms without an element must give beta within beta_tol (0.005 for the uniform particle; 0.01 for the
+    ! gradient particle, the unit tester's tolerance for that profile: at its seed the fixture gives 0.0059-0.0063 with
+    ! the true transfer given, ruling 5 of atomic_density_model.md), the width rise from 12 to 5 neighbours within
+    ! 1 A**2, and its measured transfer (_transfer.tsv) within terr_ceil of the notch where the atoms have power
+    subroutine density_case( tag, beta0, gamma0, l_corr, seed, beta_tol, terr_ceil )
+        use simple_rnd,                  only: gasdev
+        use simple_nano_density,         only: render_atoms, halo_kernel
+        use simple_nano_density_tester,  only: rendered_transfer
+        character(len=*), intent(in) :: tag
+        real,             intent(in) :: beta0, gamma0, beta_tol, terr_ceil
+        logical,          intent(in) :: l_corr
+        integer,          intent(in) :: seed
+        real,    parameter :: HAMP = 0.6, HBFAC = 200., BP = 28., PEAK_SNR = 15., CORR_SD = 0.23
+        type(atoms)          :: found
+        type(string)         :: dir
+        real,    allocatable :: xyz(:,:), ints(:), bfacs(:), map(:,:,:), noise(:,:,:), sm(:,:,:), t_sm(:), t_ref(:)
+        logical, allocatable :: have(:)
+        integer, allocatable :: cn(:)
+        real    :: sig, mn, beta, gamma, b_p, tau, dmin, recall, ds, terr
+        integer :: j, l, st, i, k, nfound, nmatch, nchk
+        write(logfhandle,'(a)') '>>> CASE '//tag
+        dir = filepath(fixture_root, tag)
+        call simple_mkdir(dir)
+        call simple_chdir(dir, st)
+        if( st /= 0 ) THROW_HARD('TEST_SPECIES_DISCOVERY FAILED: could not enter a case directory')
+        allocate(xyz(3,nlat), ints(nlat), bfacs(nlat), cn(nlat))
+        xyz = lat / SMPD_FIX + 1.
+        do j = 1,nlat
+            cn(j) = count(sqrt(sum((lat - spread(lat(:,j), 2, nlat))**2, dim=1)) < 1.1 * dnn_gen) - 1
+        enddo
+        call set_fixed_seed(seed)
+        do j = 1,nlat
+            tau = 0.06
+            if( cn(j) >= 12 ) tau = 0.03
+            ints(j)  = exp(beta0 * real(cn(j) - 12) + gasdev(0., tau))
+            bfacs(j) = exp(log(BP) + gamma0 * real(12 - cn(j)) + gasdev(0., 0.02))
+        enddo
+        allocate(map(BOX,BOX,BOX), noise(BOX,BOX,BOX))
+        call render_atoms(map, SMPD_FIX, xyz, ints, bfacs, HAMP, HBFAC)
+        sig = halo_kernel(0., BP, HAMP, HBFAC) / PEAK_SNR
+        do k = 1,BOX
+            do l = 1,BOX
+                do i = 1,BOX
+                    noise(i,l,k) = gasdev(0., 1.)
+                enddo
+            enddo
+        enddo
+        if( l_corr )then
+            allocate(sm(BOX,BOX,BOX))
+            call gauss_filter3D(noise, CORR_SD / SMPD_FIX, sm)
+            noise = sm
+        endif
+        mn    = sum(noise) / real(size(noise))
+        noise = (noise - mn) * sig / sqrt(sum((noise - mn)**2) / real(size(noise) - 1))
+        map   = map + noise
+        call write_vol(map, 'map.mrc')
+        call cline_det%set('prg',  'detect_atoms')
+        call cline_det%set('mkdir', 'no')
+        call cline_det%set('vol1', 'map.mrc')
+        call cline_det%set('smpd', SMPD_FIX)
+        call cline_det%set('nthr', nthr)
+        call xdet%execute(cline_det)
+        call cline_det%kill
+        ! the found atoms (strong and weak) against the generating ones
+        call found%new(string('map_ATMS.pdb'))
+        nfound = found%get_n()
+        nmatch = 0
+        do j = 1,nlat
+            dmin = huge(1.)
+            do l = 1,nfound
+                dmin = min(dmin, norm2(found%get_coord(l) - lat(:,j)))
+            enddo
+            if( dmin <= MATCH_NN_FRAC * dnn_gen ) nmatch = nmatch + 1
+        enddo
+        call found%kill
+        recall = real(nmatch) / real(nlat)
+        call gate%report(tag//': generating atoms found', recall)
+        call gate%report(tag//': found atoms', real(nfound))
+        beta  = key_value('map_model.txt', 'beta')
+        gamma = key_value('map_model.txt', 'gamma')
+        b_p   = key_value('map_model.txt', 'B_p')
+        call check_false_weak(tag, 'map_model.txt')
+        call gate%metric(tag//': beta error', abs(beta - beta0), beta_tol, abs(beta - beta0) <= beta_tol, upper=.true.)
+        call gate%metric(tag//': width rise error (A**2)', abs(width_rise(b_p, gamma) - width_rise(BP, gamma0)), 1.,&
+            &abs(width_rise(b_p, gamma) - width_rise(BP, gamma0)) <= 1., upper=.true.)
+        ! the measured transfer against the notch, averaged over each shell with the true atoms' power (what a perfect
+        ! measurement returns), over the shells holding at least 1% of the peak power
+        call read_transfer_smoothed('map_transfer.tsv', ds, t_sm)
+        call rendered_transfer(xyz, ints, bfacs, BOX, SMPD_FIX, HAMP, HBFAC, ds, size(t_sm), t_ref, have)
+        nchk = count(have)
+        terr = maxval(abs(t_sm - t_ref), mask=have)
+        call gate%report(tag//': shells where the atoms have power', real(nchk))
+        call gate%metric(tag//': largest error of the measured transfer', terr, terr_ceil, terr <= terr_ceil, upper=.true.)
+        call simple_chdir(fixture_root, st)
+    end subroutine density_case
+
+    ! the smoothed transfer (column T_smoothed) of a _transfer.tsv and its shell width
+    subroutine read_transfer_smoothed( fname, ds, t )
+        character(len=*),  intent(in)  :: fname
+        real,              intent(out) :: ds
+        real, allocatable, intent(out) :: t(:)
+        character(len=512) :: line
+        real    :: vals(6), tbuf(5000)
+        integer :: funit, ios, m
+        if( .not. file_exists(fname) ) THROW_HARD('TEST_SPECIES_DISCOVERY FAILED: detect_atoms wrote no _transfer.tsv')
+        call fopen(funit, file=string(fname), status='old', action='read', iostat=ios)
+        call fileiochk('read_transfer_smoothed opening '//fname, ios)
+        read(funit,'(A)', iostat=ios) line
+        m  = 0
+        ds = 0.
+        do
+            read(funit,'(A)', iostat=ios) line
+            if( ios /= 0 ) exit
+            read(line,*, iostat=ios) vals
+            if( ios /= 0 ) cycle
+            m = m + 1
+            tbuf(m) = vals(6)
+            if( m == 1 ) ds = vals(2) - vals(1)
+        enddo
+        call fclose(funit)
+        if( m < 1 ) THROW_HARD('TEST_SPECIES_DISCOVERY FAILED: the _transfer.tsv holds no shell')
+        t = tbuf(:m)
+    end subroutine read_transfer_smoothed
+
+    ! a particle of one species with every atom found at level 1: no more weak atoms than the expected false count of
+    ! the recovery's calibration (stages A and B)
+    subroutine check_false_weak( tag, fname )
+        character(len=*), intent(in) :: tag, fname
+        real :: nweak, efalse
+        nweak  = key_value(fname, 'weak_atoms')
+        efalse = key_value(fname, 'expected_false_A') + key_value(fname, 'expected_false_B')
+        call gate%report(tag//': expected false weak atoms', efalse)
+        call gate%metric(tag//': weak atoms', nweak, efalse, nweak <= efalse, upper=.true.)
+    end subroutine check_false_weak
+
+    ! B_p (exp(7 gamma) - 1): the width rise from 12 to 5 neighbours
+    real function width_rise( b_p, gamma )
+        real, intent(in) :: b_p, gamma
+        width_rise = b_p * (exp(7. * gamma) - 1.)
+    end function width_rise
+
+    ! the value of key in a key = value text file (_model.txt, the species reports); not a number when the
+    ! file or the key is missing
+    real function key_value( fname, key )
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
+        character(len=*), intent(in) :: fname, key
+        character(len=STDLEN) :: line
+        integer :: funit, ios, p
+        key_value = ieee_value(1., ieee_quiet_nan)
+        if( .not. file_exists(fname) ) return
+        call fopen(funit, file=string(fname), status='old', action='read', iostat=ios)
+        if( ios /= 0 ) return
+        do
+            read(funit,'(a)', iostat=ios) line
+            if( ios /= 0 ) exit
+            p = index(line, '=')
+            if( p < 2 ) cycle
+            if( trim(adjustl(line(:p-1))) /= key ) cycle
+            read(line(p+1:),*,iostat=ios) key_value
+            exit
+        enddo
+        call fclose(funit)
+    end function key_value
+
     subroutine write_vol( arr, fname )
         real,             intent(in) :: arr(:,:,:)
         character(len=*), intent(in) :: fname
@@ -1021,74 +1261,79 @@ subroutine exec_test_species_discovery( self, cline )
         call one%kill
     end function own_peak
 
-    ! detect_atoms on the case's map in a directory of its own, with the run's element value, key and half maps
-    subroutine run_detect( ir )
-        integer, intent(in) :: ir
+    ! detect_atoms on the case's map, in directory det
+    subroutine run_detect
         integer :: st
-        call simple_mkdir(trim(RUN_NAME(ir)))
-        call simple_chdir(trim(RUN_NAME(ir)), st)
+        call simple_mkdir('det')
+        call simple_chdir('det', st)
         call cline_det%set('prg',  'detect_atoms')
+        call cline_det%set('mkdir', 'no')
         call cline_det%set('vol1', filepath(case_dir, 'map.mrc'))
         call cline_det%set('smpd', SMPD_FIX)
         call cline_det%set('nthr', nthr)
-        if( len_trim(RUN_EL(ir)) > 0 ) call cline_det%set('element', trim(RUN_EL(ir)))
-        if( RUN_KEY(ir) ) call cline_det%set('discover_species', 'yes')
-        if( RUN_HALVES(ir) )then
-            call cline_det%set('vol_even', filepath(case_dir, 'even.mrc'))
-            call cline_det%set('vol_odd',  filepath(case_dir, 'odd.mrc'))
-        endif
         call xdet%execute(cline_det)
         call cline_det%kill
         call simple_chdir(case_dir, st)
     end subroutine run_detect
 
-    ! a run with discovery: the key, a list, or both
+    ! a run: the products of detect_atoms copied into its directory, then detect_atomic_species on them unless it is
+    ! the species-free run
+    subroutine run_species( ir )
+        integer, intent(in) :: ir
+        integer :: st, ip
+        call simple_mkdir(trim(RUN_NAME(ir)))
+        do ip = 1,size(PRODUCTS)
+            call simple_copy_file(string('det/'//trim(PRODUCTS(ip))), string(trim(RUN_NAME(ir))//'/'//trim(PRODUCTS(ip))))
+        enddo
+        if( .not. species_run(ir) ) return
+        call simple_chdir(trim(RUN_NAME(ir)), st)
+        call cline_det%set('prg',     'detect_atomic_species')
+        call cline_det%set('vol1',    filepath(case_dir, 'map.mrc'))
+        call cline_det%set('pdbfile', 'map_ATMS.pdb')
+        call cline_det%set('smpd',    SMPD_FIX)
+        call cline_det%set('nthr',    nthr)
+        if( len_trim(RUN_EL(ir)) > 0 ) call cline_det%set('element', trim(RUN_EL(ir)))
+        if( RUN_HALVES(ir) )then
+            call cline_det%set('vol_even', filepath(case_dir, 'even.mrc'))
+            call cline_det%set('vol_odd',  filepath(case_dir, 'odd.mrc'))
+        endif
+        call xspec%execute(cline_det)
+        call cline_det%kill
+        call simple_chdir(case_dir, st)
+    end subroutine run_species
+
+    ! a run that calls detect_atomic_species: with an element list or the class count free
+    logical function species_run( ir )
+        integer, intent(in) :: ir
+        species_run = RUN_DISC(ir) .or. len_trim(RUN_EL(ir)) > 0
+    end function species_run
+
+    ! a run with discovery: the class count free or a list of two elements or more
     logical function discovery( ir )
         integer, intent(in) :: ir
-        discovery = RUN_KEY(ir) .or. index(RUN_EL(ir), ',') > 0
+        discovery = RUN_DISC(ir) .or. index(RUN_EL(ir), ',') > 0
     end function discovery
 
-    ! the five present products are identical across the runs of a case with the same first element (none, or Pt)
+    ! detect_atomic_species leaves the products of detect_atoms it reads unchanged
     subroutine compare_products( ic )
         integer, intent(in) :: ic
-        integer :: ir, iref, ip
+        integer :: ir, ip
         logical :: same
         do ir = 1,NRUNS
             if( RUN_CASE(ir) /= ic ) cycle
-            ! the first run of the case with the same level-1 element
-            iref = findloc([(RUN_CASE(i) == ic .and. RUN_EL(i)(1:2) == RUN_EL(ir)(1:2), i=1,NRUNS)], .true., dim=1)
-            if( iref == ir ) cycle
+            if( .not. species_run(ir) ) cycle
             same = .true.
             do ip = 1,size(PRODUCTS)
-                if( .not. files_identical(string(trim(RUN_NAME(iref))//'/'//trim(PRODUCTS(ip))),&
+                if( .not. files_identical(string('det/'//trim(PRODUCTS(ip))),&
                     &string(trim(RUN_NAME(ir))//'/'//trim(PRODUCTS(ip)))) )then
                     same = .false.
                     write(logfhandle,'(a)') '    differs: '//trim(PRODUCTS(ip))
                 endif
             enddo
-            call gate%check(trim(CASES(ic))//'/'//trim(RUN_NAME(ir))//': present products identical to '//trim(RUN_NAME(iref)), same)
+            call gate%check(trim(CASES(ic))//'/'//trim(RUN_NAME(ir))//': detect_atoms products unchanged by the species call',&
+                &same)
         enddo
     end subroutine compare_products
-
-    ! value of key in the key = value report
-    real function report_value( fname, key )
-        character(len=*), intent(in) :: fname, key
-        character(len=256) :: line
-        integer :: u, ios, ieq
-        report_value = -huge(1.)
-        open(newunit=u, file=fname, status='old', action='read', iostat=ios)
-        if( ios /= 0 ) return
-        do
-            read(u,'(a)',iostat=ios) line
-            if( ios /= 0 ) exit
-            ieq = index(line, '=')
-            if( ieq < 2 ) cycle
-            if( trim(adjustl(line(:ieq-1))) /= key ) cycle
-            read(line(ieq+1:),*,iostat=ios) report_value
-            exit
-        enddo
-        close(u)
-    end function report_value
 
     ! text value of key in the key = value report
     function report_string( fname, key ) result( val )
@@ -1111,12 +1356,13 @@ subroutine exec_test_species_discovery( self, cline )
         close(u)
     end function report_string
 
-    ! the numeric rows of a comma-separated table with a header line; the header gives the column count
+    ! the numeric rows of a comma-separated table with a header line; the header gives the column count, and the
+    ! atom labels of _atoms.csv read as 0 (strong) and 1 (weak)
     subroutine read_table( fname, rows )
         character(len=*),  intent(in)  :: fname
         real, allocatable, intent(out) :: rows(:,:)
         character(len=1024) :: line
-        integer :: u, ios, nrow, ncol, j, l
+        integer :: u, ios, nrow, ncol, j, l, p
         nrow = nlines(string(fname)) - 1
         open(newunit=u, file=fname, status='old', action='read')
         read(u,'(a)') line
@@ -1124,6 +1370,10 @@ subroutine exec_test_species_discovery( self, cline )
         allocate(rows(ncol,max(nrow,0)), source=0.)
         do j = 1,nrow
             read(u,'(a)') line
+            p = index(line, ',strong,')
+            if( p > 0 ) line = line(:p)//'0'//line(p+7:)
+            p = index(line, ',weak,')
+            if( p > 0 ) line = line(:p)//'1'//line(p+5:)
             do l = 1,len_trim(line)
                 if( line(l:l) == ',' ) line(l:l) = ' '
             enddo
@@ -1143,16 +1393,20 @@ subroutine exec_test_species_discovery( self, cline )
     ! a run against the generating model
     subroutine evaluate( ir )
         integer, intent(in) :: ir
-        character(len=:), allocatable :: tag, csv, txt, pdb, rad_csv
+        character(len=:), allocatable :: tag, csv, txt, pdb, rad_csv, atoms_csv
         character(len=2), allocatable :: syms(:)
-        real,    allocatable :: rows(:,:), xyz(:,:), radial(:,:), rsort(:)
+        real,    allocatable :: rows(:,:), arows(:,:), xyz(:,:), radial(:,:), rsort(:), class_intensity(:), posterior_expected(:)
         integer, allocatable :: match(:), hits(:), order(:), cls(:), sel(:)
         type(atoms) :: found_atms
         character(len=2) :: el2
-        real    :: tol, dpt, ratio, ratio_gen, rise_fit, rise_gen, rin, rout, min_light
+        real    :: tol, dpt, ratio, ratio_gen, rise_fit, rise_gen, rin, rout, min_light, model_field_err
+        real    :: posterior_field_err, posterior_effect, posterior_softness, coord_slope, expected_class, class_gap
+        real    :: pmax
+        integer :: nwrong_conf, nuncertain
         integer, parameter :: MAXLEV = 8
-        integer :: nrow, j, nfalse, nwrong, k_found, nrec, nsh, nin, nout, kc, j1, j2, ic, nfound(0:2,0:MAXLEV)
-        logical :: l_list, l_disc
+        integer :: nrow, ncol, j, nfalse, nwrong, k_found, nrec, nsh, nin, nout, kc, j1, j2, ic, nfound(0:2,0:MAXLEV)
+        integer :: jmod, jpost, jocc
+        logical :: l_list, l_disc, pdb_fields_ok
         ic     = RUN_CASE(ir)
         el2    = SECOND(ic)
         tag    = trim(CASES(ic))//'/'//trim(RUN_NAME(ir))
@@ -1161,14 +1415,86 @@ subroutine exec_test_species_discovery( self, cline )
         csv    = trim(RUN_NAME(ir))//'/map_species.csv'
         txt    = trim(RUN_NAME(ir))//'/map_species.txt'
         pdb    = trim(RUN_NAME(ir))//'/map_species.pdb'
-        ! found atoms: the species table with discovery, the present atoms otherwise
+        atoms_csv = trim(RUN_NAME(ir))//'/map_atoms.csv'
+        ! found atoms: the species table with discovery (the recovery fields in the model's atom table, same rows),
+        ! the present atoms otherwise
         if( l_disc )then
             call gate%check(tag//': species files written', file_exists(csv) .and. file_exists(txt) .and. file_exists(pdb))
             if( .not. (file_exists(csv) .and. file_exists(txt) .and. file_exists(pdb)) ) return
+            call gate%check(tag//': atom table written', file_exists(atoms_csv))
+            if( .not. file_exists(atoms_csv) ) return
             call read_table(csv, rows)
+            call read_table(atoms_csv, arows)
             nrow = size(rows, 2)
-            xyz  = rows(3:5,:)
-            cls  = nint(rows(16,:))
+            call gate%check(tag//': species and atom tables have the same rows', size(arows, 2) == nrow)
+            if( size(arows, 2) /= nrow ) return
+            xyz  = rows(2:4,:)
+            cls  = nint(rows(10,:))
+            ! the prior's columns (MODEL_INTENSITY, POSTERIOR_INTENSITY, OCCUPANCY, before SD_POSTERIOR and TAU_COORD,
+            ! the last two): the posterior intensity is the class/environment intensity S_k exp(beta (c - 12)) averaged
+            ! over the posteriors, the occupancy times the hard-class intensity is the fitted intensity capped at that
+            ! intensity, and the PDB carries B and occupancy
+            ncol    = size(rows, 1)
+            jmod    = ncol - 4
+            jpost   = ncol - 3
+            jocc    = ncol - 2
+            k_found = nint(key_value(txt, 'K'))
+            coord_slope = key_value(txt, 'beta')
+            allocate(class_intensity(k_found), posterior_expected(nrow), source=0.)
+            do kc = 1, k_found
+                class_intensity(kc) = key_value(txt, 'class_intensity_'//int2str(kc))
+            enddo
+            do j = 1, nrow
+                do kc = 1, k_found
+                    expected_class = class_intensity(kc) * exp(coord_slope * (rows(6,j) - 12.))
+                    posterior_expected(j) = posterior_expected(j) + rows(10+kc,j) * expected_class
+                enddo
+            enddo
+            ! 1.e-5 relative here and below: round-off slack of a value recomputed from the written table (not derived)
+            posterior_field_err = maxval(abs(rows(jpost,:) - posterior_expected))
+            call gate%check(tag//': prior intensity is the species-posterior expectation', &
+                &posterior_field_err <= 1.e-5 * max(1., maxval(abs(posterior_expected))))
+            if( k_found > 1 )then
+                posterior_effect = maxval(abs(rows(jpost,:) - rows(jmod,:)))
+                posterior_softness = maxval(1. - maxval(rows(11:10+k_found,:), dim=1))
+                ! the effect of a softness s is s times the gap between the class intensities at the atom's
+                ! coordination, so the floor is the softness gate times the smallest such gap (sixth ruling): the two
+                ! tolerances agree by construction
+                class_gap = huge(1.)
+                do kc = 1, k_found - 1
+                    class_gap = min(class_gap, abs(class_intensity(kc) - class_intensity(kc+1)))
+                enddo
+                class_gap = class_gap * minval(exp(coord_slope * (rows(6,:) - 12.)))
+                if( posterior_softness > 1.e-6 )then
+                    call gate%check(tag//': soft species probabilities affect the prior intensity', &
+                        &posterior_effect > 1.e-6 * class_gap)
+                else
+                    call gate%report(tag//': largest posterior-intensity change for effectively hard labels', posterior_effect)
+                endif
+            endif
+            model_field_err = maxval(abs(rows(jocc,:) * rows(jmod,:) - min(rows(7,:), rows(jmod,:))))
+            call gate%check(tag//': occupancy times hard-class intensity reproduces the capped fitted intensity', &
+                &model_field_err <= 1.e-5 * max(1., maxval(abs(rows(7,:)))))
+            ! the two columns of the species call: the posterior's standard error, finite and non-negative with its
+            ! maximum in the report, and the coordination spread its variance carries, finite and non-negative (zero where
+            ! the measurement variance holds the whole spread of a coordination bin)
+            call gate%check(tag//': posterior standard errors finite, non-negative, their maximum in the report', &
+                &all(rows(ncol-1,:) >= 0.) .and. all(rows(ncol-1,:) < huge(1.)) .and.&
+                &abs(maxval(rows(ncol-1,:)) - key_value(txt, 'max_sd_posterior')) <=&
+                &1.e-5 * max(1.e-6, key_value(txt, 'max_sd_posterior')))
+            call gate%check(tag//': coordination spread finite and non-negative for every atom',&
+                &all(rows(ncol,:) >= 0.) .and. all(rows(ncol,:) < huge(1.)))
+            call gate%report(tag//': median posterior standard error', key_value(txt, 'median_sd_posterior'))
+            call found_atms%new(string(pdb))
+            pdb_fields_ok = found_atms%get_n() == nrow
+            if( pdb_fields_ok )then
+                do j = 1, nrow
+                    if( abs(found_atms%get_beta(j) - rows(8,j)) > 0.0051 ) pdb_fields_ok = .false.
+                    if( abs(found_atms%get_occupancy(j) - rows(jocc,j)) > 0.0051 ) pdb_fields_ok = .false.
+                enddo
+            endif
+            call gate%check(tag//': species PDB carries fitted B and occupancy', pdb_fields_ok)
+            call found_atms%kill
         else
             call gate%check(tag//': atoms written', file_exists(trim(RUN_NAME(ir))//'/map_ATMS.pdb'))
             if( .not. file_exists(trim(RUN_NAME(ir))//'/map_ATMS.pdb') ) return
@@ -1199,13 +1525,14 @@ subroutine exec_test_species_discovery( self, cline )
             dpt = minval(sqrt(sum((gxyz - spread(xyz(:,j), 2, nlat))**2, dim=1)), mask=gel == ELEMS(1))
             if( l_disc )then
                 write(logfhandle,'(a,3f9.3,a,f7.3,a,i0,a,f8.3)') '    false atom at ', xyz(:,j), ' A, nearest PT ', dpt,&
-                    &' A, stage ', nint(rows(8,j)), ', detection z ', rows(10,j)
+                    &' A, stage ', nint(arows(13,j)), ', detection z ', arows(15,j)
             else
                 write(logfhandle,'(a,3f9.3,a,f7.3,a)') '    false atom at ', xyz(:,j), ' A, nearest PT ', dpt, ' A'
             endif
         enddo
         call gate%report(tag//': found atoms', real(nrow))
         call gate%metric(tag//': false atoms', real(nfalse), real(MAX_FALSE), nfalse <= MAX_FALSE, upper=.true.)
+        if( trim(el2) == '' ) call check_false_weak(tag, trim(RUN_NAME(ir))//'/map_model.txt')
         if( l_disc .or. trim(el2) == '' )then
             call gate%metric(tag//': PT recall over eligible', recall_of(elig .and. gel == ELEMS(1), hits), MIN_PT_RECALL,&
                 &recall_of(elig .and. gel == ELEMS(1), hits) >= MIN_PT_RECALL)
@@ -1219,8 +1546,7 @@ subroutine exec_test_species_discovery( self, cline )
         if( .not. l_disc ) return
         call gate%metric(tag//': recall over all eligible', recall_of(elig, hits), MIN_ALL_RECALL,&
             &recall_of(elig, hits) >= MIN_ALL_RECALL)
-        k_found = nint(report_value(txt, 'K'))
-        nrec    = count(nint(rows(2,:)) == 1)
+        nrec    = count(nint(arows(12,:)) == 1)
         call gate%report(tag//': K', real(k_found))
         call gate%report(tag//': recovered atoms', real(nrec))
         ! the species PDB: one atom per table row, the element column the class's symbol
@@ -1247,8 +1573,8 @@ subroutine exec_test_species_discovery( self, cline )
         call gate%check(tag//': noise source '//report_string(txt, 'noise_source'),&
             &RUN_HALVES(ir) .eqv. report_string(txt, 'noise_source') == 'half_maps')
         if( RUN_HALVES(ir) )then
-            call gate%metric(tag//': half-map label agreement', report_value(txt, 'halfmap_label_agreement'),&
-                &MIN_HALF_AGREE, report_value(txt, 'halfmap_label_agreement') >= MIN_HALF_AGREE)
+            call gate%metric(tag//': half-map label agreement', key_value(txt, 'halfmap_label_agreement'),&
+                &MIN_HALF_AGREE, key_value(txt, 'halfmap_label_agreement') >= MIN_HALF_AGREE)
         endif
         if( trim(el2) == '' )then
             ! a single species
@@ -1256,25 +1582,37 @@ subroutine exec_test_species_discovery( self, cline )
                 call gate%check(tag//': no recovered atom', nrec == 0)
                 call gate%check(tag//': two-class fit inadmissible', report_string(txt, 'admissible_K2') == 'no')
                 ! the margin of the floor: admissibility needs a separation D of 3 or more
-                call gate%report(tag//': class 2 atoms (forced K = 2)', report_value(txt, 'class_atoms_2'))
-                call gate%report(tag//': separation D of the forced classes', report_value(txt, 'separation_D_1_2'))
+                call gate%report(tag//': class 2 atoms (forced K = 2)', key_value(txt, 'class_atoms_2'))
+                call gate%report(tag//': separation D of the forced classes', key_value(txt, 'separation_D_1_2'))
             else
                 call gate%check(tag//': K = 1', k_found == 1)
                 call gate%check(tag//': no recovered atom', nrec == 0)
             endif
         else
-            ! two species: every matched atom carries its generating element (class 1 PT, class 2 the second element)
-            nwrong = 0
+            ! two species: no confident call is wrong (sixth ruling): every matched atom whose largest posterior is
+            ! UNCERTAIN_POST or more carries its generating element (class 1 PT, class 2 the second element); the atoms
+            ! below are the uncertain calls, expected at the class boundary, counted and listed with their posteriors
+            nwrong      = 0
+            nwrong_conf = 0
+            nuncertain  = 0
             do j = 1,nrow
                 if( match(j) == 0 ) cycle
+                pmax = maxval(rows(11:10+k_found,j))
+                if( pmax < UNCERTAIN_POST )then
+                    nuncertain = nuncertain + 1
+                    write(logfhandle,'(a,3f9.3,a,a,a,i0,a,f6.3,a,f6.3)') '    uncertain call at ', xyz(:,j), ' A: ',&
+                        &gel(match(j)), ' in class ', cls(j), ', posteriors ', rows(11,j), ' and ', rows(12,j)
+                endif
                 if( cls(j) == 1 .and. gel(match(j)) == ELEMS(1) ) cycle
                 if( cls(j) == 2 .and. gel(match(j)) == el2 )   cycle
                 nwrong = nwrong + 1
-                write(logfhandle,'(a,3f9.3,a,a,a,i0,a,es12.4,a,f7.3,a,i0)') '    wrong element at ', xyz(:,j), ' A: ',&
-                    &gel(match(j)), ' in class ', cls(j), ', aperture intensity ', rows(14,j), ', radius ', rows(6,j),&
-                    &' A, stage ', nint(rows(8,j))
+                if( pmax >= UNCERTAIN_POST ) nwrong_conf = nwrong_conf + 1
+                write(logfhandle,'(a,3f9.3,a,a,a,i0,a,f6.3,a,es12.4,a,f7.3,a,i0)') '    wrong element at ', xyz(:,j), ' A: ',&
+                    &gel(match(j)), ' in class ', cls(j), ', largest posterior ', pmax, ', aperture intensity ', rows(9,j),&
+                    &', radius ', rows(5,j), ' A, stage ', nint(arows(13,j))
             enddo
             call gate%report(tag//': atoms with the wrong element', real(nwrong))
+            call gate%report(tag//': uncertain calls (largest posterior below 0.9)', real(nuncertain))
             ! the classes in the right order: class 1, the brighter, holds the heavier element
             call gate%check(tag//': classes in the right order (class 1 PT, the brighter)',&
                 &count(match > 0 .and. cls == 1 .and. gel(max(match,1)) == ELEMS(1)) >&
@@ -1282,13 +1620,13 @@ subroutine exec_test_species_discovery( self, cline )
                 &count(match > 0 .and. cls == 2 .and. gel(max(match,1)) == el2) >&
                 &count(match > 0 .and. cls == 2 .and. gel(max(match,1)) == ELEMS(1)))
             if( l_list )then
-                call gate%check(tag//': every found atom carries its element', nwrong == 0)
+                call gate%check(tag//': every confident call (largest posterior 0.9 or more) carries its element', nwrong_conf == 0)
                 call gate%check(tag//': two-class fit admissible', report_string(txt, 'admissible_K2') == 'yes')
                 min_light = MIN_LIGHT_RECALL
                 if( trim(el2) == 'AL' ) min_light = MIN_AL_RECALL
                 call gate%metric(tag//': '//el2//' recall over eligible', recall_of(elig .and. gel == el2, hits),&
                     &min_light, recall_of(elig .and. gel == el2, hits) >= min_light)
-                ratio     = report_value(txt, 'class_ratio_2')
+                ratio     = key_value(txt, 'class_ratio_2')
                 ratio_gen = int_el(elem_index(el2)) / int_el(1)
                 call gate%report(tag//': single-atom intensity ratio', ratio_gen)
                 ! the ratio is reported, not floored: it is biased low on filtered maps (ruling of 2026-10-09, second)
@@ -1299,8 +1637,8 @@ subroutine exec_test_species_discovery( self, cline )
                 do j = 1,nrow
                     if( match(j) == 0 ) cycle
                     if( gel(match(j)) /= el2 ) cycle
-                    nfound(min(max(nint(rows(8,j)),0),2), min(max(nint(rows(9,j)),0),MAXLEV)) = &
-                        &nfound(min(max(nint(rows(8,j)),0),2), min(max(nint(rows(9,j)),0),MAXLEV)) + 1
+                    nfound(min(max(nint(arows(13,j)),0),2), min(max(nint(arows(14,j)),0),MAXLEV)) = &
+                        &nfound(min(max(nint(arows(13,j)),0),2), min(max(nint(arows(14,j)),0),MAXLEV)) + 1
                 enddo
                 do j1 = 0,2
                     do j2 = 0,MAXLEV
@@ -1311,7 +1649,7 @@ subroutine exec_test_species_discovery( self, cline )
                 enddo
             else
                 call gate%check(tag//': K = 2', k_found == 2)
-                call gate%check(tag//': every label right, class 1 PT', nwrong == 0)
+                call gate%check(tag//': every confident label right (largest posterior 0.9 or more), class 1 PT', nwrong_conf == 0)
             endif
         endif
         ! widths, reported: the stage-2 B of the PT class (class 1) from its inner to its outer radial shell, and the
@@ -1333,7 +1671,7 @@ subroutine exec_test_species_discovery( self, cline )
         nin  = nint(radial(3,sel(1)))
         nout = nint(radial(3,sel(nsh)))
         order = pack([(j, j=1,nrow)], cls == 1)
-        rsort = rows(6,order)
+        rsort = rows(5,order)
         call hpsort(rsort, order)
         call gate%check(tag//': radial shells cover the PT class', nint(sum(radial(3,sel))) == size(order))
         rin  = 0.
@@ -1359,17 +1697,29 @@ subroutine exec_test_species_discovery( self, cline )
         call gate%report(tag//': fitted over generated rise of B', rise_fit / rise_gen)
     end subroutine evaluate
 
-    ! light case: element=Pt must miss Al atoms that the list run finds, or the fixture does not test the recovery
+    ! light case: the level-1 (strong) atoms of element=Pt must miss Al atoms that the recovery finds, or the fixture
+    ! does not test the recovery; the weak atoms of the same run are the recovery's (label in map_atoms.csv)
     subroutine light_plain_recall( ic )
         integer, intent(in) :: ic
         type(atoms) :: found_atms
         integer, allocatable :: hits(:)
+        real,    allocatable :: arows(:,:)
         real    :: xyz(3), rec
         integer :: j, m
         if( trim(CASES(ic)) /= 'light' ) return
         call found_atms%new(string('pt/map_ATMS.pdb'))
+        call gate%check('light/pt: atom table written', file_exists('pt/map_atoms.csv'))
+        if( .not. file_exists('pt/map_atoms.csv') )then
+            call found_atms%kill
+            return
+        endif
+        call read_table('pt/map_atoms.csv', arows)
+        call gate%check('light/pt: atom table rows match the atoms', size(arows, 2) == found_atms%get_n())
         allocate(hits(nlat), source=0)
         do j = 1,found_atms%get_n()
+            if( j <= size(arows, 2) )then
+                if( nint(arows(12,j)) /= 0 ) cycle
+            endif
             xyz = found_atms%get_coord(j)
             m   = minloc(sum((gxyz - spread(xyz, 2, nlat))**2, dim=1), dim=1)
             if( norm2(gxyz(:,m) - xyz) <= MATCH_NN_FRAC * dnn_gen ) hits(m) = hits(m) + 1
@@ -1393,15 +1743,16 @@ subroutine exec_test_single_workflow( self, cline )
     use simple_commanders_project_ptcl, only: commander_import_particles
     use simple_commanders_project_core, only: commander_new_project
     use single_commanders_nano3D,       only: commander_autorefine3D_nano, commander_refine3D_nano
+    use single_commanders_trajectory_solve3D, only: commander_trajectory_solve3D
     use simple_test_truth_metrics,      only: dock_both_hands, carry_pose, group_errors, group_operators
     use simple_test_utils,              only: set_fixed_seed, offset_seed
     use simple_test_gate,               only: test_gate
     !$ use omp_lib,                     only: omp_set_num_threads
     class(commander_test_single_workflow), intent(inout) :: self
     class(cmdline),                        intent(inout) :: cline
-    type(cmdline)                         :: cline_sim, cline_reproject, cline_trajectory, cline_denoise
-    type(cmdline)                         :: cline_nproj, cline_imptcls, cline_an2Dnano, cline_aref3Dnano
-    type(parameters)                      :: params
+    class(cmdline), allocatable           :: cline_sim, cline_reproject, cline_trajectory, cline_denoise
+    class(cmdline), allocatable           :: cline_nproj, cline_imptcls, cline_an2Dnano, cline_aref3Dnano
+    class(parameters), allocatable        :: params
     type(commander_simulate_nanoparticle) :: xsim_nptcl
     type(commander_reproject)             :: xreproject
     type(commander_stackops)              :: xtrajectory
@@ -1411,8 +1762,9 @@ subroutine exec_test_single_workflow( self, cline )
     type(commander_analysis2D_nano)       :: xan2Dnano
     type(commander_autorefine3D_nano)     :: xaref3Dnano
     type(commander_refine3D_nano)         :: xref3Dnano
-    type(cmdline)                         :: cline_cont
-    type(sp_project)                      :: run_proj
+    type(commander_trajectory_solve3D)    :: xtsolve3D
+    class(cmdline), allocatable           :: cline_cont
+    class(sp_project), allocatable        :: run_proj
     type(oris)                            :: truth_oris
     type(string)                          :: cont_projfile
     real                                  :: pair_polar, pair_cont, pair_nopolish, pair_polish
@@ -1421,7 +1773,7 @@ subroutine exec_test_single_workflow( self, cline )
     type(string)                          :: aref_projfile, nano_projfile
     type(string)                          :: suite_name, projname, projfile, project_dir, startvol
     type(string)                          :: simulated_vol, reprojections, trajectory, denoised_trajectory
-    type(string)                          :: autorefine_dir, final_volume, run_dir
+    type(string)                          :: autorefine_dir, final_volume, run_dir, atomic_product
     type(test_gate)                       :: gate
     character(len=*), parameter           :: REPROJECTIONS_STK = 'reprojections.mrc'
     character(len=*), parameter           :: TRAJECTORY_STK    = 'simulated_trajectory.mrc'
@@ -1434,6 +1786,10 @@ subroutine exec_test_single_workflow( self, cline )
     character(len=*), parameter           :: IMPORT_DIR        = '5_import_particles'
     character(len=*), parameter           :: ANALYSIS2D_DIR    = '6_analysis2D_nano'
     character(len=*), parameter           :: CONT_DIR          = '8_refine3D_nano_cont'
+    character(len=*), parameter           :: TSOLVE3D_STAGE    = '4_trajectory_solve3D'
+    ! trajectory_solve3D's stage directories read by the checks: the pruned project after its two gates, the 3D
+    character(len=*), parameter           :: TSOLVE3D_GATED    = '7_refine3D_nano'
+    character(len=*), parameter           :: TSOLVE3D_AUTOREFINE = '11_autorefine3D_nano'
     character(len=*), parameter           :: NOPOLISH_DIR      = '9_refine3D_nano_nopolish'
     character(len=*), parameter           :: POLISH_DIR        = '10_refine3D_nano_polish'
     ! N29, Phase 9 (declared before the first run): refine3D_nano pose_cont=yes and pose_cont=no
@@ -1463,6 +1819,9 @@ subroutine exec_test_single_workflow( self, cline )
     integer,          parameter           :: NSPACE = 5000, NITERS_BETWEEN = 4
     integer,          parameter           :: TEST_SEED = 20260923
     integer,          parameter           :: NFRAMES_PER_GROUP = 10
+    ! fcc (trajectory_solve3D.md, ruling 8): trajectory_solve3D on the simulated trajectory as it is; its two gates
+    ! may lose at most MAX_FRAMES_LOST of the frames
+    real,             parameter           :: MAX_FRAMES_LOST = 0.05
     integer                               :: chdir_status
     real,             parameter           :: TRAJECTORY_SNR    = 0.2
     real,             parameter           :: MIN_VOL_CORR      = 0.90
@@ -1473,8 +1832,13 @@ subroutine exec_test_single_workflow( self, cline )
     ! 5 A the fcc median rotation error read 20 deg against 5 deg, the wurtzite one 2.9 against 1.6)
     real,             parameter           :: POSE_DOCK_LP      = 2.0
     real                               :: volume_corr, volume_fsc0143
+    type(string)                       :: tsolve3D_dir, gated_projfile
+    integer                            :: nptcls_run
+    real                               :: frames_lost
+    logical                            :: l_gates_ok
     real                               :: dock_corr_direct, dock_corr_mirrored, dock_corr_selected
     logical                            :: volume_ok
+    allocate(cline_sim, cline_reproject, cline_trajectory, cline_denoise, cline_nproj, cline_imptcls, cline_an2Dnano, cline_aref3Dnano, params, cline_cont, run_proj)
     write(logfhandle,'(a)') '>>> TEST_SINGLE_WORKFLOW:'
     if( .not. cline%defined('suite') ) THROW_HARD('The suite keyword is required; use suite=fcc or suite=wurtzite')
     suite_name = cline%get_carg('suite')
@@ -1549,53 +1913,75 @@ subroutine exec_test_single_workflow( self, cline )
     call xtrajectory%execute(cline_trajectory)
     call return_to_project_dir
 
-    call enter_workflow_stage(DENOISE_DIR, projfile)
-    call cline_denoise%set('prg',              'trajectory_denoise')
-    call cline_denoise%set('mkdir',                            'no')
-    call cline_denoise%set('stk',              trajectory%to_char())
-    call cline_denoise%set('outstk',                   DENOISED_STK)
-    call cline_denoise%set('smpd',                      params%smpd)
-    call cline_denoise%set('nthr',                      params%nthr)
-    call xdenoise%execute(cline_denoise)
-    call return_to_project_dir
+    l_gates_ok = .true.
+    if( suite_name == 'fcc' )then
+        call run_trajectory_solve3D
+    else
+        nptcls_run = NREPROJS
+        call enter_workflow_stage(DENOISE_DIR, projfile)
+        call cline_denoise%set('prg',              'trajectory_denoise')
+        call cline_denoise%set('mkdir',                            'no')
+        call cline_denoise%set('stk',              trajectory%to_char())
+        call cline_denoise%set('outstk',                   DENOISED_STK)
+        call cline_denoise%set('smpd',                      params%smpd)
+        call cline_denoise%set('nthr',                      params%nthr)
+        call xdenoise%execute(cline_denoise)
+        call return_to_project_dir
 
-    call enter_workflow_stage(IMPORT_DIR, projfile)
-    call cline_imptcls%set('prg',                'import_particles')
-    call cline_imptcls%set('nthr',                     params%nthr)
-    call cline_imptcls%set('mkdir',                            'no')
-    call cline_imptcls%set('projfile',           projfile%to_char())
-    call cline_imptcls%set('stk',     denoised_trajectory%to_char())
-    call cline_imptcls%set('smpd',                      params%smpd)
-    call cline_imptcls%set('ctf',                              'no')
-    call ximptcls%execute(cline_imptcls)
-    call return_to_project_dir
+        call enter_workflow_stage(IMPORT_DIR, projfile)
+        call cline_imptcls%set('prg',                'import_particles')
+        call cline_imptcls%set('nthr',                     params%nthr)
+        call cline_imptcls%set('mkdir',                            'no')
+        call cline_imptcls%set('projfile',           projfile%to_char())
+        call cline_imptcls%set('stk',     denoised_trajectory%to_char())
+        call cline_imptcls%set('smpd',                      params%smpd)
+        call cline_imptcls%set('ctf',                              'no')
+        call ximptcls%execute(cline_imptcls)
+        call return_to_project_dir
 
-    call enter_workflow_stage(ANALYSIS2D_DIR, projfile)
-    call cline_an2Dnano%set('prg',                'analysis2D_nano')
-    call cline_an2Dnano%set('mkdir',                           'no')
-    call cline_an2Dnano%set('projfile',          projfile%to_char())
-    call cline_an2Dnano%set('element',               params%element)
-    call cline_an2Dnano%set('nthr',                     params%nthr)
-    call xan2Dnano%execute(cline_an2Dnano)
-    if( .not. file_exists(startvol) ) THROW_HARD('analysis2D_nano did not generate '//startvol%to_char())
-    call return_to_project_dir
+        call enter_workflow_stage(ANALYSIS2D_DIR, projfile)
+        call cline_an2Dnano%set('prg',                'analysis2D_nano')
+        call cline_an2Dnano%set('mkdir',                           'no')
+        call cline_an2Dnano%set('projfile',          projfile%to_char())
+        call cline_an2Dnano%set('element',               params%element)
+        call cline_an2Dnano%set('nthr',                     params%nthr)
+        call xan2Dnano%execute(cline_an2Dnano)
+        if( .not. file_exists(startvol) ) THROW_HARD('analysis2D_nano did not generate '//startvol%to_char())
+        call return_to_project_dir
 
-    call cline_aref3Dnano%set('prg',            'autorefine3D_nano')
-    call cline_aref3Dnano%set('projfile',        projfile%to_char())
-    call cline_aref3Dnano%set('vol1',            startvol%to_char())
-    call cline_aref3Dnano%set('smpd',                   params%smpd)
-    call cline_aref3Dnano%set('element',             params%element)
-    call cline_aref3Dnano%set('nthr',                   params%nthr)
-    call cline_aref3Dnano%set('pgrp',                          'c1')
-    call cline_aref3Dnano%set('lp',                             1.5)  
-    call cline_aref3Dnano%set('mskdiam',                   MASKDIAM)
-    call cline_aref3Dnano%set('maxits',               NREFINE_ITERS)
-    call cline_aref3Dnano%set('maxits_between',     NITERS_BETWEEN)
-    call cline_aref3Dnano%set('nspace',                     NSPACE)
-    call xaref3Dnano%execute(cline_aref3Dnano)
-    call simple_getcwd(autorefine_dir)
-    final_volume = filepath(filepath(autorefine_dir, 'final_results'), &
-        &refine3D_state_vol_fbody(1)//'_iter'//int2str_pad(NREFINE_ITERS, 3)//MRC_EXT)
+        call cline_aref3Dnano%set('prg',            'autorefine3D_nano')
+        call cline_aref3Dnano%set('projfile',        projfile%to_char())
+        call cline_aref3Dnano%set('vol1',            startvol%to_char())
+        call cline_aref3Dnano%set('smpd',                   params%smpd)
+        call cline_aref3Dnano%set('nthr',                   params%nthr)
+        call cline_aref3Dnano%set('pgrp',                          'c1')
+        call cline_aref3Dnano%set('lp',                             1.5)  
+        call cline_aref3Dnano%set('mskdiam',                   MASKDIAM)
+        call cline_aref3Dnano%set('maxits',               NREFINE_ITERS)
+        call cline_aref3Dnano%set('maxits_between',     NITERS_BETWEEN)
+        call cline_aref3Dnano%set('nspace',                     NSPACE)
+        ! the atomicity-prior loop of autorefine3D_nano is covered here: the fcc suite runs trajectory_solve3D, which
+        ! refines without it
+        call cline_aref3Dnano%set('rec_backend', 'pcg')
+        call cline_aref3Dnano%set('atm_prior',   'yes')
+        call cline_aref3Dnano%set('maxits_atm',      2)
+        call xaref3Dnano%execute(cline_aref3Dnano)
+        call simple_getcwd(autorefine_dir)
+        final_volume = filepath(filepath(autorefine_dir, 'final_results'), &
+            &refine3D_state_vol_fbody(1)//'_iter'//int2str_pad(NREFINE_ITERS, 3)//MRC_EXT)
+    endif
+    if( suite_name == 'wurtzite' )then
+        atomic_product = add2fbody(final_volume, MRC_EXT, '_base')
+        if( .not. file_exists(atomic_product) ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: atomic-loop base map is missing')
+        atomic_product = add2fbody(final_volume, MRC_EXT, '_res')
+        if( .not. file_exists(atomic_product) ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: atomic-loop residual is missing')
+        atomic_product = filepath(filepath(autorefine_dir, 'final_results'), &
+            &refine3D_state_vol_fbody(1)//'_iter'//int2str_pad(NREFINE_ITERS, 3)//'_atmprior.txt')
+        if( .not. file_exists(atomic_product) ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: atomic-loop sidecar is missing')
+    endif
+    atomic_product = filepath(filepath(autorefine_dir, 'final_results'), &
+        &refine3D_state_vol_fbody(1)//'_iter'//int2str_pad(NREFINE_ITERS, 3)//'_transfer.tsv')
+    if( .not. file_exists(atomic_product) ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: the transfer table is missing')
     call validate_reconstructed_volume(simulated_vol, final_volume, params%smpd, BOX, 0.001, real(MOLDIAM), &
         &DOCK_HP, DOCK_LP, MIN_VOL_CORR, MAX_FSC0143, gate, 'autorefine3D_nano', volume_corr, volume_fsc0143, &
         &dock_corr_direct, dock_corr_mirrored, dock_corr_selected, volume_ok, corr_lp=DOCK_LP)
@@ -1605,14 +1991,15 @@ subroutine exec_test_single_workflow( self, cline )
         &string('pose_dock_docked.mrc'), dock_cc_direct, dock_cc_mirror, dock_eul, dock_shift, dock_mirrored)
     call return_to_project_dir
     if( .not. volume_ok ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: final-volume validation failed')
+    if( .not. l_gates_ok ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: the gates of trajectory_solve3D lost too many frames')
     ! N29: refine3D_nano refine=cont on the autorefine3D_nano project (projfile, the last stage's
     ! copy, which autorefine3D_nano updated in place)
     call truth_oris%new(NREPROJS, is_ptcl=.false.)
     call truth_oris%read(filepath(filepath(project_dir, REPROJECTION_DIR), TRAJECTORY_ORITAB), [1,NREPROJS])
     cont_projfile = projfile
     call run_proj%read(cont_projfile)
-    if( run_proj%os_ptcl3D%get_noris() /= NREPROJS )&
-        &THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: the autorefine3D_nano project does not hold every particle')
+    if( run_proj%os_ptcl3D%get_noris() /= nptcls_run )&
+        &THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: the autorefine3D_nano project does not hold the frames refined')
     pair_polar = group_pose_error()
     call enter_workflow_stage(CONT_DIR, cont_projfile)
     call cline_cont%set('prg',      'refine3D_nano')
@@ -1665,30 +2052,83 @@ contains
     !! (O for the face-centred cubic cluster, D6 for the wurtzite one; the clusters' exact symmetry is
     !! only C3 and C1) and, as both lattices are nearly centrosymmetric, the in-plane rotation by 180
     !! degrees. A pose off by one of them scores zero and a random one tens of degrees
+    !! The truth of a particle is that of its frame of the trajectory (a pruned project may hold fewer)
     real function group_pose_error() result( err )
         real, allocatable :: rc(:,:,:), rt(:,:,:), ops(:,:,:)
         real :: shc(2)
-        integer :: ip
-        allocate(rc(3,3,NREPROJS), rt(3,3,NREPROJS))
-        do ip = 1, NREPROJS
+        integer :: ip, iframe, np, n
+        np = run_proj%os_ptcl3D%get_noris()
+        allocate(rc(3,3,np), rt(3,3,np))
+        n = 0
+        do ip = 1, np
+            ! trajectory_solve3D records the frame before it swaps in the denoised kept frames; the hand chain keeps indstk
+            if( run_proj%os_ptcl3D%isthere(ip, 'frame') )then
+                iframe = run_proj%os_ptcl3D%get_int(ip, 'frame')
+            else
+                iframe = run_proj%os_ptcl3D%get_int(ip, 'indstk')
+            endif
+            if( iframe < 1 .or. iframe > NREPROJS ) THROW_HARD('TEST_SINGLE_WORKFLOW FAILED: particle without its frame')
+            n = n + 1
             call carry_pose(run_proj%os_ptcl3D%get_mat(ip), run_proj%os_ptcl3D%get_2Dshift(ip), dock_mirrored, BOX, &
-                &euler2m(dock_eul), dock_shift, rc(:,:,ip), shc)
-            rt(:,:,ip) = truth_oris%get_mat(ip)
+                &euler2m(dock_eul), dock_shift, rc(:,:,n), shc)
+            rt(:,:,n) = truth_oris%get_mat(iframe)
         enddo
         if( suite_name == 'fcc' )then
             ops = group_operators('o')
         else
             ops = group_operators('d6')
         endif
-        err = median(group_errors(rc, rt, ops, projection_inversion=.true.))
+        err = median(group_errors(rc(:,:,1:n), rt(:,:,1:n), ops, projection_inversion=.true.))
     end function group_pose_error
+
+    !> fcc: the simulated trajectory through trajectory_solve3D in its own stage directory; the frames its two gates
+    !! remove (the pruned project of its model-gate stage) against MAX_FRAMES_LOST; the 3D checks then read its
+    !! autorefine3D_nano directory and project
+    subroutine run_trajectory_solve3D
+        class(cmdline), allocatable:: cline_tsolve3D
+        class(sp_project), allocatable:: gated_proj
+        integer          :: nkept
+        allocate(cline_tsolve3D, gated_proj)
+        call enter_workflow_stage(TSOLVE3D_STAGE, projfile)
+        call simple_getcwd(tsolve3D_dir)
+        call cline_tsolve3D%set('prg',            'trajectory_solve3D')
+        call cline_tsolve3D%set('mkdir',          'no')
+        call cline_tsolve3D%set('projfile',       projfile%to_char())
+        call cline_tsolve3D%set('stk',            trajectory%to_char())
+        call cline_tsolve3D%set('smpd',           params%smpd)
+        call cline_tsolve3D%set('element',        params%element)
+        call cline_tsolve3D%set('maxits',         NREFINE_ITERS)
+        call cline_tsolve3D%set('maxits_between', NITERS_BETWEEN)
+        call cline_tsolve3D%set('nspace',         NSPACE)
+        call cline_tsolve3D%set('nthr',           params%nthr)
+        call xtsolve3D%execute(cline_tsolve3D)
+        gated_projfile = filepath(filepath(tsolve3D_dir, TSOLVE3D_GATED), basename(projfile))
+        call gated_proj%read_segment('ptcl2D', gated_projfile)
+        nkept       = gated_proj%os_ptcl2D%get_noris()
+        frames_lost = real(NREPROJS - nkept) / real(NREPROJS)
+        write(logfhandle,'(a,i0,a,i0,a,f6.3)') 'single_workflow trajectory_solve3D gates: frames kept ', nkept, ' of ', &
+            &NREPROJS, ', lost ', frames_lost
+        call gate%metric('gates_frames_lost_frac', frames_lost, MAX_FRAMES_LOST, frames_lost <= MAX_FRAMES_LOST, upper=.true.)
+        l_gates_ok = frames_lost <= MAX_FRAMES_LOST
+        ! the 3D: autorefine3D_nano's own directory and project copy
+        autorefine_dir = filepath(tsolve3D_dir, TSOLVE3D_AUTOREFINE)
+        final_volume   = filepath(filepath(autorefine_dir, 'final_results'), &
+            &refine3D_state_vol_fbody(1)//'_iter'//int2str_pad(NREFINE_ITERS, 3)//MRC_EXT)
+        projfile       = filepath(autorefine_dir, basename(projfile))
+        call gated_proj%read_segment('ptcl3D', projfile)
+        nptcls_run = gated_proj%os_ptcl3D%get_noris()
+        call gated_proj%kill
+        call simple_chdir(autorefine_dir, chdir_status)
+        if( chdir_status /= 0 ) THROW_HARD('Could not enter the autorefine3D_nano directory of trajectory_solve3D')
+    end subroutine run_trajectory_solve3D
 
     !> NCONT_ITERS refine3D_nano iterations (refine=neigh, objfun=cc) from the autorefine3D_nano
     !! project with pose_cont, in their own stage directory; the median rotation error of the result
     subroutine run_nano_refine( dir, pose_cont, pair_err )
         character(len=*), intent(in)  :: dir, pose_cont
         real,             intent(out) :: pair_err
-        type(cmdline) :: cline_nano
+        class(cmdline), allocatable:: cline_nano
+        allocate(cline_nano)
         nano_projfile = aref_projfile
         call enter_workflow_stage(dir, nano_projfile)
         call cline_nano%set('prg',       'refine3D_nano')
