@@ -54,20 +54,20 @@ type :: parameters
     character(len=3)          :: exit_collapse='no'   !< early exit on state collapse(yes|no){no}
     character(len=3)          :: envfsc='no'          !< envelope solvent correction for FSC calculation(yes|no){no}
     character(len=3)          :: pcg_solvent='no'     !< PCG soft solvent prior on the base solve: per-half real-space ridge in solvent identified from a prior-free solve, then the same cold solve again(yes|no){no}
-    character(len=3)          :: pcg_focus='no'
-    character(len=3)          :: site_disc='no'
-    character(len=3)          :: site_layer='yes'
-    character(len=3)          :: site_states='no'
-    character(len=3)          :: node_rows='yes'
+    character(len=3)          :: pcg_focus='no'         !< focused PCG: solve inside pcg_mskfile against the fixed consensus background outside it(yes|no){no}
+    character(len=3)          :: site_disc='no'         !< hetero_tree: a node discovers its sites from its first refinement's state maps(yes|no){no}
+    character(len=3)          :: site_layer='yes'       !< hetero_tree: the factorial per-site layer over the finished tree(yes|no){yes}
+    character(len=3)          :: site_states='no'       !< hetero_tree: extra seed states from the discovered site poles (needs site_layer=yes)(yes|no){no}
+    character(len=3)          :: node_rows='yes'        !< hetero_tree: each refinement and reconstruction step's project cut to the node's particles(yes|no){yes}
     character(len=3)          :: node_subset_io='no' !< write compact tree projects directly from selected rows(yes|no){no}
     character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}
-    character(len=3)          :: node_proj='no'
-    character(len=3)          :: strongest_pole='yes'
-    character(len=3)          :: two_poles='no'
-    character(len=3)          :: pooled_poles='no'
-    character(len=3)          :: node_seed='no'
-    character(len=3)          :: site_size='no'
-    character(len=3)          :: oneflex='yes'
+    character(len=3)          :: node_proj='no'         !< hetero_tree: node-sized node projects(yes|no){no}
+    character(len=3)          :: strongest_pole='yes'   !< hetero_tree: a node seeds from its strongest site pole(yes|no){yes}
+    character(len=3)          :: two_poles='no'         !< hetero_tree: the seeds are the two ends of the seeding pole's axis(yes|no){no}
+    character(len=3)          :: pooled_poles='no'      !< site_rank: a merged pole group rejected per member is re-tested on its members' averaged maps(yes|no){no}
+    character(len=3)          :: node_seed='no'         !< hetero_tree: per-node random draws(yes|no){no}
+    character(len=3)          :: site_size='no'         !< site_rank: write the site rankings' sizing table and stop(yes|no){no}
+    character(len=3)          :: oneflex='yes'          !< hetero_tree: a child's mask and flex mean come from its parent's state maps(yes|no){yes}
     character(len=3)          :: atm_prior='no'       !< PCG atomicity prior: penalize the map outside the span of the atom kernels of pdbfile, after a prior-free base solve(yes|no){no}
     character(len=3)          :: pcg_solvent_check='no' !< PCG solvent prior: re-solve the strength grid for real and print it beside the closed-form estimate (validation only)(yes|no){no}
     character(len=3)          :: eo_stage='yes'       !< Whether the last stage of solve2D uses a resolution limit determined with e/o pairs(yes|no){yes}
@@ -95,7 +95,7 @@ type :: parameters
     character(len=3)          :: interactive='no'     !< Whether job is interactive(yes|no){no}
     character(len=3)          :: iterstats='no'       !< Whether to keep track alignment stats throughout iterations(yes|no){no}
     character(len=3)          :: json='no'            !< Print in json format (mainly for nice)(yes|no){no}
-    character(len=3)          :: junk_screen='yes'
+    character(len=3)          :: junk_screen='yes'      !< state_split, merge-up and site_rank: the SSNR junk screen of candidate states(yes|no){yes}
     character(len=3)          :: merge_geom_reuse='no' !< reuse split/merge projection geometry across candidate maps(yes|no){no}
     character(len=3)          :: merge_insert_reuse='no' !< reuse EM insertion geometry across candidate maps(yes|no){no}
     character(len=3)          :: merge_insert_audit='no' !< export production EM wrapper inputs and maps for exact acceptance(yes|no){no}

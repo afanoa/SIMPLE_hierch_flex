@@ -115,7 +115,9 @@ def accepted_keys(root):
             accepted = set(re.findall(r"self%args\(\d+\) = '([^']+)'", handle.read()))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return accepted, set(declared) - {'vol%d' % i for i in range(1, 21)}
+    # the generator adds vol1..volMAXS (simple_defs.f90's MAXS) beside the declarations
+    maxs = int(re.search(r'\bMAXS\s*=\s*(\d+)', read(root, os.path.join('src', 'defs', 'simple_defs.f90'))).group(1))
+    return accepted, set(declared) - {'vol%d' % i for i in range(1, maxs + 1)}
 
 
 def declared_choices(root):
