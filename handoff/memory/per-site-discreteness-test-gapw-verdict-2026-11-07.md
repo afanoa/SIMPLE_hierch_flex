@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-07T22:20:54.996Z
+  modified: 2026-11-07T23:11:36.120Z
 ---
 
 Handoff `/mnt/beegfs/elmlund/afan/hetero_tree_20261028/handoff/igm-refs/VERDICT.md` section Part 4; per-block files results/part4/.
@@ -27,7 +27,8 @@ Scripts `disc_a.py` (+ sbatch / list), `igs_run2.sbatch` (K = 2 round-1 + GAPw),
 
 **Why:** the coordinator needs a per-site test so the tree accepts discrete site splits and rejects continua (Part 3's seeds cut
 the null twin's continuous arms).
-**How to apply:** use GAPw for IgM-like short-swing sites, with no call = one leaf. Do not trust it on large curved continua
+**How to apply:** Part 5's fission saturation test fixes both qtoyflex failures without the .28; check it first
+([[saturation-fission-site-test-verdict-2026-11-07]]). Use GAPw for IgM-like short-swing sites, with no call = one leaf. Do not trust it on large curved continua
 without a node-specific null, nor on minority states adjacent to a continuum. Do not retry per-particle mixture tests at N ~1e5
 without a correct continuum model. RNase P's closed corner resembles qtoyflex's closed state next to the arm, so the tree's
 own splits must keep carrying it ([[rnasep-closed-state-must-be-retained]]). Related: [[sparse-ppca-pursuit-verdict-2026-11-07]], [[discrete-vs-continuous-site-gap-2026-11-05]],

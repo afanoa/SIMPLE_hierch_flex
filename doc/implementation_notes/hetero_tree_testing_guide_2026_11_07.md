@@ -854,6 +854,9 @@ Cluster and data:
 
 Git:
 - Push only to the fork; commits carry no Co-Authored-By trailer; build and fast-gate on batch2 before pushing code.
+- Side sessions start with `use_worktree: false`: app-made worktrees fail on this repo ("shadow-unavailable", 4 failed starts on
+  2026-11-07, and a retry reuses the failing setting). A code-writing session first runs `git -C /Users/atifao/SIMPLE worktree add
+  --detach /Users/atifao/SIMPLE_<task> <commit>` and works only there; nothing is edited in `/Users/atifao/SIMPLE` itself.
 - The fork holds two branches: `hetero-tree` (known to work) and `hetero-tree-wip`. Experiments, archives and per-session branches
   stay off GitHub (user, 2026-11-07).
 
