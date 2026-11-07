@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:55 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:05 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -587,6 +587,12 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     block climbs .002 -> .117 by round 3); 5 % null: 0 sites. Rule to port: sparse-PPCA blocks + one masked round as the
     data-only seeding, and a discreteness test (sparse PPCA's held-out gain, GAPw / cross-half, or the fission test) decides
     which splits the tree accepts.
+  - Part 4, the discreteness test (oracle session; interim from `progress.txt`, write-up pending): GAPw on sparse PPCA's blocks
+    calls the 10 % fix arms DISCRETE (5/5, GAPw .03-.24, both 3-state arms included) and none of the 10 % null's 8 blocks (.48-1.56
+    or no call); at 5 % it calls the 4 arms DISCRETE and the non-arm block no call. It misses qtoyflex's closed block (.76; the
+    K = 2 seed found closed at NMI .08). The held-out 2- vs 1-Gaussian gain fails as a calibrated test: its Gaussian null sits at
+    -.0025 +- .0002 nats/particle, so it accepts any non-Gaussian coordinate (qtoyflex's arm continuum, 1 of 2 continuum controls);
+    a spike-vs-continuum family test is misspecified both ways (misses 10 % a1, accepts both continuum controls).
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -639,7 +645,17 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     support's (~1.0), so global latents and rotations cannot see arms; local seeds plus sparsity can.
   - Knobs (VERDICT table): kappa 3 (in units of the group's pure-noise gradient), 3^3-voxel groups, seed balls, 2 modes per site,
     iteration counts, and `pursuit_rel` 2 %, a safety stop that ended the IgM 10 % pursuit at round 6 (final run `x10fix_p2`: 196
-    nats vs a cut of 203, solvent controls 0.1) before a sixth block was tried. That stop is the open item against the knob-free rule.
+    nats vs a cut of 203, solvent controls 0.1) before a sixth block was tried.
+  - Knob-free stop (STATUS.md "Coordinator ask 1 / 2", runs `*_p3`, job 55033059; final except the 10 % null rerun): pursue while
+    the best seed beats 2 SE and all 12 solvent controls, keep blocks that pass the same test left one out, join blocks into one
+    site when their supports overlap beyond hypergeometric chance + 2 SE, and read states with a tied-covariance GMM. It stops by
+    itself everywhere: 10 % fix 8 blocks -> 5 sites = the 5 arms; 5 % fix 4 arms + 1 weak block; qtoyflex 1 site; 5 % null and
+    qtoynull 0 (their seeds beat the controls, 5-37 nats vs <= 0.9, but the support-dof shell prior drains every grown block to
+    zero and the leave-one-out check drops them). The sixth 10 % candidate was a second seed on arm a5 (it becomes a5's main
+    block); without the cut two more blocks join a2, carrying no state, pose, defocus or nuisance information (mildly heavy
+    tails). A full-covariance GMM on a multi-block site splits those tails (a2 NMI .003); a tied one does not (a2 .290, a5 .310).
+    The 2- vs 1-Gaussian held-out gain keeps the 10 % twins apart (fix +.0015 to +.015, null -.0023 to -.0027) but is a readout,
+    not a test (igm-refs Part 4). 10 % null rerun: 13 blocks by round 13, still running (the capped run gave the 5 moving arms).
   - Final code (`x10fix_p2`) replicates the first run (purity .96-.97, supports 1,250-1,470 voxels, readouts within .01); 10 % null:
     8 blocks covering all five moving arms (purity .63-.92), continuous-angle R^2 .28-.31 as T1, BC .33.
   - Cost: 35-50 min per 100k particles on 16 cores, 31 GB; gate roots 5-7 min. The learned supports (`block%02d_support.mrc`) can
@@ -761,9 +777,10 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
    (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
    patch stacks on it once its verdict is in.
-8. Site layer: sparse PPCA's pursuit (knob-free stop) + one masked round, the best data-only chain (7.8 igm-refs Part 3), with a
-   discreteness test accepting each split. The native port is in progress (user: port first); then the r131 / 692k
-   global-coordinate test and the end-to-end chain.
+8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
+   round, the best data-only chain (7.8 igm-refs Part 3), with GAPw accepting each split (Part 4 interim: 5/5 10 % arms, 0/8 null
+   blocks; misses qtoyflex closed). The native port is in progress (user: port first); then the r131 / 692k global-coordinate
+   test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
    gate leaf on a fission copy with a threshold calibrated on honest readouts (e.g. against random tails of matched N).
