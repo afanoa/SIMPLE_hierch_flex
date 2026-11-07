@@ -534,23 +534,42 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and re
   (tree: one leaf). Round 1 is clean for 2-state arms (null gain <= 0.004); 3-state splits carve the null's continuous angle into
   thirds (+0.015-0.030 on the null), and later rounds carve it at any state count. Rule: round 1 only, and a 3-state split
   needs a map-level test before the tree accepts it. The discrete information sits in the focused seed (10 % product 0.222 vs
-  the null's 0.059). Data-only (zh1) runs started.
+  the null's 0.059). Data-only (zh1 masks): arm a1 matches the true mask at both levels (10 % round 1 0.356 vs 0.351; 5 % round 3
+  0.131 vs 0.137), so the whole chain (data-only mask -> focused fit -> seed -> references -> masked assignment) runs without
+  truth; 3-state arms are the weak point (5 % a2: no seed from the zh1 fit, 0.000, and the rounds do not rescue it).
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
-  qtoy2 root: K' 10 (agglomerated from the latent mixture) + junk lifts class accuracy .674 -> .751, closed F1 .55 -> .93 and junk
-  F1 .23 -> .58, still below the oracle (.919); 7 seeds end below stage B, so seeding matters. The merge test keeps every pair:
-  holo stays split by a tilt band (105-150 deg) that cell-level view matching does not remove, so the merge needs a view-aware
-  criterion. r1: no escape from the 80/20 fixed point (.757 vs pure references .839), though the junk reference works (F1
-  .14 -> .73). qtoyflex, r131 and qtoynull were finishing at this writing.
+  VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
+  flex mixture, agglomerated closest-first) + a data-only junk reference (robust z of -corr/-contrast > 3) + one cross-half
+  re-assignment (each half labelled with the other half's maps) takes the qtoy2 root from class accuracy .674 to .803 (NMI
+  .662 -> .738, closed F1 .55 -> .95, holo kept whole, K 9; oracle .919); qtoyflex gains a closed-enriched state (F1 .17 -> .45).
+  The junk reference never costs class accuracy (junk F1 .14 -> .73 at r1) but grows into a 7.7k low-contrast sink on r131. Limits:
+  r1 stays at its 80/20 fixed point (.757); r131's closed corner is neither found nor lost; seeds are the limit (seed NMI .53 root,
+  .21 r1, .004 r131). The map-level merge test fails the null by self-selection (each label comes from the particle's own noise,
+  which survives label shuffles and one cross-half re-assignment: five states of qtoynull at z 8-13), and tilt-band splits look
+  real (z 7). A rule that passes the null must run the over-split independently in each half and match states across halves, as
+  the tree's merge-up does; worth porting only with that rule.
 - `pose-tangent` (lever 5): the node mean's rigid-body tangents projected out of the fitted flex basis, particles re-embedded
   (no refit); IgM 5 %/10 %, qtoy2, r131; a Fortran port only if it helps (flex2D's version: `d1a20eff6`).
+  VERDICT (`$H/handoff/pose-tangent/VERDICT.md`): hold the port. The node latent is pose-contaminated (the IgM roots' leading
+  axis is ~30 % shift error; the nulls' only mixture structure is pose). Deflating the basis of the rigid tangents removes it but
+  costs real signal (qtoy2 closed .964 -> .944: domain motions carry rigid components); flex2D's plain-metric form does nothing;
+  profiling the six tangents per particle (Schur complement) removes pose cleanly and keeps the signal, but the tree's IgM false
+  root splits do not follow pose error (AUROC .51-.54), so it fixes hygiene, not the failure. If wanted: profiling in
+  `embed_latents_with_contrast` (`simple_flex_pca_embed.f90`), ~150 lines. A follow-up session tests profiling shift derivatives
+  inside the site classifier (the pose-driven core-patch split).
 - `sparse-ppca` (lever 6): a flex-style PPCA with a spatial structured-sparsity prior that learns each site's support and
   coordinates in one fit (after structured sparse PCA, Jenatton, Obozinski & Bach 2010); validated against flex_pca at zero
   penalty, then IgM 10 %, 5 %, qtoyflex, qtoynull.
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
   spiked-covariance phase transition of Baik, Ben Arous & Peche 2005; Katsevich, Katsevich & Singer 2015 in cryo-EM), checked
   against the trees' decisions and truth; and a global bound, at most r + 1 identifiable discrete states for r significant
-  directions.
+  directions. First verdict: no stop rule. Nulls carry above-edge nuisance directions (qtoynull 1.75 vs edge 0.77: pose and
+  contrast; the IgM fixture and null twin have identical spectra led by shift-error tangents, arm spikes <= 0.08), and the RNase P
+  closed spike is far below any edge (0.014 at the r131 root, 0.01-0.12 down the 692k closed lineage), so the rule would fail the
+  hard gate; a null-calibrated edge stops the nulls but loses qtoy2's close pairs, the qtoyflex root and r131. At 692k the stops
+  track N, not exhausted variance (79-81 % agreement with the tree). The rare-state limit follows BBP's sqrt(p/N) law only with a
+  fitted p_eff (~1,100-1,900).
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
   the parent's latent (lever 4's over-split) and refined, a view-matched map test selects, and a continuum stays one leaf with its
   own coordinate; tested on discrete, continuous and mixed truth (qtoy2, qtoyflex, IgM 10 % fix and null, qtoynull).
