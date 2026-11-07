@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -705,6 +705,13 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     `<run>/sites/`: site and block masks, per-block coordinates with the rigid tangents profiled out, nuisance coefficients; no
     state calls, no project writes. Working voxel ~lp/2.1 (the Python rule, not flex's lp/2.5). Validation at the Python lp per
     fixture (20 A IgM, 15 A qtoy), plus one IgM run at the tree's 15 A.
+    Build (18:30): patch `$H/handoff/sparse-ppca/sparse_sites.patch` against `e7f7efb80` (8 files, two new modules
+    `simple_flex_sites_fit` (operator + model) and `simple_flex_sites_pursuit`; the only added comments are the two !@descr
+    headers); build `$M/sparse_port/b2` (job 55037253), fast gate 15/15, check_flex_dag and check_cli_chain pass. Native = Python on
+    the gate roots: qtoyflex 2 blocks in 1 site, closed / holo AUROC .901 / .929 (Python .901 / .931), 118 s and 1.8 GB (Python
+    ~5 min); qtoynull 0 sites. One seed constant (5 lattice voxels, ~2.3 lp) for both molecules. The per-round grown-block check
+    stops qtoynull at round 1 and the 5 % null at round 2 (was 9 rounds), leaves qtoyflex's list unchanged. IgM fixtures running
+    (job 55037252); the validation table follows.
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
