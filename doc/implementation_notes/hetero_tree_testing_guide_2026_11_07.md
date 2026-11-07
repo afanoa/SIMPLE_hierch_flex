@@ -115,9 +115,10 @@ Traps:
 - Job scripts export the gcc 15.2 `PATH`/`LD_LIBRARY_PATH` themselves (an `sbatch` through plain ssh has no module environment and
   `| tee` hides the failure). Check that a new job's log shows real SIMPLE output within a minute.
 - `sbatch --export` splits values at commas: pass keys with commas through the environment (as `launch_gates.sh` does).
-- Compare arms only between binaries built the same way. `merge_master2` was built on a transfer node and links OpenMP OpenBLAS
-  (`libopenblaso`); the ports builds ran on x6342 nodes with `libopenblas`. Same source, yet the r131 partitions agree only 0.62
-  (seed 2) / 0.50 (seed 1) after leaf matching. The porter's `$M/build_ports3.sbatch` (`S=<src> V=<build dir>`: cmake Release,
+- Compare arms only between binaries that link the same OpenBLAS. The default cmake links OpenMP OpenBLAS (`libopenblaso`, as
+  `merge_master2` does); `-DBLA_VENDOR=OpenBLAS` links `libopenblas`. Same source, yet the r131 partitions agree only 0.62
+  (seed 2) / 0.50 (seed 1) after leaf matching: the root split there is a near-tie that flips with the library. Compile host and
+  code do not matter, and every binary reproduces itself. The porter's `$M/build_ports3.sbatch` (`S=<src> V=<build dir>`: cmake Release,
   `BUILD_TESTS=ON`, 32 cores, ~5 min, runs the fast gate) is the reproducible recipe.
 
 ## 3. Gate fixtures: the decisive test for any tree change
@@ -161,8 +162,9 @@ Settled (2026-11-07): the depth_wiener builds (`ports`, `ports3`) give r131 seed
 vs 23,168/21,166; corner in r1 at 0.96/0.54) while qtoy2 and the nulls are identical. `gates/mm2b_r131` (the mm2 binary again) is
 byte-identical to mm2: the tree reproduces run to run. `gates/b0_r131` (`ee26d9bbf` without piece 1, built with the ports recipe) is
 byte-identical to `ports`: piece 1 changes nothing before the final maps. mm2 and b0 share the source yet agree only 0.62 after leaf
-matching, so the r131 root split is bound to the binary (section 2); a last build separates the BLAS variant from the compile host
-(`$H/handoff/ports/STATUS.md`). Judge new arms against a reference built by the same recipe.
+matching. The cause is the OpenBLAS variant (section 2): the base commit built on the same node without `BLA_VENDOR`
+(`gates/b1_r131`) reproduces mm2 byte for byte. The closed corner is kept on both seeds under either library. Judge new arms
+against a reference that links the same OpenBLAS.
 
 ## 4. qtoyflex, the positive control
 
@@ -234,7 +236,7 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | flex at the refined poses (real flex_pca) | flexB runs | own-latent ceiling 0.477 -> 0.504, nothing downstream | no |
 | M-estimation, soft weights, tree priors, Student-t, predictive E-step | mest session | nothing beats hard labels + tree_wiener | no |
 | composed global chart coordinate | f2r_global | seams between children's charts; no minority isolation; would merge the 692k closed pair | no |
-| seam-free tree-wide coordinate (one basis, every particle embedded) | f2r_shared, gate trees | seams and false valleys gone; r131 closed AUROC 0.69-0.72 (d' <= 0.8); not reproducible at final poses; merge rule merges every r131 pair | failing so far (692k pending) |
+| seam-free tree-wide coordinate (one basis, every particle embedded) | f2r_shared, gate trees | seams and false valleys gone; r131 closed AUROC 0.69-0.72 (d' <= 0.8); not reproducible at final poses; merge rule merges every r131 pair; 692k (m33, input poses): the closed pair at d' 0.25, rank 46 of 112 sibling pairs, Bhattacharyya > 0.5 for 109 of 112 | no |
 | posterior temperature | gates at 0.15 / 0.3 / 1.0 | 0.15 and 1.0 lose the r131 corner | keep 0.3 |
 | stage-B reference shrinkage toward the node mean (shrinkB: emp2 cross-half Wiener on the state deviations between three single-iteration stage-B calls) | continuation replays, four doses | toys unchanged (qtoy2 NMI 0.656 -> 0.648); on both r131 seeds the split merges the closed corner (full dose, and half dose on seed 1): the shrinkage suppresses the 14.6-10.2 A band the split tests | no: fails the hard gate |
 | pose anchor (child poses held near the parent's) | key-only replays, 2 seeds | removes the drift tail (p99 62 -> 9 deg); r131 corner kept, enrichment within seed noise; qtoyflex NMI -0.007; qtoy2 children purity -0.01..-0.11, NMI -0.03..-0.14: it locks in the parent's tempered draw noise | no |
@@ -287,7 +289,12 @@ The porter's `STATUS.md` there has exact commands for every step below.
   per-E-step score gap to compare with the Python's (`xs_gate1_gap/`). The first qtoyflex tree with `site_split=yes` ran away (a
   returned node re-filed every poll, 147 leaf lines): fixed in `378254f33` (in build_ports6). Run 3 also missed the IgM positive
   control because the call ran on the EM's coarse grid: `89604e8ac` moves it to the 5.11 A grid its constants were set on (build_ports7,
-  run 4 chained). Next: rerun qtoyflex with `site_split=yes` and score it with `qflex_leaves.py`.
+  run 4 chained). Run 4 is clean on RNase P and the nulls (0 DISCRETE) but still misses the IgM control: at site 6 the EM's
+  split agrees with the Python's (.81, z1 22), yet its lobes are blunter and closer (GAPw .33 vs the Python's .09), most likely
+  because the port's group maps are band-limited at the EM crop (11.9 A) where the Python used full-resolution reconstructions; a
+  diagnostic runs the prototype's `dc_gates.py` on the port's own maps. The hard test is running: full trees with
+  `site_split=yes` on the IgM fixture and its null twin (`gates/ports7_igmfix_ss`, `gates/ports7_igmnull_ss`, jobs 55015788/9;
+  scoring commands in `$H/handoff/ports/STATUS.md`). Then: qtoyflex with `site_split=yes`, scored by `qflex_leaves.py`.
 - Piece 2, chart outputs: parked (bundle ref `wip/tree-ports-charts`); drop unless 7.2 passes.
 
 ### 7.2 Seam-free global coordinate (f2r session; full record and resume commands in `$H/handoff/f2r-global/VERDICT.md`)
@@ -302,8 +309,10 @@ Gate trees (done 2026-11-06 23:55): the seams are gone, and so are the false val
 stays weak: closed AUROC 0.69-0.72 (d' <= 0.8; flex's root chart 0.62, the seamed composition 0.67-0.69), and closed-enriched
 leaves are no more isolated than other pairs; qtoy2 0.988, qtoyflex 0.843. It reproduces at the input poses (canonical
 correlations 0.99-1.00) but not at the final poses (0.87-0.89 on r131: each tree's leaf refinements imprint its own partition).
-The Bhattacharyya merge rule would merge every r131 pair and half of qtoy2's distinct pairs. So far it fails the port rule on
-the closed state; the 692k trees (the closed pair's rank, cross-recipe CCA) finish the verdict.
+The Bhattacharyya merge rule would merge every r131 pair and half of qtoy2's distinct pairs. It fails the port rule, and the 692k tree
+confirms it (m33 at the input poses; the cross-recipe job was cancelled as non-decisive): the closed pair sits at d' 0.25, rank
+46 of 112 sibling pairs, the merge rule would merge 109 of 112 pairs, and neither the root split nor the pair axis has a valley.
+Closed.
 
 ### 7.3 What limits stage B: poses, references or noise (oracle session; done; `$H/handoff/stageb-oracle/VERDICT.md`)
 
@@ -426,6 +435,19 @@ Where the latent work fits:
    the per-site state maps. Both tested 2026-11-07 and closed (section 6): a site's state is spread over several directions inside
    the site, which focused fits and site factors capture and single localized global modes do not; depth2 has no truth-map gain.
 
+Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`):
+- Focused per-site flex does not beat the whole-node latent where that latent already sees the state: r131 closed rows, cross-half
+  LDA AUROC 0.53-0.60 per site vs 0.61 for the node (both seeds; site 2 covers the closed arm); qtoy2 best site closed 0.94 / holo
+  0.93 vs 0.98 / 0.995. Node + all sites is never worse (r131 0.617), and qtoyflex gains (closed 0.786 -> 0.825 with site 1, 0.845
+  with all sites). On the IgM fixture, where the whole-molecule latent reads 0.000 for every arm, a fit focused on arm a1's true
+  mask reads a1 (R^2 0.31, supervised NMI 0.21; T1, partial). So focused coordinates belong beside the node's, not instead of them.
+- The ranking number is not calibrated yet. With free variances heavy tails buy it (8 of 15 qtoynull sites positive, up to 0.295
+  nats/particle on a near-empty site, kurtosis 48; at r131 its fitted tail is not the closed rows, AUROC 0.51). With tied variances
+  it is clean on the null (all 15 sites < 0) but ranks site 3 above the closed-arm site 2 at r131 seed 2 (hard gate). The tree's
+  own pole rule never keeps a pole on site 2 and, at seed 1, seeds from site 1, which covers neither arm.
+- Traps: flex_pca refuses `fflex/f.simple` (it carries the delivered state labels): use the node's `n.simple`; one compute node
+  (cn121) ran flex workers ~100x slow.
+
 Tests, in order:
 - T1 (decisive, ~1 h of cluster): focused flex_pca with `pcg_mskfile` = each arm island of
   `proto/fix_root_stock_recB0_bgyes/sites` (and `arm_masks.mrc` as the oracle-mask control) on `fix` and `null` at the fixture root's
@@ -438,8 +460,8 @@ Tests, in order:
 ## 8. Decisions waiting for the user
 
 1. depth_wiener on by default: gated and cleared, but no truth-map benefit (section 6), so the measured case is for `depth_wiener=no`.
-2. Drop the chart-coordinate port (bundle ref `wip/tree-ports-charts`) unless the seam-free coordinate passes 7.2's rule (it does not on
-   r131 so far).
+2. Drop the chart-coordinate port (bundle ref `wip/tree-ports-charts`) unless the seam-free coordinate passes 7.2's rule (it does not, on
+   r131 or at 692k).
 3. Keep state_eval as a developer harness: add it to `hetero-tree-wip` (after a build and fast gate) or leave it in the bundle.
 4. site_split: after gate 1 and qtoyflex.
 5. Launch T1 of 7.7 (focused per-site flex on the IgM fixture), which also opens the joint site-coordinate idea of 7.5.
