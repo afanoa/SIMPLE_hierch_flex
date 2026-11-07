@@ -26,7 +26,7 @@ use simple_state_mergeup,   only: mask_neff, split_zcrit
 use simple_refine3D_strategy, only: PROB_MULTISTATE_MIN_POP
 implicit none
 
-public :: hetero_tree, discover_sites
+public :: hetero_tree, discover_sites, discover_islands
 private
 #include "simple_local_flags.inc"
 
@@ -44,7 +44,7 @@ real,     parameter :: LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
 integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_SBATCH = 18
-integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000
+integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000, S_SITESPLIT = 21
 real(dp), parameter :: SLOW_FACT = 3._dp, SLOW_FIRST = 14400._dp
 character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stA0', &
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
@@ -94,7 +94,7 @@ type :: hetero_tree
     character(len=:), allocatable :: subroot, ntab, ltab
     type(qsys_env) :: qsub
     type(cmdline), allocatable :: cl0
-    real(dp) :: srate(S_SDISC) = 0._dp
+    real(dp) :: srate(S_SITESPLIT) = 0._dp
   contains
     procedure :: new
     procedure :: run
@@ -699,6 +699,7 @@ contains
                 call simple_mkdir(string(d//'/sites'))
                 if( size(pres) < 2 )then
                     call discover_sites(evens, odds, w, pres, self%p%mskdiam, d//'/sites', ks, trim(self%p%pgrp))
+                    if( self%p%site_split .eq. 'yes' ) call discover_islands(evens, odds, w, self%p%mskdiam, d//'/sites')
                 else
                     ! the full-box discovery takes the master tens of minutes and up to 64 GB: a worker job runs it
                     call write_ints(d//'/sites/disc_labels.txt', merge(st, 0, [(any(pres == st(j)), j=1,size(st))]))
@@ -708,6 +709,7 @@ contains
                     call cl%set('mskdiam', self%p%mskdiam)
                     call cl%set('pgrp',    trim(self%p%pgrp))
                     call cl%set('nthr',    self%p%nthr)
+                    if( self%p%site_split .eq. 'yes' ) call cl%set('site_split', 'yes')
                     call self%submit_in(d//'/sites', cl, memmb=SDISC_MEM)
                     self%nodes(i)%step = S_SDISC
                     write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site discovery submitted'
@@ -868,9 +870,9 @@ contains
                 if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
                 call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
                 call self%submit(i, S_SPLIT, cl, count(st > 0))
-            case(S_SPLIT)
+            case(S_SPLIT, S_SITESPLIT)
                 call self%decide(i)
-                self%nodes(i)%step = S_DONE
+                if( self%nodes(i)%step /= S_SITESPLIT ) self%nodes(i)%step = S_DONE
         end select
 
     contains
@@ -1071,6 +1073,8 @@ contains
                 prev_step = merge(S_SDISC, S_FFLEX, self%p%site_disc .eq. 'yes')
             case(S_SDISC)
                 prev_step = S_RECB0
+            case(S_SITESPLIT)
+                prev_step = S_SPLIT
             case(S_SBATCH)
                 prev_step = merge(S_SDISC, S_SITE, self%l_strong .or. &
                     &first_line(self%ndir(i)//'/sites/rest_first.txt', '2') == '1')
@@ -2788,9 +2792,10 @@ contains
         integer,            intent(in)    :: i
         integer, allocatable :: rows(:), lab(:), ch(:), junk(:), states(:), to(:), pop(:), mem(:)
         type(tnode), allocatable :: tmp(:)
+        type(cmdline) :: cl
         character(len=:), allocatable :: d, name, comp
-        logical :: l_split
-        integer :: s, g, ng, n, fg, big, j
+        logical :: l_split, l_sited
+        integer :: s, g, ng, n, fg, big, j, nlive
         d      = self%ndir(i)
         rows   = read_ints(d//'/rows.txt')
         lab    = project_states(d//'/stageB/b.simple')
@@ -2830,7 +2835,19 @@ contains
             where( to == 0 ) to = big
             ng      = count([(any(to == g), g=1,size(pop))])
             l_split = ng >= 2
+            l_sited = .false.
+            nlive   = count([(lab(j) > 0 .and. .not. any(junk == lab(j)), j=1,size(lab))])
+            ! a node about to be filed as one leaf above the depth cap waits for the per-site split (site_split=yes)
+            if( ng == 1 .and. self%p%site_split .eq. 'yes' .and. self%nodes(i)%depth < self%p%maxdepth .and. &
+                &nlive >= 2 * self%p%minpop )then
+                if( .not. file_exists(string(d//'/xsplit/summary.txt')) )then
+                    call submit_site_split
+                    return
+                endif
+                l_sited = site_children()
+            endif
             do g = 1, size(pop)
+                if( l_sited ) exit
                 if( .not. any(to == g) ) cycle
                 mem = pack(states, to == g)
                 n   = count([(any(mem == lab(j)), j=1,size(lab))])
@@ -2869,6 +2886,77 @@ contains
             call write_ints(self%ndir(size(self%nodes))//'/rows.txt', cr)
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': '//what//' -> node '//name
         end subroutine add_child
+
+        ! the per-site split worker on the node's stage-B project; its summary decides the leaf when it returns
+        subroutine submit_site_split
+            call simple_mkdir(string(d//'/xsplit'))
+            call simple_copy_file(string(d//'/stageB/b.simple'), string(d//'/xsplit/x.simple'))
+            call cl%set('prg',      'site_split')
+            call cl%set('projfile', 'x.simple')
+            call cl%set('dir',      d)
+            call cl%set('mskdiam',  self%p%mskdiam)
+            call cl%set('pgrp',     trim(self%p%pgrp))
+            call cl%set('nthr',     max(self%p%nthr, min(SITE_NTHR, ceiling(real(nlive) / real(PTCLS_PER_PART)))))
+            call self%submit_in(d//'/xsplit', cl, nlive)
+            self%nodes(i)%step = S_SITESPLIT
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': would be one leaf ('//int2str(nlive)//&
+                &' particles); the per-site split submitted'
+        end subroutine submit_site_split
+
+        ! a DISCRETE site (the lowest GAPw of several) splits the node into its two groups, both at least minpop
+        logical function site_children()
+            integer,  allocatable :: xl(:)
+            character(len=4096)   :: line
+            character(len=32)     :: tag, best, callw, failw
+            real    :: z1, r1, lsep, ang, gapw, gape, gapo, gbest, zbest, lbest
+            integer :: funit, ios, n1, n2, nb, gg, ng2
+            site_children = .false.
+            best  = ''
+            gbest = huge(1.)
+            call fopen(funit, string(d//'/xsplit/summary.txt'), status='old', action='read', iostat=ios)
+            call fileiochk('hetero_tree: cannot read '//d//'/xsplit/summary.txt', ios)
+            do
+                read(funit,'(A)',iostat=ios) line
+                if( ios /= 0 ) exit
+                if( len_trim(line) == 0 .or. line(1:1) == '#' ) cycle
+                read(line,*,iostat=ios) tag, n1, n2, z1, r1, lsep, ang, nb, gapw, gape, gapo, callw, failw
+                if( ios /= 0 ) cycle
+                if( trim(callw) /= 'DISCRETE' ) cycle
+                if( gapw < gbest )then
+                    gbest = gapw
+                    zbest = z1
+                    lbest = lsep
+                    best  = tag
+                endif
+            end do
+            call fclose(funit)
+            if( len_trim(best) == 0 )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site is discrete; filed as one leaf'
+                return
+            endif
+            xl = read_ints(d//'/xsplit/'//trim(best)//'/labels.txt')
+            if( size(xl) /= size(lab) )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE WARNING node '//self%nodes(i)%id//': site '//trim(best)//&
+                    &' labels do not match the node; filed as one leaf'
+                return
+            endif
+            ng2 = 0
+            do gg = 1, 2
+                if( count(xl == gg) >= self%p%minpop ) ng2 = ng2 + 1
+            end do
+            if( ng2 < 2 )then
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//trim(best)//' is discrete but a group is &
+                    &under minpop ('//int2str(count(xl == 1))//' / '//int2str(count(xl == 2))//'); filed as one leaf'
+                return
+            endif
+            write(logfhandle,'(A,F6.3,A,F5.1,A,F5.1,A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//trim(best)//&
+                &' discrete (GAPw ', gbest, ', z1 ', zbest, ', lobes ', lbest, ' A apart)'
+            do gg = 1, 2
+                call add_child([(xl(j) == gg, j=1,size(lab))], 'site '//trim(best)//' group '//int2str(gg)//' ('//&
+                    &int2str(count(xl == gg))//' particles)')
+            end do
+            site_children = .true.
+        end function site_children
 
     end subroutine decide
 
@@ -3687,7 +3775,8 @@ contains
             &real(max(1,count(sup)))))//' % of the molecule support)'
     end subroutine falloff_mask
 
-    subroutine half_variance( evens, odds, w, mskdiam, n, smpd, sph, sup, vs, de, dv )
+    !> l_bg: every half map's mean over the solvent (inside mskdiam, beyond the support's dilation and falloff) removed first
+    subroutine half_variance( evens, odds, w, mskdiam, n, smpd, sph, sup, vs, de, dv, l_bg )
         type(string),                   intent(in)  :: evens(:), odds(:)
         real(dp),                       intent(in)  :: w(:)
         real,                           intent(in)  :: mskdiam
@@ -3696,10 +3785,15 @@ contains
         logical, allocatable,           intent(out) :: sph(:,:,:), sup(:,:,:)
         real,    allocatable,           intent(out) :: vs(:,:,:)
         real,    allocatable, optional, intent(out) :: de(:,:,:,:), dv(:,:,:,:)
+        logical,              optional, intent(in)  :: l_bg
         real,     allocatable :: e(:,:,:,:), o(:,:,:,:), em(:,:,:), om(:,:,:), v(:,:,:)
+        logical,  allocatable :: solv(:,:,:)
         real(dp), allocatable :: wn(:)
-        integer :: ldim(3), nm, j, ifoo
+        integer :: ldim(3), nm, j, ifoo, nsolv
         real    :: sc
+        logical :: l_bgr
+        l_bgr = .false.
+        if( present(l_bg) ) l_bgr = l_bg
         call find_ldim_nptcls(evens(1), ldim, ifoo)
         n    = ldim(1)
         nm   = size(evens)
@@ -3714,6 +3808,18 @@ contains
         em  = wsum(e)
         om  = wsum(o)
         sup = (0.5 * (em + om) > MSUP * maxval(0.5 * (em + om), mask=sph)) .and. sph
+        if( l_bgr )then
+            solv  = sph .and. dist_box(sup, smpd) > MDIL + 2. * MFALL
+            nsolv = count(solv)
+            if( nsolv > 0 )then
+                do j = 1, nm
+                    e(:,:,:,j) = e(:,:,:,j) - sum(e(:,:,:,j), mask=solv) / real(nsolv)
+                    o(:,:,:,j) = o(:,:,:,j) - sum(o(:,:,:,j), mask=solv) / real(nsolv)
+                end do
+                em = wsum(e)
+                om = wsum(o)
+            endif
+        endif
         do j = 1, nm
             sc = sum(e(:,:,:,j) * em, mask=sup) / max(sum(e(:,:,:,j)**2, mask=sup), 1.e-30)
             e(:,:,:,j) = e(:,:,:,j) * sc
@@ -3761,6 +3867,149 @@ contains
         end subroutine read_lp
 
     end subroutine half_variance
+
+    !> the islands of a node's half-map variance, read by the per-site split only: with every map's solvent mean removed,
+    !! the stock core is claimed first, then every variance peak inside the support whose own core (above MFRAC of the
+    !! peak) touches nothing claimed and holds DMINVOX voxels is a region, an island site when the SVD factor test of
+    !! discover_sites keeps a factor and the mask is local; masks as the tree's candidates (island_NN.mrc, islands.txt)
+    subroutine discover_islands( evens, odds, counts, mskdiam, outdir )
+        type(string),     intent(in) :: evens(:), odds(:)
+        real(dp),         intent(in) :: counts(:)
+        real,             intent(in) :: mskdiam
+        character(len=*), intent(in) :: outdir
+        type(image) :: img
+        real,     allocatable :: vs(:,:,:), de(:,:,:,:), dv(:,:,:,:), pe(:,:), po(:,:), msk(:,:,:), key(:), ue(:), uo(:)
+        logical,  allocatable :: sph(:,:,:), sup(:,:,:), claimed(:,:,:), visited(:,:,:), comp(:,:,:), cm(:,:,:), ispk(:,:,:)
+        integer,  allocatable :: lab(:,:,:), ord(:), pk(:,:)
+        real(dp), allocatable :: wn(:), g(:,:), u(:,:), lam(:)
+        character(len=:), allocatable :: fline
+        real    :: smpd, vmax, neff, rr, zz, share, mol, cen(3), rad
+        integer :: n, nk, nl, x, y, z, npk, ip, nv, iv, f, nrot, nkept, nisl, funit, ios, nsup, k
+        wn = counts / sum(counts)
+        nk = size(evens)
+        call half_variance(evens, odds, counts, mskdiam, n, smpd, sph, sup, vs, de, dv, l_bg=.true.)
+        nsup    = count(sup)
+        vmax    = maxval(vs)
+        claimed = vs > MFRAC * vmax
+        visited = claimed
+        allocate(ispk(n,n,n), source=.false.)
+        do z = 2, n - 1
+            do y = 2, n - 1
+                do x = 2, n - 1
+                    if( .not. sup(x,y,z) .or. visited(x,y,z) .or. vs(x,y,z) <= 0. ) cycle
+                    if( vs(x,y,z) >= maxval(vs(x-1:x+1,y-1:y+1,z-1:z+1)) ) ispk(x,y,z) = .true.
+                end do
+            end do
+        end do
+        npk = count(ispk)
+        allocate(pk(3,max(npk,1)), key(max(npk,1)), ord(max(npk,1)))
+        ip = 0
+        do z = 1, n
+            do y = 1, n
+                do x = 1, n
+                    if( .not. ispk(x,y,z) ) cycle
+                    ip = ip + 1
+                    pk(:,ip) = [x, y, z]
+                    key(ip)  = -vs(x,y,z)
+                    ord(ip)  = ip
+                end do
+            end do
+        end do
+        if( npk > 1 ) call hpsort(key(1:npk), ord(1:npk))
+        call fopen(funit, string(outdir//'/islands.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('discover_islands: cannot write '//outdir//'/islands.txt', ios)
+        write(funit,'(A)') '# island peak_frac voxels_above_0.5 molecule_share centre_radius_A factors_kept'
+        call img%new([n,n,n], smpd)
+        nisl = 0
+        do ip = 1, npk
+            x = pk(1,ord(ip))
+            y = pk(2,ord(ip))
+            z = pk(3,ord(ip))
+            if( visited(x,y,z) ) cycle
+            cm = (vs > MFRAC * vs(x,y,z)) .and. sup
+            call label6(cm, lab, nl)
+            comp    = lab == lab(x,y,z)
+            visited = visited .or. comp
+            if( any(comp .and. claimed) ) cycle
+            nv = count(comp)
+            if( nv < DMINVOX ) cycle
+            claimed = claimed .or. comp
+            allocate(pe(nv,nk), po(nv,nk))
+            iv = 0
+            do k = 1, n
+                do y = 1, n
+                    do x = 1, n
+                        if( .not. comp(x,y,k) ) cycle
+                        iv = iv + 1
+                        pe(iv,:) = real(sqrt(wn)) * de(x,y,k,:)
+                        po(iv,:) = real(sqrt(wn)) * dv(x,y,k,:)
+                    end do
+                end do
+            end do
+            allocate(g(nk,nk), u(nk,nk), lam(nk))
+            g = matmul(transpose(real(pe,dp)), real(pe,dp))
+            call jacobi(g, nk, nk, lam, u, nrot)
+            lam   = max(lam, 0._dp)
+            neff  = real(nv) * 4. / 3. * real(PI) * (smpd / MLP)**3 / 2.
+            nkept = 0
+            fline = ''
+            do f = 1, nk
+                share = real(lam(f) / max(sum(lam), 1.e-300_dp))
+                ue    = matmul(pe, real(u(:,f)))
+                uo    = matmul(po, real(u(:,f)))
+                rr    = pearson_r(ue, uo)
+                zz    = atanh(min(max(rr, -0.999999), 0.999999)) * sqrt(max(neff - 3., 1.))
+                if( zz >= DFACT_Z .and. share >= DFACT_SHARE ) nkept = nkept + 1
+                if( share >= 0.05 ) fline = fline//' '//int2str(nint(100. * share))//'%/'//int2str(nint(zz))
+            end do
+            deallocate(pe, po, g, u, lam)
+            cen = 0.
+            iv  = 0
+            do k = 1, n
+                do y = 1, n
+                    do x = 1, n
+                        if( .not. comp(x,y,k) ) cycle
+                        cen = cen + real([x, y, k] - 1 - n/2)
+                    end do
+                end do
+            end do
+            rad = sqrt(sum((cen / real(nv))**2)) * smpd
+            if( nkept == 0 )then
+                write(logfhandle,'(A,F6.3,A,I0,A,F5.1,A)') '>>> SITE_ISLANDS region at ', vs(x,y,z) / vmax, ' x max, ', nv, &
+                    &' voxels, centre ', rad, ' A: no factor kept (share %/z'//fline//')'
+                cycle
+            endif
+            msk = exp(-dist_box(dilate6(comp, nint(MDIL)), smpd)**2 / (2. * MFALL**2))
+            where( .not. sph ) msk = 0.
+            mol = real(count(msk > 0.5 .and. sup)) / real(max(1, nsup))
+            if( mol > DMAXMOL )then
+                write(logfhandle,'(A,F6.3,A,I0,A,F5.1,A)') '>>> SITE_ISLANDS region at ', vs(x,y,z) / vmax, ' x max, ', nv, &
+                    &' voxels, centre ', rad, ' A: not local, dropped'
+                cycle
+            endif
+            nisl = nisl + 1
+            call img%set_rmat(msk, .false.)
+            call img%write(string(outdir//'/island_'//pad2(nisl)//'.mrc'))
+            write(funit,'(I0,1X,F6.3,1X,I0,1X,F6.3,1X,F6.1,1X,I0)') nisl, vs(x,y,z) / vmax, count(msk > 0.5), mol, rad, nkept
+            write(logfhandle,'(A,I0,A,F6.3,A,I0,A,F5.1,A,I0,A)') '>>> SITE_ISLANDS ISLAND ', nisl, ': peak ', vs(x,y,z) / vmax, &
+                &' x max, ', nv, ' voxels, centre ', rad, ' A, ', nkept, ' factor(s) kept (share %/z'//fline//')'
+        end do
+        call fclose(funit)
+        call img%kill
+        write(logfhandle,'(A,I0,A)') '>>> SITE_ISLANDS ', nisl, ' island site(s) for the per-site split'
+
+        contains
+
+            real function pearson_r( a, bb )
+                real, intent(in) :: a(:), bb(:)
+                real(dp) :: ma, mb
+                ma = sum(real(a,dp)) / real(size(a),dp)
+                mb = sum(real(bb,dp)) / real(size(bb),dp)
+                pearson_r = real(sum((real(a,dp) - ma) * (real(bb,dp) - mb)) / max(sqrt(sum((real(a,dp) - ma)**2) * &
+                    &sum((real(bb,dp) - mb)**2)), 1.e-300_dp))
+            end function pearson_r
+
+    end subroutine discover_islands
 
     subroutine discover_sites( evens, odds, counts, names, mskdiam, outdir, nsite, pgrp )
         type(string),     intent(in)  :: evens(:), odds(:)
@@ -5410,7 +5659,7 @@ contains
 
     logical function live_step( s )
         integer, intent(in) :: s
-        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_SBATCH .or. s == S_SDISC
+        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_SBATCH .or. s == S_SDISC .or. s == S_SITESPLIT
     end function live_step
 
     function step_label( s ) result( lb )
@@ -5423,6 +5672,8 @@ contains
                 lb = 'site batch'
             case(S_SDISC)
                 lb = 'site discovery'
+            case(S_SITESPLIT)
+                lb = 'site split'
             case default
                 lb = 'step '//int2str(s)
         end select
@@ -5437,6 +5688,8 @@ contains
                 sd = seed_dir(self%ndir(i))
             case(S_SBATCH, S_SDISC)
                 sd = self%ndir(i)//'/sites'
+            case(S_SITESPLIT)
+                sd = self%ndir(i)//'/xsplit'
             case(S_MEAN:S_RECB0, S_SEEDS:S_SPLIT)
                 sd = self%ndir(i)//'/'//trim(STEP_DIRS(s))
             case default

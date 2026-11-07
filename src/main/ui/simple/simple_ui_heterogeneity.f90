@@ -18,6 +18,7 @@ type(ui_program), target :: hetero_tree
 type(ui_program), target :: landscape_compare
 type(ui_program), target :: site_discover
 type(ui_program), target :: landscape_sample
+type(ui_program), target :: site_split
 
 contains
 
@@ -36,6 +37,7 @@ contains
         call new_landscape_compare(prgtab)
         call new_site_discover(prgtab)
         call new_landscape_sample(prgtab)
+        call new_site_split(prgtab)
     end subroutine construct_heterogeneity_programs
 
     subroutine new_flex_pca( prgtab )
@@ -722,6 +724,13 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
         &units down to their lowest common ancestor node; no delivers the clustering-tree fit when it explains the covariance &
         &(R^2 >= 0.7) and the unstructured covariance otherwise(yes|no){yes}', '', &
         &.false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'site_split', 'binary', 'Per-site split of would-be leaves', &
+        &'A node the tree would file as one leaf above the depth cap, holding at least 2 x minpop particles, is first tested &
+        &per site (its own sites and the variance islands away from the core): a cross-validated two-state classification at &
+        &fixed poses, then the GAPw call on the consensus density between the two groups'' lobes; a DISCRETE site (the lowest &
+        &GAPw when several) splits the node into two children that run the full pipeline, else the leaf is filed as &
+        &before. The tree''s own splits, sites and seeds never change(yes|no){no}', '', &
+        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'kway_maxdepth', 'num', 'Depth of K-way seeding', &
         &'A node deeper than this seeds at most two states, the two ends of its seeding site''s pole (else its two largest &
         &seed states), and adds no site-pole states; -1 = every node, the root included; 99 = no limit{99}', 'depth{99}', &
@@ -839,6 +848,38 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
         call landscape_compare%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
         call add_ui_program('landscape_compare', landscape_compare, prgtab, UI_CATEGORY)
     end subroutine new_landscape_compare
+
+    subroutine new_site_split( prgtab )
+        class(ui_hash), intent(inout) :: prgtab
+        call site_split%new(&
+        &'site_split',&
+        &'Test every site of a tree node for two discrete states',&
+        &'is a program that tests, at every site of a hetero_tree node (sites/site_NN.mrc and the islands island_NN.mrc), &
+        &whether the node''s particles fall into two discrete states there: a cross-validated two-state classification at &
+        &fixed poses (per-half random starts, each half scored against the other half''s site-masked references, ten &
+        &iterations), then the GAPw call on the two groups'' half maps: a signal-dominated first cross-half factor, lobes &
+        &that move density and reproduce between the halves, and a nearly empty consensus density between them. Writes &
+        &summary.txt and, per site, labels.txt and stats.txt; the project is never written',&
+        &'simple_exec',&
+        &.true.,&
+        &visibility=UI_VIS_ADVANCED, display_name='Site Split Test')
+        call site_split%add_input(UI_FILE, 'dir', 'dir', 'Node directory', &
+        &'The hetero_tree node directory holding sites/sites.txt, its site masks and the islands', 'e.g. node_r12', .true., '', &
+        &visibility=UI_VIS_STANDARD)
+        call site_split%add_input(UI_FILT, 'hp', 'num', 'High-pass limit of the classification band', &
+        &'Lowest resolution of the band{40}', 'in Angstroms{40}', .false., 40., &
+        &group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call site_split%add_input(UI_FILT, 'lp', 'num', 'Resolution of the classification', &
+        &'The particles are Fourier-cropped to this Nyquist resolution; ignored with box_crop{12}', 'in Angstroms{12}', &
+        &.false., 12., group='filter', visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+        call site_split%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
+        &'Fourier-cropped box of the classification; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
+        &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call site_split%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+        call site_split%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+        call site_split%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
+        call add_ui_program('site_split', site_split, prgtab, UI_CATEGORY)
+    end subroutine new_site_split
 
     subroutine new_site_discover( prgtab )
         class(ui_hash), intent(inout) :: prgtab

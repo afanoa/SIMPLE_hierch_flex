@@ -148,6 +148,7 @@ use simple_nano_density_tester,              only: run_all_nano_density_tests, r
 use simple_pdb2mrc_tester,                   only: run_all_pdb2mrc_tests
 use simple_image_serialize_tester,           only: run_all_image_serialize_tests
 use simple_cavg_registration_tester,         only: run_all_cavg_registration_tests
+use simple_site_split_tester,                only: run_all_site_split_tests
 use simple_cavgs_state_match_tester,         only: run_all_cavgs_state_match_tests
 use simple_polarft_corr_tester,              only: run_all_polarft_corr_tests
 use simple_polar_shiftmap_tester,            only: run_all_polar_shiftmap_tests
@@ -606,6 +607,7 @@ contains
         call add_suite(s, n, 'flex PCG operator', run_all_flex_pcg_tests)
         call add_suite(s, n, 'flex cls_expansion', run_all_flex_cls_expansion_tests)
         call add_suite(s, n, 'flex cls_expansion kernel', run_all_flex_cls_kernel_tests)
+        call add_suite(s, n, 'site split',        run_all_site_split_tests)
     end subroutine suites_heterogeneity
 
     !> nightly: application-level two-state phantom, deconvolution of 20000 particles at realistic

@@ -71,6 +71,11 @@ type, extends(commander_base) :: commander_site_rank
     procedure :: execute      => exec_site_rank
 end type commander_site_rank
 
+type, extends(commander_base) :: commander_site_split
+  contains
+    procedure :: execute      => exec_site_split
+end type commander_site_split
+
 type, extends(commander_base) :: commander_hetero_tree
   contains
     procedure :: execute      => exec_hetero_tree
@@ -3044,8 +3049,17 @@ contains
         call simple_end('**** SIMPLE_LANDSCAPE_COMPARE NORMAL STOP ****')
     end subroutine exec_landscape_compare
 
+    !> the add-only per-site split of a would-be leaf (labels and statistics only)
+    subroutine exec_site_split( self, cline )
+        use simple_site_split, only: run_site_split
+        class(commander_site_split), intent(inout) :: self
+        class(cmdline),              intent(inout) :: cline
+        call run_site_split(cline)
+        call simple_end('**** SIMPLE_SITE_SPLIT NORMAL STOP ****')
+    end subroutine exec_site_split
+
     subroutine exec_site_discover( self, cline )
-        use simple_hetero_tree,     only: discover_sites
+        use simple_hetero_tree,     only: discover_sites, discover_islands
         use simple_refine3D_fnames, only: refine3D_state_halfvol_fname
         class(commander_site_discover), intent(inout) :: self
         class(cmdline),                 intent(inout) :: cline
@@ -3074,6 +3088,7 @@ contains
         if( size(names) < 2 ) THROW_HARD('site_discover needs at least two states')
         call discover_sites(evens, odds, counts, names, params%mskdiam, '.', nsite, trim(params%pgrp))
         write(logfhandle,'(A)') '>>> SITE_DISCOVER '//int2str(nsite)//' sites over '//int2str(size(names))//' states'
+        if( params%site_split .eq. 'yes' ) call discover_islands(evens, odds, counts, params%mskdiam, '.')
         call simple_end('**** SIMPLE_SITE_DISCOVER NORMAL STOP ****')
     end subroutine exec_site_discover
 

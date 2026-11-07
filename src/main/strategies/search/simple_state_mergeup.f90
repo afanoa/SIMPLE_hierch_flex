@@ -84,6 +84,9 @@ type :: state_mergeup
   contains
     procedure :: new
     procedure :: focus
+    procedure :: site_focus
+    procedure :: site_split_em
+    procedure, private :: site_refs
     procedure :: leaf_focus
     procedure :: run
     procedure :: test_once
@@ -348,6 +351,95 @@ contains
             &fmtr(100._dp*real(count(fm > 0.5),dp)/real(size(fm),dp),1)//' % of the crop grid above 0.5'
         call vol%kill
     end subroutine focus
+
+    !> the site split's focus: the node mask times one site mask, reset for every site
+    subroutine site_focus( self, fname )
+        class(state_mergeup), intent(inout) :: self
+        class(string),        intent(in)    :: fname
+        type(image) :: vol
+        real, allocatable :: fm(:,:,:)
+        if( .not. allocated(self%msk0) ) self%msk0 = self%msk3
+        call vol%read_and_crop(fname, self%p%smpd, self%box, self%p%smpd_crop)
+        fm = min(max(vol%get_rmat(), 0.), 1.)
+        if( any(shape(fm) /= shape(self%msk0)) ) THROW_HARD('site mask box does not match the particles; site_focus')
+        self%msk3 = self%msk0 * fm
+        self%kt   = min(self%kb + RB_MARGIN_FOCUS, self%khi - 2)
+        call vol%kill
+    end subroutine site_focus
+
+    !> the site split's cross-validated classification: per-half random starts, each half scored against the other
+    !! half's site-masked references for niter iterations; labels over the node's rows (0 = in no half) and the
+    !! groups' unmasked half maps from the final labels (k + 1: the groups, then every particle)
+    subroutine site_split_em( self, k, niter, seed, labels, ma, mb )
+        use simple_rnd, only: seed_rnd_fixed, ran3
+        class(state_mergeup), intent(inout) :: self
+        integer,              intent(in)    :: k, niter, seed
+        integer, allocatable, intent(out)   :: labels(:)
+        complex, allocatable, intent(out)   :: ma(:,:,:,:), mb(:,:,:,:)
+        complex, allocatable :: cons(:,:,:,:)
+        integer, allocatable :: ia(:), ib(:), la(:), lb(:), starta(:), startb(:)
+        real,    allocatable :: eps(:), wa(:,:), wb(:,:)
+        integer :: neq, i, ii
+        ia = pack([(ii, ii=1,self%n)], self%eo == 0)
+        ib = pack([(ii, ii=1,self%n)], self%eo == 1)
+        allocate(la(size(ia)), lb(size(ib)), source=1)
+        call self%consensus(ia, ib, la, lb, 1, neq, eps, cons)
+        call seed_rnd_fixed(seed)
+        allocate(starta(size(ia)), startb(size(ib)))
+        do i = 1, size(ia)
+            starta(i) = min(k, 1 + int(ran3() * real(k)))
+        end do
+        do i = 1, size(ib)
+            startb(i) = min(k, 1 + int(ran3() * real(k)))
+        end do
+        call self%cross_em(ia, ib, starta, startb, k, eps, neq, la, lb, l_full=.true., niter=niter, l_site=.true.)
+        allocate(wa(size(ia),k), wb(size(ib),k), source=0.)
+        do i = 1, size(ia)
+            if( la(i) > 0 ) wa(i,la(i)) = 1.
+        end do
+        do i = 1, size(ib)
+            if( lb(i) > 0 ) wb(i,lb(i)) = 1.
+        end do
+        allocate(ma(self%nh,self%box,self%box,k+1), mb(self%nh,self%box,self%box,k+1))
+        call self%em_maps(ia, wa, eps, neq, .true., ma)
+        call self%em_maps(ib, wb, eps, neq, .true., mb)
+        allocate(labels(self%n), source=0)
+        labels(ia) = la
+        labels(ib) = lb
+    end subroutine site_split_em
+
+    !> a half's site references: its consensus plus the site-masked deviation of each group from the groups' weighted mean
+    subroutine site_refs( self, m, w )
+        class(state_mergeup), intent(inout) :: self
+        complex,              intent(inout) :: m(:,:,:,:)
+        real,                 intent(in)    :: w(:,:)
+        real, pointer     :: rmat(:,:,:)
+        real, allocatable :: r(:,:,:,:), mu(:,:,:)
+        real    :: f(size(w,2))
+        integer :: g, k
+        k = size(w,2)
+        f = [(sum(w(:,g)), g=1,k)]
+        f = f / max(sum(f), 1.)
+        allocate(r(self%box,self%box,self%box,k+1))
+        do g = 1, k + 1
+            call self%wimgs(1)%set_ft(.true.)
+            call self%wimgs(1)%set_cmat(m(:,:,:,g))
+            call self%wimgs(1)%ifft
+            call self%wimgs(1)%get_rmat_ptr(rmat)
+            r(:,:,:,g) = rmat(:self%box,:self%box,:self%box)
+        end do
+        mu = f(1) * r(:,:,:,1)
+        do g = 2, k
+            mu = mu + f(g) * r(:,:,:,g)
+        end do
+        do g = 1, k
+            call self%wimgs(1)%set_ft(.false.)
+            call self%wimgs(1)%get_rmat_ptr(rmat)
+            rmat(:self%box,:self%box,:self%box) = r(:,:,:,k+1) + self%msk3 * (r(:,:,:,g) - mu)
+            call self%wimgs(1)%fft
+            m(:,:,:,g) = self%wimgs(1)%get_cmat()
+        end do
+    end subroutine site_refs
 
     subroutine leaf_focus( self, fname )
         class(state_mergeup), intent(inout) :: self
@@ -1544,7 +1636,9 @@ contains
         l_merge = r < thr
     end subroutine null_resolve
 
-    subroutine cross_em( self, ia, ib, starta, startb, k, eps, neq, la, lb, l_full, ll, kcut, llband, niter, lpa, lpb )
+    !> l_site: the site split's design, masked references (the focus mask) and half B's groups renumbered to half A's
+    !! by the cross-half correlation of their deviations before every iteration
+    subroutine cross_em( self, ia, ib, starta, startb, k, eps, neq, la, lb, l_full, ll, kcut, llband, niter, lpa, lpb, l_site )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: ia(:), ib(:), starta(:), startb(:), k, neq
         real,                 intent(in)    :: eps(0:)
@@ -1555,17 +1649,20 @@ contains
         real(dp), optional,   intent(out)   :: llband(2)
         integer,  optional,   intent(in)    :: niter
         real(dp), allocatable, optional, intent(out) :: lpa(:), lpb(:)
+        logical,  optional,   intent(in)    :: l_site
         complex,             allocatable :: ma(:,:,:,:), mb(:,:,:,:)
         type(reconstructor), allocatable :: refa(:), refb(:)
         real,    allocatable :: wa(:,:), wb(:,:), wan(:,:), wbn(:,:), fl(:,:)
-        integer, allocatable :: mpa(:), mpb(:), ca(:), cb(:)
+        integer, allocatable :: mpa(:), mpb(:), ca(:), cb(:), perm(:)
         logical, allocatable :: l_alive(:)
         character(len=:), allocatable :: line
-        real(dp) :: lla, llb, lba(2), lbb(2)
-        integer  :: it, g, i, kband, nit
-        logical  :: l_fb
+        real(dp) :: lla, llb, lba(2), lbb(2), cc(k,k), cbest
+        integer  :: it, g, i, kband, nit, h, gb
+        logical  :: l_fb, l_st
         l_fb = .false.
         if( present(l_full) ) l_fb = l_full
+        l_st = .false.
+        if( present(l_site) ) l_st = l_site
         kband = merge(self%khi, self%kb, l_fb)
         nit   = NEM_ITERS
         if( present(niter) ) nit = niter
@@ -1594,6 +1691,39 @@ contains
                 call self%em_maps(ia, wa, eps, neq, l_fb, ma)
                 call self%em_maps(ib, wb, eps, neq, l_fb, mb)
             endif
+            if( l_st )then
+                call self%site_refs(ma, wa)
+                call self%site_refs(mb, wb)
+            endif
+            if( l_st .and. k > 1 )then
+                ! half B's groups renumbered to half A's: greedy on the cross-half correlation of the group deviations
+                do g = 1, k
+                    do h = 1, k
+                        cc(g,h) = self%shell_dot(ma(:,:,:,g) - ma(:,:,:,k+1), mb(:,:,:,h) - mb(:,:,:,k+1), 2, kband) / &
+                            &sqrt(max(self%shell_dot(ma(:,:,:,g) - ma(:,:,:,k+1), ma(:,:,:,g) - ma(:,:,:,k+1), 2, kband) * &
+                            &self%shell_dot(mb(:,:,:,h) - mb(:,:,:,k+1), mb(:,:,:,h) - mb(:,:,:,k+1), 2, kband), 1.e-300_dp))
+                    end do
+                end do
+                allocate(perm(k), source=0)
+                do g = 1, k
+                    cbest = -huge(1._dp)
+                    gb    = 0
+                    do h = 1, k
+                        if( any(perm == h) ) cycle
+                        if( cc(g,h) > cbest )then
+                            cbest = cc(g,h)
+                            gb    = h
+                        endif
+                    end do
+                    perm(g) = gb
+                end do
+                if( any(perm /= [(g, g=1,k)]) )then
+                    write(logfhandle,'(A)') '  half B groups renumbered to half A: '//joined(perm)
+                    mb(:,:,:,1:k) = mb(:,:,:,perm)
+                    wb(:,1:k)     = wb(:,perm)
+                endif
+                deallocate(perm)
+            endif
             !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
             do g = 1, 2*k
                 if( g <= k )then
@@ -1609,11 +1739,16 @@ contains
             end do
             !$omp end parallel do
             if( present(kcut) .and. present(llband) )then
-                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla, kcut=kcut, llband=lba, lpp=lpa)
-                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb, kcut=kcut, llband=lbb, lpp=lpb)
+                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla, kcut=kcut, llband=lba, lpp=lpa, l_flat=l_st)
+                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb, kcut=kcut, llband=lbb, lpp=lpb, l_flat=l_st)
             else
-                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla)
-                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb)
+                call self%estep(ia, wa, refb, l_alive, wan, l_full=l_fb, ll=lla, l_flat=l_st)
+                call self%estep(ib, wb, refa, l_alive, wbn, l_full=l_fb, ll=llb, l_flat=l_st)
+            endif
+            if( l_st )then
+                ! the site path classifies hard: soft weights at a noise-level site contrast pull every group map to the consensus
+                call harden(wan)
+                call harden(wbn)
             endif
             mpa  = maxloc(wa, dim=2)
             mpb  = maxloc(wb, dim=2)
@@ -1692,9 +1827,20 @@ contains
             call ref%expand_exp
         end subroutine set_ref
 
+        subroutine harden( w )
+            real, intent(inout) :: w(:,:)
+            integer :: i, g
+            do i = 1, size(w,1)
+                g = maxloc(w(i,:), dim=1)
+                w(i,:) = 0.
+                w(i,g) = 1.
+            end do
+        end subroutine harden
+
     end subroutine cross_em
 
     ! Cross-half EM and its acceptance driver use this same weight-to-map wrapper.
+    !> l_mask: the maps masked by the focus mask (the site split's references), only on the direct insertion path
     subroutine em_maps( self, idx, w, eps, neq, l_full, m, audit_tag )
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in) :: idx(:), neq
@@ -3164,7 +3310,7 @@ contains
 
     end subroutine merge_poles_subspace
 
-    subroutine estep( self, idx, w, refs, l_alive, wnew, l_full, ll, kcut, llband, lpp )
+    subroutine estep( self, idx, w, refs, l_alive, wnew, l_full, ll, kcut, llband, lpp, l_flat )
         class(state_mergeup), target, intent(inout) :: self
         integer,              intent(in)    :: idx(:)
         real,                 intent(in)    :: w(:,:)
@@ -3176,6 +3322,7 @@ contains
         integer,  optional,   intent(in)    :: kcut
         real(dp), optional,   intent(out)   :: llband(2)
         real(dp), allocatable, optional, intent(out) :: lpp(:)
+        logical,  optional,   intent(in)    :: l_flat
         real(dp), allocatable :: lpl(:)
         real,    allocatable :: aa(:,:,:), bb(:,:,:)
         complex, allocatable :: projected(:,:)
@@ -3187,9 +3334,11 @@ contains
         real(dp) :: prior(size(refs)), s(size(refs)), smax, lse, num, sbd(size(refs),2), lseb(2), bmax
         complex  :: pv, wv
         integer  :: n, k, i, ip, g, j, h, kk, sh, it, nyq_save, nsb, nsmp, kband, ic, ib, nthr
-        logical  :: l_fb, l_bd, l_reuse
+        logical  :: l_fb, l_bd, l_reuse, l_fl
         l_fb = .false.
         if( present(l_full) ) l_fb = l_full
+        l_fl = .false.
+        if( present(l_flat) ) l_fl = l_flat
         if( l_fb )then
             bhk => self%fbhk
             bsh => self%fbsh
@@ -3212,9 +3361,12 @@ contains
         n  = size(idx)
         k  = size(refs)
         mp = maxloc(w, dim=2)
-        do g = 1, k
-            prior(g) = log(max(real(sum(w(:,g)),dp) / real(n,dp), 1.e-6_dp))
-        end do
+        prior = 0._dp
+        if( .not. l_fl )then
+            do g = 1, k
+                prior(g) = log(max(real(sum(w(:,g)),dp) / real(n,dp), 1.e-6_dp))
+            end do
+        endif
         allocate(aa(nsb,k,n), bb(nsb,k,n), source=0.)
         l_reuse = self%p%merge_geom_reuse == 'yes'
         if( l_reuse )then
