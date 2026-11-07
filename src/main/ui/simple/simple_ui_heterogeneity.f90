@@ -717,6 +717,11 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
         &while the added states stay under half the node and every seed keeps minpop; the split test decides whether it stays &
         &a child(yes|no){no}', '', &
         &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'depth_wiener', 'binary', 'Depth-tied final maps', &
+        &'The final maps'' per-shell cross-half covariance Wiener filter uses one variance per depth of the tree, shared by two &
+        &units down to their lowest common ancestor node; no delivers the clustering-tree fit when it explains the covariance &
+        &(R^2 >= 0.7) and the unstructured covariance otherwise(yes|no){yes}', '', &
+        &.false., 'yes', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'kway_maxdepth', 'num', 'Depth of K-way seeding', &
         &'A node deeper than this seeds at most two states, the two ends of its seeding site''s pole (else its two largest &
         &seed states), and adds no site-pole states; -1 = every node, the root included; 99 = no limit{99}', 'depth{99}', &

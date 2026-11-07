@@ -1,4 +1,4 @@
-!@descr: tree-weighted final maps of a tree's units: per Fourier shell the units' cross-half covariance fitted with the tree (NNLS) or taken as measured (PSD), inside and outside a focus mask where the units differ between halves, and every unit's posterior-mean map
+!@descr: tree-weighted final maps of a tree's units: per Fourier shell the units' cross-half covariance fitted with the clustering tree (NNLS), tied per depth of the tree's own topology, or taken as measured (PSD), inside and outside a focus mask where the units differ between halves, and every unit's posterior-mean map
 module simple_tree_wiener
 use simple_defs,         only: dp, logfhandle, PI
 use simple_error,        only: simple_exception
@@ -17,27 +17,29 @@ private
 #include "simple_local_flags.inc"
 
 real,    parameter :: HPFIT = 40., LPFIT = 8., R2MIN = 0.7, LPMASK = 20., MTHR = 0.15, MSIG = 2., MDIL = 3., EDGE = 6.
-integer, parameter :: NEST = 4, RND_SEED = 1
-character(len=5), parameter :: ESTS(NEST) = [character(len=5) :: 'raw', 'own', 'tree2', 'emp2']
+integer, parameter :: NEST = 5, RND_SEED = 1
+character(len=6), parameter :: ESTS(NEST) = [character(len=6) :: 'raw', 'own', 'tree2', 'emp2', 'depth2']
 
 contains
 
-    subroutine tree_wiener_maps( evens, odds, counts, names, ljunk, steps, mskdiam, lp, outdir )
-        type(string),     intent(in) :: evens(:), odds(:)
+    !> nodes: each unit's node id in the tree's prefix notation (r, r1, r12); l_depth delivers the depth-tied estimator
+    subroutine tree_wiener_maps( evens, odds, counts, names, nodes, ljunk, steps, mskdiam, lp, outdir, l_depth )
+        type(string),     intent(in) :: evens(:), odds(:), nodes(:)
         real(dp),         intent(in) :: counts(:)
         integer,          intent(in) :: names(:), steps(:,:)
         logical,          intent(in) :: ljunk(:)
         real,             intent(in) :: mskdiam, lp
         character(len=*), intent(in) :: outdir
+        logical,          intent(in) :: l_depth
         type(image)           :: vol
         complex,  allocatable :: ef(:,:), of(:,:), ea(:,:), oa(:,:), est(:,:,:,:)
         real,     allocatable :: msk(:,:,:), mv(:,:,:), eb(:,:,:), ob(:,:,:), vv(:,:,:), el(:,:,:), ol(:,:,:), x(:,:,:)
         real,     allocatable :: wg(:), filt(:), fres(:,:)
-        real(dp), allocatable :: wl(:), atr(:,:), ash(:,:), ast(:,:), gtr(:,:), gsh(:,:), gst(:,:), r2(:,:)
+        real(dp), allocatable :: wl(:), atr(:,:), ash(:,:), ast(:,:), adp(:,:), gtr(:,:), gsh(:,:), gst(:,:), gdp(:,:), r2(:,:)
         integer,  allocatable :: phys(:,:), shell(:), lo(:), hi(:), perm(:), cnt(:), ord(:)
         logical,  allocatable :: inm(:,:,:), core(:,:,:)
         character(len=:), allocatable :: choice
-        real(dp) :: r2m(3)
+        real(dp) :: r2m(4)
         real     :: smpd, r0, rr, fq, rsh
         integer  :: ldim(3), ifoo, n, nu, nsh, nvox, i, j, k, h, l, s, u, lims(3,2), ie, nfit, funit, ios, c
         nu = size(evens)
@@ -130,8 +132,9 @@ contains
         gtr = matmul(transpose(atr), atr)
         gsh = matmul(transpose(ash), ash)
         gst = matmul(transpose(ast), ast)
-        allocate(est(nvox,nu,3,3), source=cmplx(0.,0.))
-        allocate(r2(3,nsh), source=0._dp)
+        gdp = matmul(transpose(adp), adp)
+        allocate(est(nvox,nu,3,4), source=cmplx(0.,0.))
+        allocate(r2(4,nsh), source=0._dp)
         !$omp parallel do default(shared) private(s) schedule(dynamic) proc_bind(close)
         do s = 1, nsh - 1
             if( hi(s) < lo(s) ) cycle
@@ -147,8 +150,12 @@ contains
             r2m  = r2m + r2(:,s)
         end do
         r2m    = r2m / real(max(1, nfit), dp)
-        choice = merge('tree2', 'emp2 ', r2m(1) >= real(R2MIN,dp))
-        choice = trim(choice)
+        if( l_depth )then
+            choice = 'depth2'
+        else
+            choice = merge('tree2', 'emp2 ', r2m(1) >= real(R2MIN,dp))
+            choice = trim(choice)
+        endif
         call simple_mkdir(string(outdir))
         allocate(fres(nu,NEST))
         do ie = 1, NEST
@@ -246,8 +253,23 @@ contains
 
         subroutine designs
             integer, allocatable :: par(:), paths(:,:), npath(:), pshuf(:,:), nshuf(:)
-            integer :: nn, ist, root, p, q, r, ii, col, tmp
+            integer :: nn, ist, root, p, q, r, ii, col, tmp, lmax, lv
             logical :: l_shared
+            ! the depth-tied design: one variance per level of the tree's own topology, shared by a pair down to
+            ! the level of its units' lowest common ancestor node (a unit's own level is its node's depth + 1)
+            lmax = 0
+            do ii = 1, nu
+                lmax = max(lmax, nodes(ii)%strlen())
+            end do
+            allocate(adp(nu*(nu+1)/2, lmax + 1), source=0._dp)
+            r = 0
+            do p = 1, nu
+                do q = p, nu
+                    r  = r + 1
+                    lv = lca_level(p, q)
+                    adp(r, 1:lv+1) = 1._dp
+                end do
+            end do
             nn   = 2 * nu - 1
             root = steps(3, nu - 1)
             allocate(par(0:nn-1), source=-1)
@@ -300,10 +322,28 @@ contains
             end do
         end subroutine designs
 
+        integer function lca_level( p, q )
+            integer, intent(in) :: p, q
+            character(len=:), allocatable :: a, b
+            integer :: j
+            a = nodes(p)%to_char()
+            b = nodes(q)%to_char()
+            if( p == q )then
+                lca_level = len(a)
+                return
+            endif
+            lca_level = 0
+            do j = 1, min(len(a), len(b))
+                if( a(j:j) /= b(j:j) ) exit
+                lca_level = j
+            end do
+            lca_level = max(lca_level - 1, 0)
+        end function lca_level
+
         subroutine shell_pass( sh )
             integer, intent(in) :: sh
             complex, allocatable :: e(:,:), o(:,:)
-            real(dp) :: ce(nu,nu), nv(nu), cf(nu,nu), d(nu), r2s(3)
+            real(dp) :: ce(nu,nu), nv(nu), cf(nu,nu), d(nu), r2s(4)
             integer  :: a1, a2, aa
             a1 = lo(sh)
             a2 = hi(sh)
@@ -319,6 +359,7 @@ contains
             call treefit(atr, gtr, ce, cf, r2s(1))
             call treefit(ash, gsh, ce, cf, r2s(2))
             call treefit(ast, gst, ce, cf, r2s(3))
+            call treefit(adp, gdp, ce, cf, r2s(4))
             r2(:,sh) = r2s
             e = ea(a1:a2,:)
             o = oa(a1:a2,:)
@@ -336,12 +377,15 @@ contains
             real(dp) :: ce(nu,nu), nv(nu), cf(nu,nu), r2d
             integer  :: ke
             call cov(ep, op, wg(a1:a2), ce, nv)
-            do ke = 2, 3
-                if( ke == 2 )then
-                    call treefit(atr, gtr, ce, cf, r2d)
-                else
-                    call psd(ce, cf)
-                endif
+            do ke = 2, 4
+                select case(ke)
+                    case(2)
+                        call treefit(atr, gtr, ce, cf, r2d)
+                    case(3)
+                        call psd(ce, cf)
+                    case(4)
+                        call treefit(adp, gdp, ce, cf, r2d)
+                end select
                 call wiener(cf, nv, ep, op, xo, eo, oo)
                 if( l_first )then
                     est(a1:a2,:,1,ke) = xo
@@ -522,9 +566,9 @@ contains
             write(line,'(I0,A,I0,A,I0,A,F6.3,A,F5.1,A,F5.1,A)') nu, ' units (', count(ljunk), ' junk), box ', n, ' at ', smpd, &
                 &' A/px, low-pass ', lp, ' A, unsharpened; focus mask ', 100. * sum(mv) / sum(msk), ' % of the sphere'
             call emit(trim(line))
-            write(line,'(A,F4.0,A,F4.0,A,F6.3,A,F6.3,A,F6.3,A)') 'covariance fit, off-diagonal R^2 over ', HPFIT, '-', LPFIT, &
-                &' A: tree ', r2m(1), ', shuffled tree ', r2m(2), ', star ', r2m(3), ' -> deliver '//choice//&
-                &' (rule: tree2 when the tree R^2 >= 0.70, else the unstructured emp2)'
+            write(line,'(A,F4.0,A,F4.0,A,F6.3,A,F6.3,A,F6.3,A,F6.3,A)') 'covariance fit, off-diagonal R^2 over ', HPFIT, '-', LPFIT, &
+                &' A: tree ', r2m(1), ', shuffled tree ', r2m(2), ', star ', r2m(3), ', depth-tied ', r2m(4), ' -> deliver '//choice//&
+                &' (rule: depth2 with depth_wiener=yes; else tree2 when the tree R^2 >= 0.70, else the unstructured emp2)'
             call emit(trim(line))
             line = 'half-map FSC 0.143 resolution, median / worst over the '//int2str(size(real_units))//' non-junk units:'
             do iee = 1, NEST

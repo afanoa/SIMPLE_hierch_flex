@@ -58,6 +58,7 @@ type :: parameters
     character(len=3)          :: site_disc='no'         !< hetero_tree: a node discovers its sites from its first refinement's state maps(yes|no){no}
     character(len=3)          :: site_layer='yes'       !< hetero_tree: the factorial per-site layer over the finished tree(yes|no){yes}
     character(len=3)          :: site_states='no'       !< hetero_tree: extra seed states from the discovered site poles (needs site_layer=yes)(yes|no){no}
+    character(len=3)          :: depth_wiener='yes'     !< hetero_tree: final maps from the tree-covariance Wiener filter tied per depth of the tree(yes|no){yes}
     character(len=3)          :: node_rows='yes'        !< hetero_tree: each refinement and reconstruction step's project cut to the node's particles(yes|no){yes}
     character(len=3)          :: node_subset_io='no' !< write compact tree projects directly from selected rows(yes|no){no}
     character(len=3)          :: node_worker_pool='no' !< reuse workers for standalone tree jobs(yes|no){no}

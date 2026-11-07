@@ -3220,20 +3220,21 @@ contains
     subroutine final_maps( self )
         class(hetero_tree), intent(inout) :: self
         type(state_tree)          :: tree
-        type(string), allocatable :: lines(:), nds(:), evens(:), odds(:)
+        type(string), allocatable :: lines(:), nds(:), evens(:), odds(:), nodes(:)
         real(dp),     allocatable :: counts(:)
         integer,      allocatable :: names(:), steps(:,:)
         logical,      allocatable :: ljunk(:)
         character(len=4096) :: line
-        character(len=:), allocatable :: md, ev, od
+        character(len=:), allocatable :: md, ev, od, nd
         integer :: il, j, k, funit, ios
         md = self%root//'/final_maps'
         call leaf_lines(lines, nds)
-        allocate(evens(0), odds(0), counts(0), names(0), ljunk(0))
+        allocate(evens(0), odds(0), counts(0), names(0), ljunk(0), nodes(0))
         do il = 1, size(lines)
             j  = count([(nds(k) == nds(il), k=1,il)])
-            ev = nds(il)%to_char()//'/plain/'//hv(j, 'even')
-            od = nds(il)%to_char()//'/plain/'//hv(j, 'odd')
+            nd = nds(il)%to_char()
+            ev = nd//'/plain/'//hv(j, 'even')
+            od = nd//'/plain/'//hv(j, 'odd')
             line = lines(il)%to_char()
             if( .not. (file_exists(string(ev)) .and. file_exists(string(od))) )then
                 write(logfhandle,'(A)') '>>> HETERO_TREE no plain leaf maps for '//word(line, 1)//': left out of the final maps'
@@ -3244,6 +3245,7 @@ contains
             counts = [counts, real(str2int(word(line, 3)), dp)]
             names  = [names, il]
             ljunk  = [ljunk, word(line, 2) == 'junk']
+            nodes  = [nodes, string(nd(index(nd, '/node_', back=.true.)+6:))]
         end do
         call simple_mkdir(string(md))
         call fopen(funit, string(md//'/units_index.txt'), status='replace', action='write', iostat=ios)
@@ -3265,7 +3267,8 @@ contains
         call tree%build('complete', 0.)
         call tree%get_steps(steps)
         call tree%kill
-        call tree_wiener_maps(evens, odds, counts, names, ljunk, steps, self%p%mskdiam, LPD, md)
+        call tree_wiener_maps(evens, odds, counts, names, nodes, ljunk, steps, self%p%mskdiam, LPD, md, &
+            &self%p%depth_wiener .eq. 'yes')
     end subroutine final_maps
 
     integer function seed_site( nd )
