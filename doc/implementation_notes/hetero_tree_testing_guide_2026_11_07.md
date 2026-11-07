@@ -31,7 +31,7 @@ without the user's explicit permission.
 | Fork branch | Content |
 | --- | --- |
 | `hetero-tree` (`e1d5fdd4c`) | the tree on master's posterior machinery (merge `ee26d9bbf`, gated 2026-11-06) + verdict notes: the version known to work |
-| `hetero-tree-wip` | `hetero-tree` + `d142ea8af` depth-tied tree_wiener (`depth_wiener=yes`, default on; gated) + `043b6bcfc`, `c4aa7b562`, `378254f33`, `89604e8ac` per-site split (`site_split=no` default; gating, 7.1) + this guide + `handoff/` |
+| `hetero-tree-wip` | `hetero-tree` + `d142ea8af` depth-tied tree_wiener (`depth_wiener=yes`, default on; gated) + `043b6bcfc`, `c4aa7b562`, `378254f33`, `89604e8ac`, `6eb27fa89` per-site split (`site_split=no` default; gating, 7.1) + this guide + `handoff/` |
 
 Everything else from 2026-11-06/07 lives off GitHub, in one git bundle on batch2:
 `/mnt/beegfs/elmlund/afan/mac_archive_20261107/fork_archive_20261107.bundle` (114 MB, incremental on `origin/master` and
@@ -300,13 +300,12 @@ The porter's `STATUS.md` there has exact commands for every step below.
   null twin (`gates/ports7_igmfix_ss`, `gates/ports7_igmnull_ss`, jobs 55015788/9), scored into `$H/handoff/ports/IGM_RESULTS.md`
   when they end. qtoyflex with the layer on (`gates/ports7_qtoyflex_ss`) finds no discrete site and equals the control's four
   leaves (closed F1 .473, holo .619).
-  Latest, not yet on `hetero-tree-wip` because its build and fast gate (job 55020398, build_ports9) were still running at handoff:
-  commit `6eb27fa89` (the site path fits a per-particle amplitude, which removes olenull's brightness factors, z 15 -> < 1, and its
-  cross-half EM runs to convergence, 0.5 % of assignments changing, 10-30 iterations). Patch:
-  `$H/handoff/ports/6eb27fa89_site_em_convergence.patch` (apply on `hetero-tree-wip` with `git am` after the gate passes). The
-  amplitude fit alone left the IgM control unchanged (GAPw .33); the chains v7 (20 fixed iterations) and v8 (the commit, IgM root
-  + olenull + qtoynull) decide it, writing to `$H/handoff/ports/IGM_RESULTS.md`. If v8 passes, the IgM hard test (55015788/9, run
-  on the ten-iteration code) needs a repeat on the new build.
+  `6eb27fa89` (fast gate passed in build_ports10; on `hetero-tree-wip`): the site path fits a per-particle amplitude, which
+  removes olenull's brightness factors (z 15 -> < 1), and its cross-half EM runs to convergence (0.5 % of assignments changing,
+  10-30 iterations). It still misses the IgM control: v8 site 6 GAPw .43, B 7 (v7, 20 fixed iterations, the same) vs the Python's
+  .09, B 40; nulls clean (30 sites, 0 DISCRETE). The IgM hard test with `site_split=yes` (build_ports7): the fixture's tree
+  splits 50/50 along nothing (arm NMI <= 0.003, a fail), the null twin stays one leaf (pass); scores in
+  `$H/handoff/ports/IGM_RESULTS.md`.
 - Piece 2, chart outputs: parked (bundle ref `wip/tree-ports-charts`); drop unless 7.2 passes.
 
 ### 7.2 Seam-free global coordinate (f2r session; full record and resume commands in `$H/handoff/f2r-global/VERDICT.md`)
@@ -434,9 +433,16 @@ root results (merge_master2, 03:20) show the current tree failing a second way: 
 a1 (NMI a1 0.072, other arms <= 0.015, groups 65-66 % pure in a1; the guard keeps the split), and the NULL twin's root splits
 50/50 along the continuous arm angles (largest leaf 0.505, a null-gate fail; angle eta^2 a1 0.050, a3 0.032, a5 0.032). At 5 %
 (build_igm4) both roots were one leaf, the guard removing a nuisance split. The same-build 5 % roots (jobs 55016840/1) decide
-whether this is the 10 % signal or the build. The root's whole-molecule latent is still blind at 10 % (arm R^2 0.001-0.006,
+whether this is the 10 % signal or the build. They did, and the production binary fails at 5 % too: on merge_master2 the 5 % fix
+root splits 50/50 along nothing (arm NMI <= 0.004) and the 5 % NULL splits 64/36 (pre-guard 3 groups; angle eta^2 0), where
+build_igm4 held both at one leaf and the site_split build (the other OpenBLAS) holds the null at one: the IgM null root decision
+is a near-tie, like r131's split. The root's whole-molecule latent is still blind at 10 % (arm R^2 0.001-0.006,
 LDA at chance). T1 at 10 % (true arm masks a1-a5 plus the stock mask) was running at handoff (jobs 55020271 fix, 55020268 null);
 results land in `fixture_igm10/t1_sitefocus/runs/<twin>_<mask>_a<k>/score.json`, the table command is in the igm10 STATUS.md.
+T1 at 10 % (true masks): every arm read strongly, R^2 0.40-0.56, LDA NMI 0.28-0.44, and now UNSUPERVISED GMM NMI a1 0.30, a2
+0.21, a3 0.29, a5 0.22 (a4 0.003), no leakage; the whole-molecule latent reads ~0; the null's focused coordinates track the
+continuous angle (R^2 0.25-0.31) without clusters; per-particle discreteness still does not separate fix from null. At real Fab
+scale a focused latent with a good mask recovers four of five arms unsupervised, where the tree finds a1 at 0.072.
 
 Second tier: `mm3q` (three independent rigid domains, 8 combinations: the tree has 1 of 8 clean, the site-pole product 8 of 8) and
 qtoyflex (closed F1 0.47 at maxdepth 2). The gate fixtures of section 3 stay the guards.
@@ -510,6 +516,21 @@ Tests, in order:
 - T2: the joint coordinate's factor-or-coupled calls and per-site discreteness on IgM, mm3q and qtoyflex.
 - T3: the new site ranking at the r131 root keeps the corner's site first (the hard gate), qtoy2 unchanged.
 - Port only after T1-T3, then the full gate battery.
+
+### 7.8 Levers running (2026-11-07 morning; the user excluded signal subtraction)
+
+Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and resume commands):
+- `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
+  volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
+- `igm-refs` (lever 3, the oracle session): references built from the focused coordinate's split, assigned with the arm mask,
+  iterated, as a node seeding rule; per-arm and factorial scores at 10 % and 5 %, then with data-only masks.
+- `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
+  merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
+- `pose-tangent` (lever 5): the node mean's rigid-body tangents projected out of the fitted flex basis, particles re-embedded
+  (no refit); IgM 5 %/10 %, qtoy2, r131; a Fortran port only if it helps (flex2D's version: `d1a20eff6`).
+- `sparse-ppca` (lever 6): a flex-style PPCA with a spatial structured-sparsity prior that learns each site's support and
+  coordinates in one fit (after structured sparse PCA, Jenatton, Obozinski & Bach 2010); validated against flex_pca at zero
+  penalty, then IgM 10 %, 5 %, qtoyflex, qtoynull.
 
 ## 8. Decisions waiting for the user
 
