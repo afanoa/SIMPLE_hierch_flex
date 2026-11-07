@@ -427,7 +427,9 @@ root results (merge_master2, 03:20) show the current tree failing a second way: 
 a1 (NMI a1 0.072, other arms <= 0.015, groups 65-66 % pure in a1; the guard keeps the split), and the NULL twin's root splits
 50/50 along the continuous arm angles (largest leaf 0.505, a null-gate fail; angle eta^2 a1 0.050, a3 0.032, a5 0.032). At 5 %
 (build_igm4) both roots were one leaf, the guard removing a nuisance split. The same-build 5 % roots (jobs 55016840/1) decide
-whether this is the 10 % signal or the build; the 10 % trees then queue T1 themselves.
+whether this is the 10 % signal or the build. The root's whole-molecule latent is still blind at 10 % (arm R^2 0.001-0.006,
+LDA at chance). T1 at 10 % (true arm masks a1-a5 plus the stock mask) was running at handoff (jobs 55020271 fix, 55020268 null);
+results land in `fixture_igm10/t1_sitefocus/runs/<twin>_<mask>_a<k>/score.json`, the table command is in the igm10 STATUS.md.
 
 Second tier: `mm3q` (three independent rigid domains, 8 combinations: the tree has 1 of 8 clean, the site-pole product 8 of 8) and
 qtoyflex (closed F1 0.47 at maxdepth 2). The gate fixtures of section 3 stay the guards.
