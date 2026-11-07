@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 6f195b76-225b-466c-a432-7fc8360148e8
-  modified: 2026-11-07T22:02:47.635Z
+  modified: 2026-11-07T22:41:42.306Z
 ---
 
 Side session sparse-ppca, 2026-11-07. Handoff: `hetero_tree_20261028/handoff/sparse-ppca/{VERDICT,STATUS}.md` + scripts/; runs in
@@ -32,13 +32,24 @@ so global latents and rotations cannot see arms; local seeds plus sparsity can.
 - The rotation step needs one lambda per group, else blocks merge.
 - Keep a leave-one-block-out check, else the last block of a null survives.
 
-**Knob-free stop (17:00, STATUS.md "Coordinator ask 1 / 2", runs `*_p3`):** pursue while the best seed beats 2 SE and all 12
-solvent controls; keep blocks by the same test left one out; sites = blocks joined by support overlap above hypergeometric chance
-+ 2 SE; states by a TIED-covariance GMM (a full GMM on a multi-block site splits heavy tails: a2 .003 vs tied .290). Stops by itself:
-10 % fix 8 blocks -> 5 arm sites, 5 % fix 4 arms + 1 weak, qtoyflex 1, 5 % null / qtoynull 0. The nulls' seeds DO beat the solvent
-controls (5-37 nats vs <= 0.9); the support-dof shell prior drains their grown blocks to 0, so LOBO drops them. The 2 % cut's
-"sixth candidate" was a second seed on arm a5. The 2- vs 1-Gaussian gain is a readout only (Part 4: as a calibrated test it
-detects non-Gaussianity). 10 % null knob-free rerun pending (13 blocks by round 13).
+**Knob-free stop (coordinator follow-up, same day; STATUS.md asks 1-2):** the 2 % cut is retired. The stop:
+1. Pursue while the best seed beats 2 SE and all 12 solvent controls.
+2. Leave-one-block-out with the same test.
+3. Sites = support components (overlap above hypergeometric chance + 2 SE).
+
+It ends every fixture by itself: 10 % fix 8 blocks -> 5 arm sites; 10 % null twin 14 -> 13 -> 5; 5 % null and qtoynull -> 0;
+qtoyflex 3 -> 1. The cut's 6th candidate was a split of a5.
+
+Traps:
+- **Blocks, not sites, are the state variables.**
+  - A full GMM on a multi-block union fails (fix a2 .003).
+  - A tied GMM fails on 4 blocks (.011).
+  - The site's leading block loses qtoyflex's closed state.
+  - Read states per block.
+- **Solvent controls are not the null test.** On weak nulls the seeds beat them (5-37 nats). The empirical-Bayes shell prior shrinks
+  the grown blocks to energy 0, and leave-one-out then removes them (gain exactly 0).
+- **Best-of-N.** Testing the best of ~60 seeds at 2 SE is a best-of-N test; ~3.1 SE would trim the weak tail (not run).
+
 **Next (user, 2026-11-07):** "Port sparse PPCA first" (native opt-in flex_pca path, knob-free stop replacing the 2 % cut; given to
 the sparse-ppca2 session), then the end-to-end chain. Its sparse global coordinate goes to real data "After the port": r131 roots
 (both seeds) and the 692k root with |CTF| ([[rnasep-denoised-stacks-are-phase-flipped]]), against the seam-free .69-.72.

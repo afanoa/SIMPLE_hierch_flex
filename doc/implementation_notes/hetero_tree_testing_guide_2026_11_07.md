@@ -654,16 +654,19 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   - Knobs (VERDICT table): kappa 3 (in units of the group's pure-noise gradient), 3^3-voxel groups, seed balls, 2 modes per site,
     iteration counts, and `pursuit_rel` 2 %, a safety stop that ended the IgM 10 % pursuit at round 6 (final run `x10fix_p2`: 196
     nats vs a cut of 203, solvent controls 0.1) before a sixth block was tried.
-  - Knob-free stop (STATUS.md "Coordinator ask 1 / 2", runs `*_p3`, job 55033059; final except the 10 % null rerun): pursue while
-    the best seed beats 2 SE and all 12 solvent controls, keep blocks that pass the same test left one out, join blocks into one
-    site when their supports overlap beyond hypergeometric chance + 2 SE, and read states with a tied-covariance GMM. It stops by
-    itself everywhere: 10 % fix 8 blocks -> 5 sites = the 5 arms; 5 % fix 4 arms + 1 weak block; qtoyflex 1 site; 5 % null and
-    qtoynull 0 (their seeds beat the controls, 5-37 nats vs <= 0.9, but the support-dof shell prior drains every grown block to
-    zero and the leave-one-out check drops them). The sixth 10 % candidate was a second seed on arm a5 (it becomes a5's main
-    block); without the cut two more blocks join a2, carrying no state, pose, defocus or nuisance information (mildly heavy
-    tails). A full-covariance GMM on a multi-block site splits those tails (a2 NMI .003); a tied one does not (a2 .290, a5 .310).
-    The 2- vs 1-Gaussian held-out gain keeps the 10 % twins apart (fix +.0015 to +.015, null -.0023 to -.0027) but is a readout,
-    not a test (igm-refs Part 4). 10 % null rerun: 13 blocks by round 13, still running (the capped run gave the 5 moving arms).
+  - Knob-free stop (FINAL; STATUS.md "Coordinator ask 1 / 2", runs `*_p3`, job 55033059; VERDICT.md retires the 2 % cut): pursue
+    while the best seed beats 2 SE and all 12 solvent controls, keep blocks that pass the same test left one out, and join blocks
+    into one site when their supports overlap beyond hypergeometric chance + 2 SE. It stops by itself everywhere (blocks ->
+    kept -> sites): 10 % fix 8 -> 8 -> 5 arms; 10 % null twin 14 -> 13 -> 5 moving arms (no discreteness: the leading blocks'
+    2- vs 1-Gaussian gain -.0027 to -.0030 vs fix +.0016 to +.015); 5 % fix 7 -> 5 (4 arms + 1 weak block); qtoyflex 3 -> 1;
+    5 % null 8 -> 0 and qtoynull 3 -> 0 (their seeds beat the controls, 5-37 nats vs <= 0.9, but the support-dof shell prior
+    drains every grown block to zero and the leave-one-out check drops them). The 2 % cut's sixth 10 % candidate was a second
+    seed on arm a5; without the cut two more blocks join a2, and the null's 8 extra blocks read no angle, pose, nuisance or
+    quality. Blocks, not sites, carry states: a GMM on a site's union fails (full: fix a2 .003; tied: the null's 4-block a1
+    site .011), and qtoyflex's one site has holo on its leading block (.928) and closed on its third (.900). Sites are masks;
+    states are read per block. Open: which blocks of a site carry discrete states (the 2 % cut hid this on IgM; GAPw per p3
+    block is igm-refs Part 4b, oracle session). Untested:
+    the pursuit takes the best of ~60 seeds, so a best-of-N (Sidak) threshold of ~3.1 SE would trim the weak tail.
   - Final code (`x10fix_p2`) replicates the first run (purity .96-.97, supports 1,250-1,470 voxels, readouts within .01); 10 % null:
     8 blocks covering all five moving arms (purity .63-.92), continuous-angle R^2 .28-.31 as T1, BC .33.
   - Cost: 35-50 min per 100k particles on 16 cores, 31 GB; gate roots 5-7 min. The learned supports (`block%02d_support.mrc`) can

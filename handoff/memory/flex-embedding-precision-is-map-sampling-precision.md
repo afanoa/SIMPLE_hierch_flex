@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: c6b87431-7325-4b60-ad85-a72f7e8559d4
-  modified: 2026-11-07T20:38:18.157Z
+  modified: 2026-11-07T22:43:09.441Z
 ---
 
 Found 2026-11-07 (spectrum-stop session) by reading merge_master2's source. In fit/simple_flex_pca_embed.f90 every latent solve
@@ -29,6 +29,15 @@ Against truth, storing A (patch in `$H/handoff/flex-precision/`, unapplied, not 
 - labels: barely change (NMI from .470 to .473, ARI from .363 to .388).
 
 The weak-axis inflation (8x on z5 and z10) is NOT this bug. It comes from the half-split noise scale: .507 against .634 from truth.
+
+**Gated the same evening** (build `math_reworks/flex_precision/build_fp` = e7f7efb80 + the stacked patch; not committed):
+- passed: fast gate 15/15, the nulls as one leaf, the r131 corner on both seeds;
+- qtoy2: NMI .760 / .799 against pp_on's .811 / .813, and the closed state merged on seed 1 only.
+
+The noise-scale gap is NOT pose error: truth / flex stays 1.25 with the pose profile on.
+
+**TRAP:** hetero_tree's root runs flex_pca twice. The first call's states build the focus mask that fflex fits under, so arms
+with different first-call states have different fflex bases. Compare the first call (`node_r/flex`) for like-for-like.
 
 **How to apply:** until the patch lands, use Q^-1 times a_comp as the measurement covariance of z_MAP, and do not un-shrink with it.
 After the patch (`COV_CACHE_VERSION` 6), the block is A, and charts code must take Gt = block - P. Related:
