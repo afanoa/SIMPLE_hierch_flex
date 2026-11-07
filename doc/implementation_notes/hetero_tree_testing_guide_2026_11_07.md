@@ -236,7 +236,7 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | flex at the refined poses (real flex_pca) | flexB runs | own-latent ceiling 0.477 -> 0.504, nothing downstream | no |
 | M-estimation, soft weights, tree priors, Student-t, predictive E-step | mest session | nothing beats hard labels + tree_wiener | no |
 | composed global chart coordinate | f2r_global | seams between children's charts; no minority isolation; would merge the 692k closed pair | no |
-| seam-free tree-wide coordinate (one basis, every particle embedded) | f2r_shared, gate trees | seams and false valleys gone; r131 closed AUROC 0.69-0.72 (d' <= 0.8); not reproducible at final poses; merge rule merges every r131 pair; 692k (m33, input poses): the closed pair at d' 0.25, rank 46 of 112 sibling pairs, Bhattacharyya > 0.5 for 109 of 112 | no on the toys; the r131 / 692k numbers were computed on a band cut at the first CTF zero (~17 A, not 15 A: CTF-flip trap, section 9), |CTF| rerun pending |
+| seam-free tree-wide coordinate (one basis, every particle embedded) | f2r_shared, gate trees | seams and false valleys gone; r131 closed AUROC 0.69-0.72 (d' <= 0.8); not reproducible at final poses; merge rule merges every r131 pair; 692k (m33, input poses): the closed pair at d' 0.25, rank 46 of 112 sibling pairs, Bhattacharyya > 0.5 for 109 of 112 | no (the CTF-flip trap, section 9, does not move it: the r131 closed AUROC changes by <= .003 with |CTF|) |
 | posterior temperature | gates at 0.15 / 0.3 / 1.0 | 0.15 and 1.0 lose the r131 corner | keep 0.3 |
 | stage-B reference shrinkage toward the node mean (shrinkB: emp2 cross-half Wiener on the state deviations between three single-iteration stage-B calls) | continuation replays, four doses | toys unchanged (qtoy2 NMI 0.656 -> 0.648); on both r131 seeds the split merges the closed corner (full dose, and half dose on seed 1): the shrinkage suppresses the 14.6-10.2 A band the split tests | no: fails the hard gate |
 | pose anchor (child poses held near the parent's) | key-only replays, 2 seeds | removes the drift tail (p99 62 -> 9 deg); r131 corner kept, enrichment within seed noise; qtoyflex NMI -0.007; qtoy2 children purity -0.01..-0.11, NMI -0.03..-0.14: it locks in the parent's tempered draw noise | no |
@@ -244,7 +244,7 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | flex prior on the IgM arms (the focused latent's posterior as the state prior; arm-focused state_eval at the root's poses) | a1, a2, null twin | at most +0.006 NMI at 2-8 points of accuracy (a1 0.168 -> 0.165-0.171; a2 0.103 -> 0.109); it drags oracle references down (a2 0.144 -> 0.116) and on the null overrides the arm objective for 98 % of particles | no: the information is in the references |
 | better poses vs better references (stage-B oracle) | state_eval factorial, true vs stage-B poses x stage-B vs truth maps | poses are not the limit (true poses with stage-B maps: root accuracy 0.951 -> 0.947); references are: one per truth class lifts the qtoy2 root 0.674 -> 0.919 (ceiling 0.936), r1 0.756 -> 0.839; qtoyflex closed F1 0.17 -> 0.455 | headroom = references |
 | depth-tied tree_wiener (port) | 692k + gates + truth maps | nominal leaf FSC 4.7 -> 4.3 A at 692k, state readouts unchanged, gates pass; against the truth maps of the qtoy2 and qtoyflex leaves depth2 never beats emp2 (qtoy2 relative error +0.010 at 20-14 A, +0.016 at 14-10 A; qtoyflex equal within 0.005) | no measurable benefit: the gain is nominal |
-| the tree-wide basis as a site dictionary (varimax / ICA localized modes) | six gate trees, input poses | modes localize (0.6-0.8 of a mode's energy in one site) and reproduce, but one mode holds a slice of a site's state: qtoy2 closed AUROC 0.69-0.74 vs 0.92 for the 30-mode span; r131 no mode reaches 0.60 (span 0.63-0.65, site factors 0.65-0.69), and the mode inside the closed-arm mask reads the arm swing | no (stands on qtoy2; the r131 numbers are band-limited by the CTF-flip trap, section 9) |
+| the tree-wide basis as a site dictionary (varimax / ICA localized modes) | six gate trees, input poses | modes localize (0.6-0.8 of a mode's energy in one site) and reproduce, but one mode holds a slice of a site's state: qtoy2 closed AUROC 0.69-0.74 vs 0.92 for the 30-mode span; r131 no mode reaches 0.60 (span 0.63-0.65, site factors 0.65-0.69), and the mode inside the closed-arm mask reads the arm swing | no (unchanged with |CTF|: best single mode on r131 within .004) |
 | stopping rule from the node's flex spectrum (BBP noise edge) and a global r + 1 state bound | 433 nodes of 44 trees + truth (7.8) | nulls carry above-edge pose and contrast directions; the RNase P closed spike sits far below any edge (0.014 at r131); a null-calibrated edge loses qtoy2's close pairs, qtoyflex and r131; r + 1 fails where states exist at r = 0 | no |
 | rigid-tangent deflation of the node's flex basis | IgM 5 %/10 %, qtoy2, r131 (7.8) | removes pose but costs real signal (qtoy2 closed .964 -> .944); the IgM false root splits do not follow pose error (AUROC .51-.54). Per-particle profiling keeps the signal (being ported) | no (profiling instead) |
 | lower band per site (lever 7: lp 20/25/30 vs 15) | IgM 5 % and 10 %, fix and null (7.8) | fix R^2 falls with lp (10 %: .454 -> .405 at lp 30); the null's coordinates heavy-tail (tied gain .0095 -> .030) | no: keep lp 15 |
@@ -265,7 +265,7 @@ Findings that frame any next idea:
   gap test is blind below d' ~2.5 (closed and holo on qtoyflex sit at d' 2.1-2.3, the r131 closed split at 2.2). The supervised AUROC
   ceiling for r131 closed in the flex + site-factor latent is ~0.69.
 - Site factors (recB0 state deviations inside site masks) are the only refinement -> flex signal: qtoy2 truth ceiling NMI
-  0.48 -> 0.62, r131 closed AUROC 0.65 -> 0.69. [the r131 number may be band-limited: CTF-flip trap, section 9]
+  0.48 -> 0.62, r131 closed AUROC 0.65 -> 0.69.
 - Child poses drift by one parent iteration's jitter (direction median 2.9 deg) and never accumulate with depth; `prob_neigh_mode=geom`
   confines a direction to the coarse cell of its incoming direction.
 - The integrated-node prototype (`$A/paper_inode`) reproduces the production node but integration adds nothing over the stage-B
@@ -322,9 +322,10 @@ The porter's `STATUS.md` there has exact commands for every step below.
 
 ### 7.2 Seam-free global coordinate (f2r session; full record and resume commands in `$H/handoff/f2r-global/VERDICT.md`)
 
-**Caution (2026-11-07):** every r131 and 692k number in this section was computed on ctf=flip stacks with the signed CTF
-(section 9 trap), which cut their band at the first CTF zero (~17 A) instead of 15 A; the toy results stand. The f2r session reruns the r131 readout with |CTF| (692k if r131
-moves); until then the real-data half of this verdict is open.
+**Checked (2026-11-07):** the r131 and 692k numbers here were computed on ctf=flip stacks with the signed CTF (section 9 trap).
+Rerun with |CTF| (`$L/absctf/`, job 55032507; addendum in the VERDICT): the r131 closed AUROC moves by <= .003 (seed 2 span
+.631 / .699 -> .632 / .699; seed 1 .649 / .714 -> .652 / .715) and the site dictionary's best single mode by <= .004, because the
+basis is band-limited at 15 A, where the affected shells hold little energy. The verdict stands; the 692k cache was not rebuilt.
 
 One tree-wide basis (all charted nodes' flex modes at 15 A, orthonormalised, top q = 30; `--basis root` as the control), every
 particle embedded at its leaf's stage-B pose (`f2r_leafposes.py`) or at its input pose. Jobs 55008359 (six gate trees), 55008360 and
@@ -535,7 +536,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -619,10 +620,16 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   - Why it works (BBP): an arm's whitened eigenvalue (~2.3) is below a global PCA's noise edge (~4.8) but above an arm-sized
     support's (~1.0), so global latents and rotations cannot see arms; local seeds plus sparsity can.
   - Knobs (VERDICT table): kappa 3 (in units of the group's pure-noise gradient), 3^3-voxel groups, seed balls, 2 modes per site,
-    iteration counts, and `pursuit_rel` 2 %, a safety stop that ended the IgM 10 % pursuit at round 6 (202 nats vs a cut of 203,
-    solvent controls <= 0.2) before a sixth block was tried. That stop is the open item against the knob-free rule.
-  - Cost: IgM 100k particles ~45-50 min on 16 cores; gate roots 5-7 min. The learned supports (`block%02d_support.mrc`) can serve
-    as site masks now; lever 3 on these supports is running (oracle session; a section in `$H/handoff/igm-refs/VERDICT.md`).
+    iteration counts, and `pursuit_rel` 2 %, a safety stop that ended the IgM 10 % pursuit at round 6 (final run `x10fix_p2`: 196
+    nats vs a cut of 203, solvent controls 0.1) before a sixth block was tried. That stop is the open item against the knob-free rule.
+  - Final code (`x10fix_p2`) replicates the first run (purity .96-.97, supports 1,250-1,470 voxels, readouts within .01); 10 % null:
+    8 blocks covering all five moving arms (purity .63-.92), continuous-angle R^2 .28-.31 as T1, BC .33.
+  - Cost: 35-50 min per 100k particles on 16 cores, 31 GB; gate roots 5-7 min. The learned supports (`block%02d_support.mrc`) can
+    serve as site masks now. Native port: per-block PCG supports + noise-calibrated group selection + the pursuit loop.
+  - Lever 3 on these supports (oracle session; a section in `$H/handoff/igm-refs/VERDICT.md`, running): its seeds reproduce sparse
+    PPCA's own readouts exactly, and for the 2-state arms at 10 % the masked rounds have a fixed point at NMI ~.35-.37 reached
+    from any seed (true mask, zh1, sparse): weaker seeds are pulled up, sparse PPCA's are pulled slightly down (a3 .365 -> .340 by
+    round 3). For those arms sparse PPCA's own labels already sit at lever 3's level; the 3-state arms, null and 5 % decide the rest.
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
@@ -683,7 +690,12 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   c = 1 + 1/tau^2. Recommendation: fission at tau 0.6 for the select step (X1 keeps more SNR: qtoy2 NMI .633 after round 1 vs .570
   after 6 rounds at tau 1), tested at 39-10.2 A on X2, groups under ~2k untestable; the band split only where the noise model
   cannot be trusted. Real data need an exact per-particle noise model (coloured, per micrograph; r131's registered stacks are
-  non-stationary: extremes-repro). Running: the tau 0.6 pipelines (55030590-1) and the finer view null.
+  non-stationary: extremes-repro).
+  tau 0.6 (55030590-1): the null still passes (X2 4 -> 1, z <= 2.7; X1 4 -> 4 at z 5-11), and labelling on X1 recovers most of the
+  cost: qtoy2 class accuracy .751, closed F1 .904 after 6 rounds (tau 1 .695 / .803; on X .772 / .947); X2 at 39-10 A keeps all
+  10 states (the holo pair at z 4.9). Finer nulls (tau 1, 480 and 1,920 view x defocus cells) keep the holo pair (z 8.4 / 8.8), so
+  it is not only a coarse-strata artefact; a control job (55032828: true-holo restriction, view-cone split of true holo, non-holo
+  remainders) separates the pair's admixture from its views. VERDICT.md pending.
 - `extremes-repro` (runs `$L/extremes/`; notes to `$H/handoff/extremes/`): whether the extreme maps along a latent coordinate
   reproduce across fission copies. qtoyflex (first numbers): self-selected tail maps "reproduce" across halves (.13-.51 at
   39-10 A), but so do tails picked along a fake map no particle carries (.23-.45); honest tails (select on X1, rebuild from X2)
@@ -698,7 +710,7 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
 
 1. depth_wiener on by default: gated and cleared, but no truth-map benefit (section 6), so the measured case is for `depth_wiener=no`.
 2. Drop the chart-coordinate port (bundle ref `wip/tree-ports-charts`) unless the seam-free coordinate passes 7.2's rule (it does not, on
-   r131 or at 692k). Reopened: those r131 / 692k numbers were computed on a band cut at ~17 A by the CTF-flip trap (section 9); decide after the |CTF| rerun.
+   r131 or at 692k). The CTF-flip trap (section 9) does not change this (|CTF| rerun: <= .003).
 3. Keep state_eval as a developer harness: add it to `hetero-tree-wip` (after a build and fast gate) or leave it in the bundle.
 4. site_split: after gate 1 and qtoyflex.
 5. Of the three ideas, the flex prior, depth wiener and the global coordinate all failed their tangible-benefit tests on the
@@ -730,8 +742,10 @@ Science:
   run of the seam-free coordinate and the site dictionary (caches `$L/cache/f2r_shared_{r131,full692}.npy`); suspect: the other
   11-06 r131 caches (`f2r_fast_r131_r1_*`, `fp_fast_r131_r1`, `sp_mm2_r131_*`, `r131_r1`, `f2r_mm2_r131_seed`). Toys, olenull,
   IgM and inode dumps are ctf=yes. Use |CTF| for flipped stacks (memory rnasep-denoised-stacks-are-phase-flipped); the f2r
-  session reruns the r131 seam-free readout, and the 692k one if r131 moves. SIMPLE's own flex_pca coordinates and the r131
-  per-particle state-evidence gap (refine3D's log-evidence file) are unaffected.
+  session reran the r131 seam-free readout and the site dictionary with |CTF| (`$L/absctf/`): both move by <= .004, because their
+  basis is band-limited at 15 A, so those verdicts stand. The trap matters wherever data past ~15 A is used (the klem boards at
+  20-10 A changed with |CTF|). SIMPLE's own flex_pca coordinates and the r131 per-particle state-evidence gap (refine3D's
+  log-evidence file) are unaffected. Fix `latent_states_v4.py` itself (|CTF| when the stk segment says flip) once no job runs it.
 
 Cluster and data:
 - Never delete cluster data (read, or `mv` aside); never signal SIMPLE processes by name; `scancel` by job id only; never rebuild or

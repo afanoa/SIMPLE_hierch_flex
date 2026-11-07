@@ -29,6 +29,7 @@ band-limited, i.e. the "global coordinate: no" real-data numbers (r131 closed AU
 11-06 r131 caches (`f2r_fast_r131_r1_*`, `fp_fast_r131_r1`, `sp_mm2_r131_*`, `r131_r1`, `f2r_mm2_r131_seed`) came through the same
 loader: treat their r131 numbers as suspect. SIMPLE's flex_pca coordinates and the r131 state-evidence gap (refine3D log-evidence) are unaffected. All qtoy*, olenull, IgM and inode dumps are ctf=yes (unaffected). A |CTF| rerun of
 the r131 seam-free readout was queued (f2r session, private loader copy; don't edit latent_states_v4.py under running jobs).
+**Outcome of the |CTF| rerun (f2r session, 2026-11-07 15:25):** the r131 seam-free numbers do not move (closed AUROC .631/.699 -> .632/.699 seed 2, .649/.714 -> .652/.715 seed 1; root chart unchanged), because the embedding's basis is band-limited at 15 A and only the shells between a particle's first zero (12-19 A on r131) and 15 A carry the wrong sign; the 692k cache was not rebuilt (same modes, band, stacks). The contamination matters wherever data past 15 A is used (klem boards at 20-10 A). The state-evidence gap (1.8 nats) is refine3D's own prob_state_evidence.txt: never through the loader. Details: handoff/f2r-global/VERDICT.md addendum.
 **How to apply:** `import_particles ... ctf=flip fraca=0.1 kv=300 cs=2.7 smpd=1.464` for the denoised RNase P parts;
 check `print_project_field oritype=stk` (ctf= key) of the source project before any re-import; the port's klem
 E-step must use |CTF| for these stacks (the prototype's `--ctf auto`). Related: [[rnasep-klem-real-data-setup]],
