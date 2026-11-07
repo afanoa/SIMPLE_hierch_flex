@@ -70,6 +70,7 @@
 - [mac-retired-handoff-2026-11-07](mac-retired-handoff-2026-11-07.md) — Mac retired: guide + handoff/ on fork/hetero-tree-wip; other refs in a batch2 bundle, untracked files in a batch2 tarball; fork PUBLIC
 - [site-mask-rework-direction-2026-11-07](site-mask-rework-direction-2026-11-07.md) — USER: site ranking/masks weakest; prove failure on IgM fixture; flex prior / depth wiener / global coordinate judged there; plan = guide 7.7
 - [igm-focused-flex-mask-is-bottleneck-2026-11-07](igm-focused-flex-mask-is-bottleneck-2026-11-07.md) — VERDICT T1: true-arm-mask focused flex sees all IgM arms (R2 .19-.31), island masks fail (solvent): masks are the bottleneck
+- [igm-swept-variance-masks-verdict-2026-11-07](igm-swept-variance-masks-verdict-2026-11-07.md) — VERDICT 7.8 L1+L7: swept-variance masks = true-mask level at 10 % (islands), fail at 5 % (bin selection bias TRAP); lower lp never helps
 
 Topic indexes (project/reference memories, one line each inside; open the hub, then the memory):
 - [hub-toys-and-pose-bias](hub-toys-and-pose-bias.md) — 16 memories: toy systems (toy2, toy3, toyJ, toyK, toyPS) and…
@@ -150,3 +151,10 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [site-dictionary-global-basis-verdict-2026-11-07](site-dictionary-global-basis-verdict-2026-11-07.md) — VERDICT NO: localised modes of the global basis can't replace site discovery/ranking (qtoy2 single-mode .69-.74 vs span .92; r131 .59 vs site factors .65-.69)
 - [r131-root-split-flips-with-openblas-variant-2026-11-07](r131-root-split-flips-with-openblas-variant-2026-11-07.md) — TRAP: r131 gate root split flips with libopenblas vs libopenblaso (BLA_VENDOR); binaries reproduce themselves; compare like with like
 - [igm-arm-flex-prior-verdict-2026-11-07](igm-arm-flex-prior-verdict-2026-11-07.md) — VERDICT: focused flex prior adds no IgM arm information beyond references (+.003-.006 NMI, costs accuracy; hurts with oracle refs); purer refs are the headroom
+- [oversplit-junk-ref-merge-verdict-2026-11-07](oversplit-junk-ref-merge-verdict-2026-11-07.md) — VERDICT lever 4: junk ref works, over-split recovers states K lacked (qtoy2 root .674 -> .803) not close pairs; TRAP: map-level cross-half merge test fails the null by self-selection
+- [lever3-latent-refs-seeding-verdict-2026-11-07](lever3-latent-refs-seeding-verdict-2026-11-07.md) — VERDICT: latent-built refs + arm-masked state_eval finds IgM arms (10 % product .256 true / .251 data-only masks vs tree .042); clean only for 2-state arms at round 1
+- [pose-tangent-deflation-verdict-2026-11-07](pose-tangent-deflation-verdict-2026-11-07.md) — VERDICT lever 5: basis tangent deflation fails (plain no effect, weighted costs qtoy2); per-particle profiling clean but no IgM gain; port held
+- [spectrum-stop-rule-verdict-2026-11-07](spectrum-stop-rule-verdict-2026-11-07.md) — VERDICT: latent spectrum above a BBP edge is no stop rule (nulls continue on nuisance, N sets 692k stop, closed spike <= .13); r+1 is a lower bound; n/sqrtN law = BBP
+- [flex-embedding-precision-is-map-sampling-precision](flex-embedding-precision-is-map-sampling-precision.md) — TRAP: embedding precision = MAP sampling precision Q = A G^+ A; flex deconv reads it as A, mest_charts as G
+- [site-shift-profile-verdict-2026-11-07](site-shift-profile-verdict-2026-11-07.md) — VERDICT: flat in-plane shift profile in the site classifier kills the IgM core-patch shift split, keeps a1 DISCRETE; a 1 px prior fails
+- [cross-half-test-needs-band-above-assignment-2026-11-07](cross-half-test-needs-band-above-assignment-2026-11-07.md) — KEY: cross-half map test of hard-assigned groups valid only above every assignment lowpass; in-band null z 53-56; band split -> null 1 leaf, qtoy2 kept

@@ -245,6 +245,11 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | better poses vs better references (stage-B oracle) | state_eval factorial, true vs stage-B poses x stage-B vs truth maps | poses are not the limit (true poses with stage-B maps: root accuracy 0.951 -> 0.947); references are: one per truth class lifts the qtoy2 root 0.674 -> 0.919 (ceiling 0.936), r1 0.756 -> 0.839; qtoyflex closed F1 0.17 -> 0.455 | headroom = references |
 | depth-tied tree_wiener (port) | 692k + gates + truth maps | nominal leaf FSC 4.7 -> 4.3 A at 692k, state readouts unchanged, gates pass; against the truth maps of the qtoy2 and qtoyflex leaves depth2 never beats emp2 (qtoy2 relative error +0.010 at 20-14 A, +0.016 at 14-10 A; qtoyflex equal within 0.005) | no measurable benefit: the gain is nominal |
 | the tree-wide basis as a site dictionary (varimax / ICA localized modes) | six gate trees, input poses | modes localize (0.6-0.8 of a mode's energy in one site) and reproduce, but one mode holds a slice of a site's state: qtoy2 closed AUROC 0.69-0.74 vs 0.92 for the 30-mode span; r131 no mode reaches 0.60 (span 0.63-0.65, site factors 0.65-0.69), and the mode inside the closed-arm mask reads the arm swing | no: discovery and ranking cannot become a lookup |
+| stopping rule from the node's flex spectrum (BBP noise edge) and a global r + 1 state bound | 433 nodes of 44 trees + truth (7.8) | nulls carry above-edge pose and contrast directions; the RNase P closed spike sits far below any edge (0.014 at r131); a null-calibrated edge loses qtoy2's close pairs, qtoyflex and r131; r + 1 fails where states exist at r = 0 | no |
+| rigid-tangent deflation of the node's flex basis | IgM 5 %/10 %, qtoy2, r131 (7.8) | removes pose but costs real signal (qtoy2 closed .964 -> .944); the IgM false root splits do not follow pose error (AUROC .51-.54). Per-particle profiling keeps the signal (being ported) | no (profiling instead) |
+| lower band per site (lever 7: lp 20/25/30 vs 15) | IgM 5 % and 10 %, fix and null (7.8) | fix R^2 falls with lp (10 %: .454 -> .405 at lp 30); the null's coordinates heavy-tail (tied gain .0095 -> .030) | no: keep lp 15 |
+| a map-level merge/split test on the data the labels came from (lever 4's merge, swap scoring, view matching) | qtoynull, qtoy2 (7.8 oversplit, hier-ppca) | one-conformer null groups read distinct at z 8-13 (lever 4) and 53-56 (hier-ppca, swap + 300-cell view matching) | no: test on unseen data (band split or fission) |
+| the tree as a hierarchical PPCA (B&T node, band-split select, continuum leaves) | qtoy2, qtoyflex, qtoynull, IgM 10 % (7.8) | null 1 leaf; qtoy2 NMI .697 vs tree .780; qtoyflex closed lost (.22 vs .39-.47); continuum vs discrete undecidable from maps; IgM no call | no as a model; keep its test rule |
 
 Findings that frame any next idea:
 
@@ -267,6 +272,13 @@ Findings that frame any next idea:
   analog; focusing references on the node mask is the lever.
 - M-estimation has two regimes: toy nodes have one-hot posteriors (soft = hard), real nodes have soft but uninformative posteriors
   (soft dilutes the closed arm). Any weighting by (own leaf, target leaf) is a frequency-blind special case of tree_wiener.
+- A cross-half map test of hard-assigned groups is valid only on data the assignment never saw: a band above every assignment and
+  pose lowpass, or a data-fission copy (7.8 hier-ppca, fission). The production `state_split` tests inside stage B's 10 A
+  assignment band and passes the gate nulls through its locality guard and effect floor; the IgM nulls get through.
+- On the IgM fixture the site layer is the bottleneck and discovery is its gate: the latent reads small moving parts only through
+  arm-shaped supports (T1), data-only masks reach the true mask where the root's islands find the arm (10 % a1, a3), and
+  latent-built references assigned per arm then find the arms (five-arm product .251 vs the tree's .042). Sparse PPCA learns all
+  five 10 % supports from the data (nulls pending).
 
 ## 7. Open threads and how to resume each
 
@@ -517,28 +529,41 @@ Tests, in order:
 - T3: the new site ranking at the r131 root keeps the corner's site first (the hard gate), qtoy2 unchanged.
 - Port only after T1-T3, then the full gate battery.
 
-### 7.8 Levers running (2026-11-07 morning; the user excluded signal subtraction)
+### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and resume commands):
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:00 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
-  First numbers: the briefed 0.2 x peak variance mask re-makes its start mask (binning by a particle's own coordinate selects its
-  noise along the modes); a noise-calibrated threshold on the same bin maps (`zh1`: > 100 sigma, anchor-connected, data-only)
-  closes ~75 % of the trim-to-true gap on 5 % fix a1 (R^2 / LDA NMI .296 / .198 vs trim .244 / .162, true .313 / .211). At 10 %
-  plain trims reach 87-93 % of the true-mask R^2. Lever 7: lp 25 sits slightly below lp 15, no band gain. Caution: the 3-D GMM
-  NMI is recipe-fragile (a rerun that reproduced T1's coordinates to 3 decimals scored 0.000 against .300). Masks:
-  `fixture_igm{,10}/igm_masks/masks/zh1_<twin>_a<k>.mrc`. Over all five 5 % fix arms `zh` averages R^2 0.121 vs trim 0.127 (its gain is
-  a1's); at 10 % even the literal 0.2 x peak rule reaches the true mask on a1 (R^2 0.558 vs 0.556); on the 10 % null a1 the zh mask
-  reads the continuous angle better than the true mask (R^2 0.318 vs 0.259) with no added discrete structure (tied gain 0.004).
-- `igm-refs` (lever 3, the oracle session): references built from the focused coordinate's split, assigned with the arm mask,
-  iterated, as a node seeding rule; per-arm and factorial scores at 10 % and 5 %, then with data-only masks.
-  True-mask verdict: the five-arm product vs the 72 combinations reaches 0.235 at round 1 at 10 % (tree 0.042) and 0.075 at 5 %
-  (tree: one leaf). Round 1 is clean for 2-state arms (null gain <= 0.004); 3-state splits carve the null's continuous angle into
-  thirds (+0.015-0.030 on the null), and later rounds carve it at any state count. Rule: round 1 only, and a 3-state split
-  needs a map-level test before the tree accepts it. The discrete information sits in the focused seed (10 % product 0.222 vs
-  the null's 0.059). Data-only (zh1 masks): arm a1 matches the true mask at both levels (10 % round 1 0.356 vs 0.351; 5 % round 3
-  0.131 vs 0.137), so the whole chain (data-only mask -> focused fit -> seed -> references -> masked assignment) runs without
-  truth; 3-state arms are the weak point (5 % a2: no seed from the zh1 fit, 0.000, and the rounds do not rescue it).
+  VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
+  arm, and not at 5 %; lever 7 is a no.
+  - 10 %, island arms: the noise-calibrated swept mask (`zh`: bin maps > 100 sigma, anchor-connected, data-only) reaches the true
+    mask: a1 R^2 / LDA NMI .547 / .433 (true .556 / .444, trim .483 / .365), a3 .474 / .341 (true .455 / .320). On the null twin it
+    reads the angle as well as the true mask (R^2 .277 vs .274) and adds no discrete structure (tied gain .010, true-mask level).
+  - 10 %, arms without an island (a2, a4, a5; started from transferred masks): iteration 2 lifts a2 .197 -> .419 (true .425), a4
+    only .198 -> .226 (true .399), a5 .207 -> .289 (true .434).
+  - 5 %: no variant beats the T1b trim on average; only a1 gains (zh1 .296 vs trim .244, true .313). The bin maps carry the flex
+    modes' selection bias inside the start mask (1,400-2,400 sigma vs <= 196 outside), so the briefed 0.2 x peak rule re-makes the
+    start; where the start fit's z1 is not the arm (a2, a4) the bins build the wrong mask and iteration 2 hurts. No truth-free
+    adoption gate found.
+  - Discovery is still the gate: the 10 % fix root's recB0 islands cover a1 and a3 only (sparse-ppca below finds all five).
+  - Lever 7: no gain anywhere (mean fix R^2 at lp 15/20/25/30: 10 % .454/.445/.436/.405, 5 % .231/.229/.219/.192; null flat);
+    lower bands heavy-tail the null coordinates (10 % tied gain .0095 -> .030). Keep lp 15.
+  - Masks (under `$A/igm_cryolo/tree/`): `fixture_igm10/igm_masks/masks/zh1_{fix_a1,fix_a3,null_a1..a5}.mrc` and
+    `zh2_fix_a{2,4,5}.mrc`; at 5 % the T1b trims stay best except `fixture_igm/igm_masks/masks/zh1_fix_a1.mrc`. The recipe
+    (parts in-job, `SIMPLE_SEED=1`, cn121 excluded) reproduces T1 to 3 decimals; the 3-D GMM NMI is recipe-fragile (.000 vs T1's
+    .300 on the same coordinates): judge by R^2, LDA and the best axis.
+- `igm-refs` (lever 3, the oracle session): seed each arm's states from the arm-focused latent, build references from those
+  labels, re-assign with the arm mask (state_eval), iterate. VERDICT (`$H/handoff/igm-refs/VERDICT.md`, 48 tables in `results/`):
+  - 10 %, five-arm product vs the 72 combinations, seed -> round 1 -> round 3: data-only zh1 masks .165 -> .225 -> .251, true
+    masks .222 -> .235 -> .256, tree .042. Per arm at round 1, zh1 (true): a1 .290 -> .356 (.351), a3 .315 -> .349 (.346), a4
+    .000 -> .085 (.013) and .194 by round 3 (.139: the data-only mask beats the dilated true mask); the 3-state arms a2 / a5 seed
+    weaker (.113 / .112 vs true .215 / .219) and reach .168 / .172.
+  - 5 %: every zh1 seed <= .001; the rounds recover a1 like the true mask (.054 round 1, .131 round 3; true .056 / .137) and
+    little else; product .044 vs .098.
+  - Null: 10 % product .073 -> .077 -> .093 (true masks .059 -> .068 -> .091); 2-state null arms <= .007 at round 1, 3-state
+    +.013-.016; 5 % null .006 -> .012.
+  - Rule: one round, 2-state splits are clean; any split needs a map-level test before the tree accepts it, and that test must
+    use data the labels never saw (hier-ppca and fission below). The discrete information sits in the focused seed.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -547,39 +572,103 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and re
   .662 -> .738, closed F1 .55 -> .95, holo kept whole, K 9; oracle .919); qtoyflex gains a closed-enriched state (F1 .17 -> .45).
   The junk reference never costs class accuracy (junk F1 .14 -> .73 at r1) but grows into a 7.7k low-contrast sink on r131. Limits:
   r1 stays at its 80/20 fixed point (.757); r131's closed corner is neither found nor lost; seeds are the limit (seed NMI .53 root,
-  .21 r1, .004 r131). The map-level merge test fails the null by self-selection (each label comes from the particle's own noise,
-  which survives label shuffles and one cross-half re-assignment: five states of qtoynull at z 8-13), and tilt-band splits look
-  real (z 7). A rule that passes the null must run the over-split independently in each half and match states across halves, as
-  the tree's merge-up does; worth porting only with that rule.
-- `pose-tangent` (lever 5): the node mean's rigid-body tangents projected out of the fitted flex basis, particles re-embedded
-  (no refit); IgM 5 %/10 %, qtoy2, r131; a Fortran port only if it helps (flex2D's version: `d1a20eff6`).
-  VERDICT (`$H/handoff/pose-tangent/VERDICT.md`): hold the port. The node latent is pose-contaminated (the IgM roots' leading
-  axis is ~30 % shift error; the nulls' only mixture structure is pose). Deflating the basis of the rigid tangents removes it but
-  costs real signal (qtoy2 closed .964 -> .944: domain motions carry rigid components); flex2D's plain-metric form does nothing;
-  profiling the six tangents per particle (Schur complement) removes pose cleanly and keeps the signal, but the tree's IgM false
-  root splits do not follow pose error (AUROC .51-.54), so it fixes hygiene, not the failure. If wanted: profiling in
-  `embed_latents_with_contrast` (`simple_flex_pca_embed.f90`), ~150 lines. A follow-up session tests profiling shift derivatives
-  inside the site classifier (the pose-driven core-patch split).
-- `sparse-ppca` (lever 6): a flex-style PPCA with a spatial structured-sparsity prior that learns each site's support and
-  coordinates in one fit (after structured sparse PCA, Jenatton, Obozinski & Bach 2010); validated against flex_pca at zero
-  penalty, then IgM 10 %, 5 %, qtoyflex, qtoynull.
+  .21 r1, .004 r131). The map-level merge test fails the null by self-selection (five states of qtoynull at z 8-13) and tilt-band
+  splits look real (z 7). hier-ppca found why and fission fixes it (below): the test has to run on data the labels never saw.
+- `pose-tangent` (lever 5): the node mean's rigid-body tangents projected out of the fitted flex basis, particles re-embedded.
+  VERDICT (`$H/handoff/pose-tangent/VERDICT.md`): basis deflation fails. The node latent is pose-contaminated (the IgM roots'
+  leading axis is ~30 % shift error; the nulls' only mixture structure is pose). Deflating the basis removes it but costs real
+  signal (qtoy2 closed .964 -> .944: domain motions carry rigid components); flex2D's plain-metric form does nothing; profiling
+  the six tangents per particle (Schur complement) removes pose cleanly and keeps the signal, but the tree's IgM false root splits
+  do not follow pose error (AUROC .51-.54): hygiene, not the failure.
+  - Port of the per-particle profile (user: "Port it"; pose-tangent2 session; `$H/handoff/pose-tangent/STATUS.md`): patch
+    `$H/handoff/pose-tangent/pose_profile_f3eab71ce.patch` on f3eab71ce, in `embed_latents_with_contrast`
+    (`src/main/flex/fit/simple_flex_pca_embed.f90`), default on, `SIMPLE_FLEX_POSE_PROFILE=no` turns it off. Build
+    `$M/build_poseprof`, fast gate 15/15. At both IgM 5 % roots flex's own coordinates become pose-free (shift-error R^2 .003 vs
+    .35 off); off reproduces the original trees exactly. Same-binary on/off gate trees (qtoy2, r131 seeds 1 and 2, qtoynull,
+    olenull, micnull: `$M/gates/pp_{on,off}_*`) are running. Commit to `hetero-tree-wip` only after they pass.
+  - Site shift profile (profile-sub-pixel-shift session; `$A/igm_cryolo/tree/fixture_igm/xsb_shiftprof/VERDICT.md`, classifier
+    `xsb_shiftprof/scripts/xstageb_sp.py`): two shift columns per particle Schur-complemented out of every group score, with the
+    masked in-plane gradient of the groups' MEAN reference as the tangent, kill the IgM core-patch shift split (z 26.7 / 25.8 ->
+    4.7 / 1.4 swap / independent; label R^2 on the shift error .32 -> .000) and keep a1 discrete (z 38.1 -> 33.8, NMI .146 ->
+    .129). A ~1 px prior fails (core z 12): the site's own shift information (~.5-1 px^-2 at the core patch, .03 at an arm) is no
+    better than the prior. Untested: a2-a5, the null arms, a Fortran port.
+- `sparse-ppca` (lever 6, sparse-ppca2 session; STATUS `$H/handoff/sparse-ppca/STATUS.md`, runs `$M/sparse_ppca/runs/`; not yet a
+  verdict): a flex-style PPCA on the latent framework (node mean, per-shell scale and noise, per-particle amplitude, 12 fixed
+  nuisance templates with per-particle coefficients) with a per-shell empirical-Bayes prior; a group lasso over supervoxels
+  selects each block's support and the modes are refitted without the penalty (lambda recalibrated every iteration: scale-free);
+  sites come from a greedy pursuit over seed balls on the node mean's envelope, by held-out (odd-half) likelihood gain against
+  2 SE and 12 solvent controls (after structured sparse PCA, Jenatton, Obozinski & Bach 2010).
+  - Validation: at zero penalty it reproduces flex's focused fits within 5-12 %; synthetic (3 planted sites x 2 modes): one block
+    per site, 98-99 % of its energy on its site, the full span's R^2 (.64-.66), supports 1.3x the site.
+  - qtoyflex: two blocks on one 3,232-voxel arm support; closed / holo AUROC .896 / .926, against oracle-mask fits of the same
+    model .852 / .851, global PPCA .817 / .883 and flex's node latent .757 / .861.
+  - IgM 10 % fix (`runs/x10fix_p`): all five arms learned from the data alone, one 2-mode block per arm, 95-97 % of a block's
+    energy on its arm, 99 % coverage of the arm's state variance, no leakage. R^2 / GMM NMI / LDA NMI: a1 .523 / .394 / .394, a2
+    .393 / .282 / .285, a3 .484 / .365 / .372, a4 .441 / .324 / .337, a5 .395 / .295 / .297: the true-mask fits' level, GMM NMI
+    above T1 flex's on all five arms.
+  - Open: the nulls (10 % null twin, 5 % fix and null, qtoynull). qtoynull's first run accepted 1-3 weak heavy-tailed sites (gains
+    7-24 nats vs 349-2,334 on qtoyflex), and the rotation step merged blocks on weak or continuous data (fixed: one lambda per
+    group); both are rerunning. The IgM pursuit stopped at five sites by a 2 % safety cut while the sixth candidate still gained
+    202 nats against solvent controls <= 0.2: a knob, against the knob-free rule; a control-based stop is being worked out.
+  - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
+    basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
+  - If the nulls hold, the next step is lever 3 with these supports as the arm masks (they are purer than zh1, and the seeds are
+    lever 3's weak point).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
-  spiked-covariance phase transition of Baik, Ben Arous & Peche 2005; Katsevich, Katsevich & Singer 2015 in cryo-EM), checked
-  against the trees' decisions and truth; and a global bound, at most r + 1 identifiable discrete states for r significant
-  directions. First verdict: no stop rule. Nulls carry above-edge nuisance directions (qtoynull 1.75 vs edge 0.77: pose and
-  contrast; the IgM fixture and null twin have identical spectra led by shift-error tangents, arm spikes <= 0.08), and the RNase P
-  closed spike is far below any edge (0.014 at the r131 root, 0.01-0.12 down the 692k closed lineage), so the rule would fail the
-  hard gate; a null-calibrated edge stops the nulls but loses qtoy2's close pairs, the qtoyflex root and r131. At 692k the stops
-  track N, not exhausted variance (77-83 % agreement with the tree). VERDICT (`$H/handoff/spectrum-stop/VERDICT.md`, 433 nodes of
-  44 trees): NO. The global r + 1 is only a lower bound (the between-state rank is <= K-1) and fails outright where states exist at
-  r = 0 (r131; IgM, 32 combinations). The empirical rare-state limit (n/sqrt(N) >= 16-17) IS the BBP law, with p_eff 1,000-2,600
-  (c ~14-20), useful for the paper but not as a rule (the rare state is direction 2, under the nuisance direction). Site-focused
-  latents raise the arm spikes 15-140x, but the null's continuous arms spike too: second moments cannot tell states from motion.
-  Code trap: the embedding's precision block is the MAP sampling precision Q = A G^+ A, while flex's `calibrate_noise_scale` /
-  `deconvolve_latent` read it as A and `mest_charts.py` as G (unverified; memory flex-embedding-precision-is-map-sampling-precision).
+  spiked-covariance phase transition of Baik, Ben Arous & Peche 2005; Katsevich, Katsevich & Singer 2015 in cryo-EM), and a
+  global bound of r + 1 identifiable discrete states for r significant directions. VERDICT (`$H/handoff/spectrum-stop/VERDICT.md`,
+  433 nodes of 44 trees): NO. Nulls carry above-edge nuisance directions (qtoynull 1.75 vs edge 0.77: pose and contrast; the IgM
+  fixture and null twin have identical spectra led by shift-error tangents, arm spikes <= 0.08), and the RNase P closed spike is
+  far below any edge (0.014 at the r131 root, 0.01-0.12 down the 692k closed lineage), so the rule would fail the hard gate; a
+  null-calibrated edge stops the nulls but loses qtoy2's close pairs, the qtoyflex root and r131. At 692k the stops track N, not
+  exhausted variance. The global r + 1 is only a lower bound and fails where states exist at r = 0 (r131; IgM, 32 combinations).
+  The empirical rare-state limit (n/sqrt(N) >= 16-17) IS the BBP law, with p_eff 1,000-2,600: for the paper, not a rule.
+  Site-focused latents raise the arm spikes 15-140x, but the null's continuous arms spike too.
+- `flex-precision` (verify-flex-pca-s-embedd session; runs `$M/flex_precision/`; VERDICT and both patch variants to
+  `$H/handoff/flex-precision/`): CONFIRMED in source and numerically. The embedding stores the MAP sampling precision
+  Q = A G^+ A (rebuilt from the captured per-particle Gram blocks: equal to Q to 4e-15, 99 % off A; prior-whitened eigenvalues
+  never below 4 on 60,000 particles), while `calibrate_noise_scale` / `deconvolve_latent` read it as A and `mest_charts.py` as G.
+  43 % of the per-particle directions are weak (data / prior < 1). On its test node flex calibrates the noise scale to 0.460
+  (fixed reading 0.507, truth 0.634), so the deconvolution under-scales the real conformer separation by 26-42 % on the strong
+  axes and turns noise into apparent signal on the weak ones (2-9x). Consumers: state seeding, site_rank starts, the charts code.
+  The patch touches the import line and the three `map_sampling_precision` calls in `simple_flex_pca_embed.f90`; it applies
+  stacked on the pose-profile patch (`flex_precision_posterior_on_pose_profile.patch`), not in the other order with plain
+  `git apply`. The deconvolution comparison (job 55030447) was running at writing.
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
-  the parent's latent (lever 4's over-split) and refined, a view-matched map test selects, and a continuum stays one leaf with its
-  own coordinate; tested on discrete, continuous and mixed truth (qtoy2, qtoyflex, IgM 10 % fix and null, qtoynull).
+  the parent's latent and refined, a view-matched map test selects, a continuum stays one leaf with its own coordinate.
+  VERDICT (`$H/handoff/hier-ppca/STATUS.md`, scripts beside it, runs `$L/hppca/<key>`):
+  - **A cross-half map test of hard-assigned groups is valid only on data no assignment step used.** In the band the assignment
+    scored, the 5 groups of a one-conformer null (qtoynull) are reproducibly distinct at z 53-56, with cross-half (swap) scoring
+    and 300 view x defocus cells, and with no view, defocus, SNR, B or pose-error difference in truth: each half's groups were
+    selected by references carrying the other half's noise. Band split (assign below lp L, test only above it): 5 -> 1 at L 10
+    (test 9.4-5.6 A, max z 1.9) and at L 15 (14.6-5.6 A, 6 shuffles, max z 1.97).
+  - The production split test does not meet this (checked in the source): `state_split` runs its cross-half EM below EM_LIM 20 A
+    and tests from 4 shells above it (the tree passes a focus mask) to lp 10 A, starting from stage-B labels assigned at LPB 10 A, so its test band sits inside
+    the band that chose the labels. The gate nulls pass through `locality_guard` + `effect_floor`; the IgM nulls do not
+    (10 % 50/50, 5 % 64/36).
+  - With the band split the select step keeps real states apart, but the model does not beat the tree: qtoy2 root 8 leaves,
+    NMI .697 (stage B .665, lever 4 .705, tree mm2 .780), closed F1 .916, holo .818, the pairs 1/2 and 43/49 merged; qtoyflex holo
+    isolated (F1 .689, tree .62) but closed lost (.22, tree .39-.47).
+  - Continuum vs discrete is not decidable from first-moment maps at these SNRs: in the assignment band the sorting ramp
+    dominates (the IgM fix and null arms read the same), in the clean band 8 bins have no power and 4 bins break at the group
+    boundary for a continuum too; single linkage keeps the qtoyflex arm together but bridges qtoy2 classes (NMI .54).
+  - IgM 10 %: no call; the arm information lies below 15 A, so a band split leaves the test nothing.
+  - Nested coordinates (qtoyflex, s1 R^2): root latent .187, level-1 leaf .289, leaf + local .314, + root latent .339.
+  - Traps: per-shell amplitude matching is degenerate when one map has no band signal; groups under ~2k particles have no
+    clean-band signal (flag half-map correlation < .05 as untestable); 2 shuffles per pair give 1 df (use >= 6).
+  - Next for continuum vs discrete: gold-standard classification (independent half refinements, half-specific flex fits, groups
+    matched across halves), where the test can use the full band.
+- `fission` (the f2r session; `$H/handoff/fission/STATUS.md`, runs `$L/fission/`): data fission (Leiner et al. 2023; Neufeld et
+  al. 2024) as the alternative that keeps the low band: X1 = X + tau Z labels, X2 = X - Z/tau tests, Z white in real space at
+  each image's noise sd (stacks `$L/fission/stacks/<toy>_tau<t>/X{1,2}/all.mrcs`). Validated: no cross-copy noise correlation
+  (-.0004 / +.0002); at tau 1 each copy has twice the noise variance, at tau 0.6 X1 keeps more (corr with X .86) and X2 pays (.51).
+  qtoynull tau 1: the over-split K 4 on X1 merges 4 -> 1 on X2 in lever 4's full band (max pair z 0.46, z_crit 3.38). Running: the
+  qtoy2 root at tau 1 (random and mixture seeds), then tau 0.6. If qtoy2 keeps its states, a fission test is the candidate to
+  replace `state_split`'s guards where the signal is low-resolution (IgM).
+- `extremes-repro` (runs `$L/extremes/`; notes to `$H/handoff/extremes/`): whether the extreme maps along a latent coordinate
+  reproduce across fission copies. Running: r131 re-fissioned with a band-wise noise model (the registered stacks' corners carry
+  weaker low-frequency noise, which left the first Z 2-12 % short inside the molecule), IgM 10 % fix and null coordinate fits,
+  qtoyflex seam-free and fake-map coordinates.
 
 ## 8. Decisions waiting for the user
 
@@ -592,6 +681,12 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and re
    hard fixture (section 6). What remains is the site layer itself: arm-shaped masks from the data (T1b's `self` masks are running),
    focused coordinates beside the node's, and latent-built references assigned per site. Port only after the IgM fixture and its
    null twin, the 10 % fixture and the section-3 gates.
+6. The split test: replace `state_split`'s locality guard and effect floor by a test on unseen data (a fission copy, or a band
+   above the assignment lowpass), once fission's qtoy2 run shows it keeps real states (7.8).
+7. Pose profile in flex's embedding: commit to `hetero-tree-wip` if the same-binary on/off gate trees pass (7.8 pose-tangent);
+   the flex-precision patch then stacks on it.
+8. Site discovery: sparse PPCA's learned supports as the site layer (discovery + masks in one fit) if its nulls hold, then lever 3
+   (latent-built references, one round, 2-state) on those supports.
 
 ## 9. Standing rules and traps
 

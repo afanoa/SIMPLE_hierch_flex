@@ -35,3 +35,4 @@ arm-shaped masks.
 **How to apply:** next = data-derived arm-shaped masks (islands trimmed to the molecule, or refined from the focused fit's mode
 energy: T1b, `fixture_igm/t1b_masks/`), then focused coordinates appended to the node's. Never use free-variance gains to call
 discreteness or rank sites. Related: [[site-mask-rework-direction-2026-11-07]], [[igm-fixture-xval-stageb-gapw-2026-11-06]].
+- Swept-variance masks (guide 7.8 lever 1): [[igm-swept-variance-masks-verdict-2026-11-07]].
