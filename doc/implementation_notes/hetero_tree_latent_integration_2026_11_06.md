@@ -48,8 +48,9 @@ Woodbury algebra inside refinement.
   states is in map-level statistics, which the cross-half split tests already use.
 - **prob_beta tempers the pose draw only:** `assign_rows` takes the state of the closest reference over all states and draws the
   pose within that state's block. At 1.0 the merged tree lost the r131 closed corner.
-- **The split step is not reproducible on a continuum:** identical stage-B input gave different children on qtoyflex (holo F1 0.62
-  vs 0.49).
+- **The split step reproduces on identical input only with the gates' `SIMPLE_SPLIT_CONTRAST=maps` exported.** Without it,
+  state_split's choose rule flips to the EM groups and moves about 10k particles on qtoyflex (holo F1 0.62 vs 0.49); a replay must
+  export the run's `split_env.txt`. (An earlier reading of this as split-step noise was wrong.)
 - **The r131 closed corner sits at the readout threshold** under every setting tried (closed arm 0.91-1.03).
 - **Site factors are the only refinement -> flex signal:** they lift the latent's view of the states (qtoy2 truth ceiling NMI
   0.48 -> 0.62, r131 closed AUROC 0.65 -> 0.69).
