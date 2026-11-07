@@ -21,6 +21,14 @@ null twin continuous). Files: `fixture_igm/t1_sitefocus/T1_VERDICT.md`; generic 
 - Gate fixtures (sitefocus-gates): focus does not beat the node latent on r131/qtoy2; node + sites never worse; qtoyflex gains
   (closed .786 -> .845).
 
+- T1b (`fixture_igm/t1b_masks/T1B_VERDICT.md`): islands trimmed to the molecule's support (tree's 0.1 x max) double the fit (mean
+  R2 .066 -> .127, LDA NMI .032 -> .070; true .231/.142; a1 .244/.162 > .146). Purity > coverage: trims are arm-pure but cover a
+  third of the smeared arm; looser thresholds score worse. Untested: masks from the focused fit's own mode energy (`self`).
+
+- Flex prior on the arms (`hetero_tree_20261028/handoff/igm-prior/VERDICT.md`): NO, +0.006 NMI at most, costs 2-8 accuracy points,
+  overrides the null. But latent-built references + arm-mask state_eval give a1 NMI .168 (> .146); truth references +.03-.04 more.
+  With depth wiener (no truth-map gain) and the global coordinate (no site dictionary), all three of the user's ideas failed here.
+
 **Why:** confirms the user's thesis that site/mask is the weakest layer: the latent can read small moving parts only through
 arm-shaped masks.
 **How to apply:** next = data-derived arm-shaped masks (islands trimmed to the molecule, or refined from the focused fit's mode

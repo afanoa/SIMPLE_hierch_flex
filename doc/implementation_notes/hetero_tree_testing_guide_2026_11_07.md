@@ -241,6 +241,7 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | stage-B reference shrinkage toward the node mean (shrinkB: emp2 cross-half Wiener on the state deviations between three single-iteration stage-B calls) | continuation replays, four doses | toys unchanged (qtoy2 NMI 0.656 -> 0.648); on both r131 seeds the split merges the closed corner (full dose, and half dose on seed 1): the shrinkage suppresses the 14.6-10.2 A band the split tests | no: fails the hard gate |
 | pose anchor (child poses held near the parent's) | key-only replays, 2 seeds | removes the drift tail (p99 62 -> 9 deg); r131 corner kept, enrichment within seed noise; qtoyflex NMI -0.007; qtoy2 children purity -0.01..-0.11, NMI -0.03..-0.14: it locks in the parent's tempered draw noise | no |
 | flex-corrected reconstruction (flexsub: each particle's within-state latent deformation subtracted before recB -> stage B -> split) | replays of the qtoyflex, qtoy2 and qtoynull roots | labels move 0.4-1.1 % (a seed change: 2.9-3.9 %); truth F1/NMI, split and state-map FSCs unchanged; null one leaf. The within-state deformation is ~0.05 % of a particle's flex-band power, and a linear latent cannot un-blur a state map | no |
+| flex prior on the IgM arms (the focused latent's posterior as the state prior; arm-focused state_eval at the root's poses) | a1, a2, null twin | at most +0.006 NMI at 2-8 points of accuracy (a1 0.168 -> 0.165-0.171; a2 0.103 -> 0.109); it drags oracle references down (a2 0.144 -> 0.116) and on the null overrides the arm objective for 98 % of particles | no: the information is in the references |
 | better poses vs better references (stage-B oracle) | state_eval factorial, true vs stage-B poses x stage-B vs truth maps | poses are not the limit (true poses with stage-B maps: root accuracy 0.951 -> 0.947); references are: one per truth class lifts the qtoy2 root 0.674 -> 0.919 (ceiling 0.936), r1 0.756 -> 0.839; qtoyflex closed F1 0.17 -> 0.455 | headroom = references |
 | depth-tied tree_wiener (port) | 692k + gates + truth maps | nominal leaf FSC 4.7 -> 4.3 A at 692k, state readouts unchanged, gates pass; against the truth maps of the qtoy2 and qtoyflex leaves depth2 never beats emp2 (qtoy2 relative error +0.010 at 20-14 A, +0.016 at 14-10 A; qtoyflex equal within 0.005) | no measurable benefit: the gain is nominal |
 | the tree-wide basis as a site dictionary (varimax / ICA localized modes) | six gate trees, input poses | modes localize (0.6-0.8 of a mode's energy in one site) and reproduce, but one mode holds a slice of a site's state: qtoy2 closed AUROC 0.69-0.74 vs 0.92 for the 30-mode span; r131 no mode reaches 0.60 (span 0.63-0.65, site factors 0.65-0.69), and the mode inside the closed-arm mask reads the arm swing | no: discovery and ranking cannot become a lookup |
@@ -289,12 +290,16 @@ The porter's `STATUS.md` there has exact commands for every step below.
   per-E-step score gap to compare with the Python's (`xs_gate1_gap/`). The first qtoyflex tree with `site_split=yes` ran away (a
   returned node re-filed every poll, 147 leaf lines): fixed in `378254f33` (in build_ports6). Run 3 also missed the IgM positive
   control because the call ran on the EM's coarse grid: `89604e8ac` moves it to the 5.11 A grid its constants were set on (build_ports7,
-  run 4 chained). Run 4 is clean on RNase P and the nulls (0 DISCRETE) but still misses the IgM control: at site 6 the EM's
-  split agrees with the Python's (.81, z1 22), yet its lobes are blunter and closer (GAPw .33 vs the Python's .09), most likely
-  because the port's group maps are band-limited at the EM crop (11.9 A) where the Python used full-resolution reconstructions; a
-  diagnostic runs the prototype's `dc_gates.py` on the port's own maps. The hard test is running: full trees with
-  `site_split=yes` on the IgM fixture and its null twin (`gates/ports7_igmfix_ss`, `gates/ports7_igmnull_ss`, jobs 55015788/9;
-  scoring commands in `$H/handoff/ports/STATUS.md`). Then: qtoyflex with `site_split=yes`, scored by `qflex_leaves.py`.
+  run 4 chained). Run 4 is clean on RNase P and the nulls (0 DISCRETE in 76 sites) but still misses the IgM control (site 6:
+  GAPw .33 vs the Python's .09). The prototype's own `dc_gates.py` on the port's maps, and on the port's labels rebuilt with
+  reconstruct3D, both reproduce the port's numbers: the call and the maps are faithful and the LABELS fall short. The port's
+  site EM settles slowly (40 % of labels still changing at iteration 7, against `xsbg.py`'s 12-16 % by iteration 8-10), leaving a
+  weaker contrast (z1 22 vs 38.5, agreement .81); prime suspect is the per-shell global model scale where the prototype fits a
+  per-particle amplitude. Running: the E-step amplitude fit (`SIMPLE_SPLIT_CONTRAST=estep`) on the IgM root and two nulls
+  (`$M/mest/xs_gate1_v6`, array 55019481). The hard test runs too: full trees with `site_split=yes` on the IgM fixture and its
+  null twin (`gates/ports7_igmfix_ss`, `gates/ports7_igmnull_ss`, jobs 55015788/9), scored into `$H/handoff/ports/IGM_RESULTS.md`
+  when they end. qtoyflex with the layer on (`gates/ports7_qtoyflex_ss`) finds no discrete site and equals the control's four
+  leaves (closed F1 .473, holo .619).
 - Piece 2, chart outputs: parked (bundle ref `wip/tree-ports-charts`); drop unless 7.2 passes.
 
 ### 7.2 Seam-free global coordinate (f2r session; full record and resume commands in `$H/handoff/f2r-global/VERDICT.md`)
@@ -429,8 +434,8 @@ Where the latent work fits:
    fixture (on the October IgM-like fixture per-site flex recovered every arm).
 2. Ranking: one calibrated, comparable number per site (held-out nats per particle of a site mixture against one Gaussian, or GAPw
    on the site coordinate) in place of site_rank's ~45 EM fits and pole margins, whose order alone decides the r131 corner.
-3. Flex prior: the site coordinate's posterior as the prior on the site state in a site-focused stage B (harness 5.2). It failed
-   where stage B already had the information; weak per-particle evidence, as on the IgM arms, is the regime it was meant for.
+3. Flex prior: the site coordinate's posterior as the prior on the site state in a site-focused stage B (harness 5.2). Tested on
+   the IgM arms 2026-11-07, the regime it was meant for: no gain (section 6).
 4. Global coordinate and depth wiener: the tree-wide basis (7.2) as a site dictionary shared by every node; depth-tied pooling for
    the per-site state maps. Both tested 2026-11-07 and closed (section 6): a site's state is spread over several directions inside
    the site, which focused fits and site factors capture and single localized global modes do not; depth2 has no truth-map gain.
@@ -450,6 +455,14 @@ Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`
   turn heavy-tailed (kurtosis 5-28) in both twins. Per-particle discreteness is unreadable at this SNR (tied-variance gain ~0 for
   the discrete and the continuous arms alike), so the discrete-vs-continuous call stays map-level (GAPw). Verdict: the mask is
   the bottleneck; site discovery must deliver arm-shaped masks before the latent can help.
+- T1b, data-only arm masks (`fixture_igm/t1b_masks/T1B_VERDICT.md`, `scripts/t1b_masks.py`): trimming each island to the
+  molecule's support (the tree's 0.1 x max rule) doubles the island fit on every arm, means over the five arms R^2 0.066 -> 0.127
+  and LDA NMI 0.032 -> 0.070 (true masks 0.231 / 0.142); a1 reaches R^2 0.244, LDA NMI 0.162, past the cross-validated site
+  stage B's 0.146. Purity matters more than coverage: the trimmed masks are as arm-pure as the true ones (0.77) but cover a third
+  of the arm, because the arm is smeared in the node mean (73-90 % of each true arm mask lies outside that support); a looser
+  threshold restores coverage, loses purity and scores worse. Trimming also removes most of the heavy tails (kurtosis 3-8).
+  Next: a mask that follows the arm's low-density swept volume, e.g. refined from the focused fit's own mode energy (the `self`
+  variant, built but not fitted: resume commands in the verdict).
 - The ranking number is not calibrated yet. With free variances heavy tails buy it (8 of 15 qtoynull sites positive, up to 0.295
   nats/particle on a near-empty site, kurtosis 48; at r131 its fitted tail is not the closed rows, AUROC 0.51). With tied variances
   it is clean on the null (all 15 sites < 0) but ranks site 3 above the closed-arm site 2 at r131 seed 2 (hard gate). The tree's
@@ -461,7 +474,15 @@ Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`
   best-covering site 0.881 (1.64) vs node 0.976 (2.85): placement costs 0.04-0.09 AUROC and focus gains nothing; qtoyflex closed
   0.835-0.852 vs node 0.757-0.786: focus helps, the tree's site keeps little (0.764); holo masks fall far below the node on both toys.
   On the oracle closed masks the 2-Gaussian tail is the closed state (tail AUROC 0.96 qtoy2, 0.76 qtoyflex); at the tree's r131
-  sites it is not (0.51).
+  sites it is not (0.51). At r131 the oracle masks change nothing: closed AUROC 0.604 (mask covering the closed-arm region) and
+  0.613 (dilated readout region) on z1..10 vs the node's 0.612, the tree's site 2 0.599; placement costs at most 0.03 and focus
+  gains nothing, and even there the 2-Gaussian tail is not the closed state (0.50-0.53). The RNase P closed state is weak in any
+  per-particle flex coordinate; the r131 corner lives at map level.
+- Flex prior on the IgM arms (`$H/handoff/igm-prior/VERDICT.md`, runs `$M/latent/igm_prior/`): no gain (section 6). But references
+  built from the focused latent's split and assigned with the arm mask (state_eval, root poses) reach a1 NMI 0.168 / accuracy
+  0.714, past the latent split (0.144) and the cross-validated site stage B (0.146); references from the truth labels add 0.03-0.04
+  more. So the route is arm-shaped masks -> focused latent -> references -> site-focused assignment, not a per-particle prior.
+  Arms a3-a5 not run (resume command in the verdict).
 - Traps: flex_pca refuses `fflex/f.simple` (it carries the delivered state labels): use the node's `n.simple`; one compute node
   (cn121) ran flex workers ~100x slow.
 
@@ -481,7 +502,10 @@ Tests, in order:
    r131 or at 692k).
 3. Keep state_eval as a developer harness: add it to `hetero-tree-wip` (after a build and fast gate) or leave it in the bundle.
 4. site_split: after gate 1 and qtoyflex.
-5. Launch T1 of 7.7 (focused per-site flex on the IgM fixture), which also opens the joint site-coordinate idea of 7.5.
+5. Of the three ideas, the flex prior, depth wiener and the global coordinate all failed their tangible-benefit tests on the
+   hard fixture (section 6). What remains is the site layer itself: arm-shaped masks from the data (T1b's `self` masks are running),
+   focused coordinates beside the node's, and latent-built references assigned per site. Port only after the IgM fixture and its
+   null twin, the 10 % fixture and the section-3 gates.
 
 ## 9. Standing rules and traps
 

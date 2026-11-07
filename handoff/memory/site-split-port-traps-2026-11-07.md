@@ -27,8 +27,11 @@ nodes vs the Python table (handoff/ports/scripts/hetero_tree_mest/xs_gate1*.{sba
 
 6. Even on the 5.11 A grid the IgM positive control (site 6) is missed: the split agrees with the Python's at .81 and z1 22, but
    the lobes are blunter and closer (L 14.6 A, B 4 voxels, GAPw .33 vs L 16, B 40, .09). The port's group maps are band-limited
-   at the EM's crop (11.9 A); the Python's came from full-resolution reconstructions. Open as of 02:00 EST 2026-11-07: dc_gates.py
-   on the port's own maps decides maps vs call.
+   at the EM's crop (11.9 A); the Python's came from full-resolution reconstructions. SETTLED 02:47: dc_gates.py on the port's
+   maps and on the port's labels reconstructed with reconstruct3D both reproduce the port's numbers, so the call and the maps
+   are faithful and the LABELS fall short: the port's EM locks in slowly at that site (40 % of labels still changing at
+   iteration 7; xsbg.py 12-16 % at 8-10). Suspect: the per-shell global model scale vs xsbg.py's per-particle amplitude a_i.
+   Test in flight: SIMPLE_SPLIT_CONTRAST=estep (state_mergeup's l_amp) on the IgM root and two nulls (xs_gate1_v6).
 
 **How to apply:** when a Fortran EM "finds" far more than the Python prototype, look for coupling between halves (docking,
 shared filters) before touching thresholds; run GAPw-type geometry on the prototype's grid. Related: [[hub-hetero-tree-current]].
