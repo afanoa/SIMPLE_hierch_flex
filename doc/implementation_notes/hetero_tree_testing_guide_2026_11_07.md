@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:39 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:42 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -875,6 +875,38 @@ and the mixture over it is tree-structured. Tests 1-3, re-aimed and started as s
 - `site-coupling`: factorial (a product of per-site trees) vs one joint tree, from the cross-site coupling. Notes to
   `$H/handoff/site-coupling/`.
 - `quad-manifold`: one curved coordinate per site. Notes to `$H/handoff/quad-manifold/`.
+
+Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
+searched 2026-11-07):
+- Cryo-EM: no single tree-structured generative model with per-node pose refinement found. The cohesive models are flat:
+  - cryoDRGN: one decoder and a continuous latent; hierarchical classes come post hoc;
+  - Hydra (Levy et al., NeurIPS 2024): a flat mixture of K neural fields, with poses, conformations and classes jointly;
+  - hyper-molecules (Lederman & Singer 2017; Lederman, Andén & Singer 2019): tree topologies are only mentioned;
+  - RECOVAR / 3DVA: one linear model at fixed poses.
+- Elsewhere:
+  - Bishop & Tipping 1998: a hierarchical mixture of latent variable models, soft, top-down EM.
+  - Tree-structured stick breaking (Adams, Ghahramani & Jordan 2010): data at internal nodes, node parameters diffuse from the
+    parent.
+  - Phylogenetic factor analysis (Tolkoff et al. 2017; Hassler et al. 2022): latent factors diffuse along a tree by Brownian
+    motion; one Gaussian model, internal nodes inferred.
+  - TreeVAE (Manduchi et al. 2023): grows a tree inside one generative model.
+  - Partial common principal components (Flury 1987) and shared-subspace models (Franks & Hoff): shared axes plus group-specific
+    ones.
+  - Latent tree graphical models (Choi et al. 2011).
+  - The hierarchical Dirichlet process (Teh et al. 2006: shared atoms, group weights; from memory, not checked).
+- Our version: y_i = C_i P_i(theta_i) [mu + B (m_node + z_i)] + noise.
+  - B: one tree-wide sparse site basis; it grows, as in partial CPC, when a subtree finds a site.
+  - m_node: node means that diffuse down the tree; tree_wiener is the posterior of that prior.
+  - z_i: within-node coordinates. Continua live here, and a particle may stay at an internal node, as in TSSB.
+  - theta_i: poses refined per subtree, which is block-coordinate ascent of the same likelihood.
+  - Growth: by the fission saturation test.
+- Pieces of the current tree it absorbs:
+  - per-node flex fits -> B and m;
+  - the site layer -> B's sites;
+  - the guards -> the saturation test;
+  - tree_wiener -> the diffusion posterior;
+  - the equivalence merge-up -> a factorial forest. A joint tree duplicates one site's states under other branches;
+    site-coupling decides between the two.
 
 Not to retry:
 - map-level soft EM (noise-locks);
