@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:00 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -601,6 +601,14 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     fits a blurred segment). A fission map test accepts carved continua by construction (hier-ppca: adjacent arm thirds z 20.5 /
     5.2), so it was not run. Rule: GAPw accepts a site split on IgM-like sites, no call = one leaf; large curved continua need a
     node-specific null, and a minority state next to a continuum needs a test that does not require an empty gap.
+  - Part 4b (queued): GAPw per block on the knob-free pursuit's p3 blocks, whose extra blocks Part 4 never saw.
+  - Part 5 (running; design approved): a fission saturation test replacing .28. Fission in memory (tau 1) on the framework's
+    cached Fourier planes; one y1 score orders the particles into four groups (each side of the input split halved at its
+    median); y2 maps give cross-half squared steps q_A, q_mid, q_B. DISCRETE iff z(q_mid) >= 3 and one side has q_side / q_mid
+    + 2 SE < 1: equal steps mean uniform occupancy along the path whatever its curvature, and a homogeneous state saturates.
+    Expected r: closed side ~0, curved arm continuum ~1, IgM 10 % a1 ~.5. Known limit: a continuum peaked at one end reads as a
+    state on its dense side (a subsampled qtoyflex control measures it). Runs on qtoyflex (closed vs rest, arm median split,
+    a realistic closed split) and IgM 10 % a1 fix / null.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -698,8 +706,14 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   stacked on the pose-profile patch (`flex_precision_posterior_on_pose_profile.patch`), not in the other order with plain
   `git apply`. VERDICT: storing A instead of Q fixes the strong axes (z1-z3, 84 % of the truth variance: deconvolved variance
   26-42 % low -> 10-20 % high) and the per-particle posterior means (error .385 -> .299 of the truth variance, -22 %), but not the
-  weak-axis inflation, which comes from the half-split noise scale (.507 vs truth .634; likely error both halves share). The fix
-  is being built on the pose profile (stacked patch) and gated against the pose-profile build; committed only on the user's word.
+  weak-axis inflation, which comes from the half-split noise scale (.507 vs truth .634; likely error both halves share).
+  Gated (VERDICT.md "Gate"; build `$M/flex_precision/build_fp` = `e7f7efb80` + the stacked patch; arms `fprec` vs pp_on / `fpbase`):
+  fast gate 15/15; nulls one leaf; the r131 corner kept on both seeds (1.01-1.02 / .57; pp_on .52-.54 against the .6 limit); qtoy2
+  NMI .760 / .799 vs .811 / .813, with closed merged into combo 22 on seed 1 (the root split into 4 groups instead of 5; pp_on kept
+  closed on both). At the root's first flex call the fix moves labels against truth from NMI .456 to .512 and the class separation
+  the coordinates keep from .48 to .70; the noise-scale gap is not pose error (1.25 with the profile on or off). A consumer the
+  first audit missed: the root's first flex call's states build fflex's focus mask, so the fix also changes fflex's basis
+  (eigenvalues up to 12 %). Neutral to slightly negative on the gates; a third qtoy2 seed pair is running. Not committed.
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
   the parent's latent and refined, a view-matched map test selects, a continuum stays one leaf with its own coordinate.
   VERDICT (`$H/handoff/hier-ppca/STATUS.md`, scripts beside it, runs `$L/hppca/<key>`):
@@ -787,7 +801,8 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
    tau 0.6; 7.8 fission VERDICT: the null passes, qtoy2 keeps its states, .02 accuracy cost). Needs a real-data noise model
    (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
-   patch stacks on it once its verdict is in.
+   fix (stacked patch, 7.8): correct in principle and closer to truth at the root latent, but neutral to slightly negative on the
+   gates (qtoy2 closed merged on 1 of 2 seeds); commit or hold after the third qtoy2 seed pair.
 8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
    round, the best data-only chain (7.8 igm-refs Part 3), with GAPw accepting each split (Part 4: 9/10 power, 0/10 false
    accepts; valid for IgM-like short swings, not for qtoyflex's curved arm continuum or its closed state next to it). The native
