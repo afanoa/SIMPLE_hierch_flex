@@ -587,12 +587,20 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     block climbs .002 -> .117 by round 3); 5 % null: 0 sites. Rule to port: sparse-PPCA blocks + one masked round as the
     data-only seeding, and a discreteness test (sparse PPCA's held-out gain, GAPw / cross-half, or the fission test) decides
     which splits the tree accepts.
-  - Part 4, the discreteness test (oracle session; interim from `progress.txt`, write-up pending): GAPw on sparse PPCA's blocks
-    calls the 10 % fix arms DISCRETE (5/5, GAPw .03-.24, both 3-state arms included) and none of the 10 % null's 8 blocks (.48-1.56
-    or no call); at 5 % it calls the 4 arms DISCRETE and the non-arm block no call. It misses qtoyflex's closed block (.76; the
-    K = 2 seed found closed at NMI .08). The held-out 2- vs 1-Gaussian gain fails as a calibrated test: its Gaussian null sits at
-    -.0025 +- .0002 nats/particle, so it accepts any non-Gaussian coordinate (qtoyflex's arm continuum, 1 of 2 continuum controls);
-    a spike-vs-continuum family test is misspecified both ways (misses 10 % a1, accepts both continuum controls).
+  - Part 4, the per-site discreteness test (FINAL; VERDICT.md "Part 4", per-block files `results/part4/`; jobs 55033299-302,
+    55035034): GAPw (`dc_gates.py`, constants unchanged) on the round-1 K = 2 groups of each sparse block. Of 10 should-accept
+    blocks (9 IgM arms + qtoyflex closed) and 10 should-reject (8 null blocks, the 5 % non-arm block, qtoyflex's arm block):
+    GAPw 9/10 power, 0/10 false accepts; the 2- vs 1-Gaussian held-out gain (bootstrap-calibrated) 8/10 and 4/10; a spike-vs-
+    continuum family test 8/10 and 8/10. IgM: all 9 arms DISCRETE (10 % .03-.24, 5 % .05-.27, 3-state arms split in two
+    included), null blocks .48-1.56 or no call, the non-arm block no call; the null's true angle-median split is not discrete
+    either (.47), so the separation is the test's, not the seed's. Margin .27 vs .47; the .28 threshold is the only calibrated
+    number (the 5 % IgM null, so IgM is partly in-sample). qtoyflex fails both ways even with truth groups: closed vs rest is no
+    call (lobes 9 A apart, G2 needs 10; the arm continuum fills the corridor), and the arm continuum split at its true median
+    reads DISCRETE (.13, lobes 30 A apart: a large curved swing leaves the chord empty). The per-particle tests detect
+    non-Gaussianity (Gaussian null -.0025 +- .0002 nats/particle) or are misspecified (real continua prefer 3 spikes; a d' ~2 arm
+    fits a blurred segment). A fission map test accepts carved continua by construction (hier-ppca: adjacent arm thirds z 20.5 /
+    5.2), so it was not run. Rule: GAPw accepts a site split on IgM-like sites, no call = one leaf; large curved continua need a
+    node-specific null, and a minority state next to a continuum needs a test that does not require an empty gap.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -778,9 +786,9 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
    patch stacks on it once its verdict is in.
 8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
-   round, the best data-only chain (7.8 igm-refs Part 3), with GAPw accepting each split (Part 4 interim: 5/5 10 % arms, 0/8 null
-   blocks; misses qtoyflex closed). The native port is in progress (user: port first); then the r131 / 692k global-coordinate
-   test and the end-to-end chain.
+   round, the best data-only chain (7.8 igm-refs Part 3), with GAPw accepting each split (Part 4: 9/10 power, 0/10 false
+   accepts; valid for IgM-like short swings, not for qtoyflex's curved arm continuum or its closed state next to it). The native
+   port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
    gate leaf on a fission copy with a threshold calibrated on honest readouts (e.g. against random tails of matched N).

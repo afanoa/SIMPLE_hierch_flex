@@ -1,6 +1,6 @@
 ---
 name: lever3-latent-refs-seeding-verdict-2026-11-07
-description: "VERDICT 2026-11-07 (IgM 10 %/5 % fixtures, true arm masks): latent-built references + arm-masked state_eval as a node seeding rule finds the arms far beyond the tree (5-arm product .256 vs tree .042 at 10 %), but is discrete-specific only for 2-state arms at round 1; 3-state splits and later rounds carve the null's continuous angles; Part 3 on sparse-PPCA supports is the best data-only chain (10 % product .338); Part 4 interim: GAPw accepts 5/5 10 % arms, 0/8 null blocks, misses qtoyflex closed"
+description: "VERDICT 2026-11-07 (IgM 10 %/5 % fixtures, true arm masks): latent-built references + arm-masked state_eval as a node seeding rule finds the arms far beyond the tree (5-arm product .256 vs tree .042 at 10 %), but is discrete-specific only for 2-state arms at round 1; 3-state splits and later rounds carve the null's continuous angles; Part 3 on sparse-PPCA supports is the best data-only chain (10 % product .338); Part 4: GAPw accepts the site splits (9/10 power, 0/10 false accepts) but fails on qtoyflex's curved continuum and closed state"
 metadata:
   node_type: memory
   type: project
@@ -32,10 +32,8 @@ rounds of free state_eval (maxits 1) with the arm mask, each rebuilding its maps
     +.012-.034 on 3-state blocks.
   - Trick: resample the box-70 support centre-aligned to the 200^3 mask grid, core at .5, then T1's edge (dilate 3 A, Gaussian 6 A).
 
-- **Part 4 (discreteness test, interim 17:00 from igm-refs/progress.txt).** GAPw on sparse PPCA's blocks: 10 % fix 5/5 DISCRETE
-  (.03-.24, 3-state arms too), 10 % null 0/8 (.48-1.56 / no call), 5 % fix 4 arms DISCRETE + non-arm no call; misses qtoyflex
-  closed (.76, K=2 seed NMI .08). The held-out 2- vs 1-Gaussian gain's Gaussian null sits at -.0025 +- .0002 nats/particle, so it
-  accepts any non-Gaussian coordinate (qtoyflex arm continuum); a spike-vs-continuum test is misspecified both ways.
+- **Part 4 (discreteness test, FINAL 17:20):** GAPw on the round-1 K=2 groups: 9/10 power, 0/10 false accepts (IgM arms 9/9,
+  null blocks and the non-arm block rejected); fails on qtoyflex both ways. Details: [[gapw-site-acceptance-test-verdict-2026-11-07]].
 
 **Why:** the coordinator's lever 3 asked whether reference-seeded, arm-masked assignment could seed tree nodes.
 **How to apply:** if it is ported, use one round, 2-state splits, plus a map-level split test (GAPw / cross-half). Do not iterate
