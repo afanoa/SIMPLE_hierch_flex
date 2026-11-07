@@ -422,7 +422,12 @@ null twin moves the same arms continuously. What the current tree does with it:
   0.146), with the null held.
 
 A 10 % arm variant at real Fab proportions (`/mnt/beegfs/elmlund/afan/igm_cryolo/tree/fixture_igm10`, built 2026-11-07, noise
-recalibrated) separates an SNR limit from a method limit; its stock roots and status: `$H/handoff/igm10/STATUS.md`.
+recalibrated so the particles keep the real band correlation; status, resume and scoring: `$H/handoff/igm10/STATUS.md`). Interim
+root results (merge_master2, 03:20) show the current tree failing a second way: the fixture's root splits in two weakly along
+a1 (NMI a1 0.072, other arms <= 0.015, groups 65-66 % pure in a1; the guard keeps the split), and the NULL twin's root splits
+50/50 along the continuous arm angles (largest leaf 0.505, a null-gate fail; angle eta^2 a1 0.050, a3 0.032, a5 0.032). At 5 %
+(build_igm4) both roots were one leaf, the guard removing a nuisance split. The same-build 5 % roots (jobs 55016840/1) decide
+whether this is the 10 % signal or the build; the 10 % trees then queue T1 themselves.
 
 Second tier: `mm3q` (three independent rigid domains, 8 combinations: the tree has 1 of 8 clean, the site-pole product 8 of 8) and
 qtoyflex (closed F1 0.47 at maxdepth 2). The gate fixtures of section 3 stay the guards.
