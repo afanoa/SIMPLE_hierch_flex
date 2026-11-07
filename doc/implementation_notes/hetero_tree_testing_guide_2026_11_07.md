@@ -683,6 +683,17 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   - Port (user: "Port sparse PPCA first", given to the sparse-ppca2 session): a native opt-in flex_pca path with a knob-free stop,
     reproducing the Python verdict, then (user: "After the port") the global-coordinate test at the r131 roots and the 692k root
     with |CTF|: does a site block isolate the closed arm better than the seam-free coordinate (.69-.72)?
+    Design (approved 17:55; worktree `/Users/atifao/SIMPLE_sparse_ppca` at `e7f7efb80`; notes to `$H/handoff/sparse-ppca/PORT.md`):
+    `flex_pca sparse_sites=yes` (default no; shared memory only). flex's prepare phase runs unchanged (sigma2, ml_reg, plane
+    store, CTF or |CTF| per the stk flag). Three new modules in `src/main/flex/fit`:
+    - `simple_flex_sites_ops`: the coarse-lattice operator, per-shell scale, noise and amplitude, the 6 rigid tangents as
+      nuisance;
+    - `simple_flex_sites_fit`: E-step, per-cell normal equations + ADMM group lasso, support-dof shell prior;
+    - `simple_flex_sites_pursuit`: seeds and solvent controls, the knob-free stop, writers.
+    PCG stays outside the pursuit (it would need one support per block); the site masks come out pcg_mskfile-ready. Outputs in
+    `<run>/sites/`: site and block masks, per-block coordinates with the rigid tangents profiled out, nuisance coefficients; no
+    state calls, no project writes. Working voxel ~lp/2.1 (the Python rule, not flex's lp/2.5). Validation at the Python lp per
+    fixture (20 A IgM, 15 A qtoy), plus one IgM run at the tree's 15 A.
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
