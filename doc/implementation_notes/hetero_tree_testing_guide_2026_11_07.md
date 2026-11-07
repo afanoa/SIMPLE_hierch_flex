@@ -157,6 +157,9 @@ Pass rules and the reference arm `mm2` (merge_master2 at `ee26d9bbf`, 2026-11-06
 Arms on record that fail: `mb1` (`prob_beta=1`: r131 never reaches the corner, best 0.94/0.46) and `pb15` (`prob_beta=0.15`: the
 corner on 1 of 2 seeds, qtoy2's conformer 1/2 pair merged, NMI 0.748). The r131 corner sits at the readout threshold in every arm
 (closed arm 0.91-1.03), and the split test at the corner nodes passes on one or two draws in five, so never call r131 on one tree.
+Caution (extremes VERDICT, 7.8): the gate reads each leaf's map from the same particles that selected it, and that imprint is
+large. The mm2 corner leaf r2_s2 reads 1.03 / 0.54 on its own data but 0.93 / 0.59 on a fission re-read (random 5 % tails 0.87-0.90,
+node mean 0.89-0.90 / 0.59), so no leaf passes the gate honestly. Whether to redefine the gate on fission readouts is decision 9.
 
 Settled (2026-11-07): the depth_wiener builds (`ports`, `ports3`) give r131 seed 2 a different root split from mm2 (22,484/21,850
 vs 23,168/21,166; corner in r1 at 0.96/0.54) while qtoy2 and the nulls are identical. `gates/mm2b_r131` (the mm2 binary again) is
@@ -538,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:55 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -728,7 +731,19 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   .08-.11 of the arm range vs .23-.28 when X selects). Cross-half reproducibility of self-selected extremes is no evidence.
   Traps: r131's registered stacks have non-stationary noise (corners .36-.66 of the inside low/mid-frequency noise; a band-wise
   radial model fixes it); the map-level even/odd cross-copy test cannot validate fission on real data (only the fake-map null
-  can); the CTF-flip trap (section 9) was found here. Running: r131 (band-wise noise model), IgM 10 % fix and null.
+  can); the CTF-flip trap (section 9) was found here.
+  VERDICT (`$H/handoff/extremes/VERDICT.md`, METHOD.md, RUNS.md, tables/<node>/): self-selection is large for tails and leaves
+  alike: at the same particles, own-data maps place extremes 1.3-3.1x further along the true motion (IgM arms 1.74-2.5x even for
+  90-98 %-pure tails; leaves 1.75-1.8x), and fake maps "reproduce" at .16-.45 own-data, 0 honestly. Fission removes it (fake-map
+  leak <= 1.8 % qtoyflex, <= 3.5 % r131 with the band-wise noise model); honest maps read the truth on one scale (IgM a1 beta /
+  shift 345-360 at every tail size vs 613-793 own-data). r131: the corner leaf r2_s2 reads 1.03 / .54 own-data, .93 / .59 honestly;
+  no leaf passes the hard gate honestly, and only small latent tails reach its threshold honestly (seam-free pc2 bottom 5 %
+  .966 / .574, site-2 focus top 5 % .953 / .579, ~2.2k particles). qtoyflex: the tree beats latent tails at matched N (closed
+  .197 vs <= .13). IgM 10 %: focused coordinates on a data-only site mask find what the tree misses (a1 tails 90-98 % pure vs 62 %
+  for the leaves; an a2 tail 87 % in its -30 deg state with no a2 leaf; null extremes +-12-15 deg vs +-1.7). So neither the global
+  coordinate nor the node latent identifies extremes better than the leaves; focused site coordinates do for small parts, and
+  every own-data readout, the r131 gate included, needs a fission re-read. Caveat: the honest leaves are a re-assignment among
+  the tree's leaf references on X1 (agreement with the delivered labels .50 r131, .61 qtoyflex, .62 IgM fix), not a tree run on X1.
 
 ## 8. Decisions waiting for the user
 
@@ -749,6 +764,9 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
 8. Site layer: sparse PPCA's pursuit (knob-free stop) + one masked round, the best data-only chain (7.8 igm-refs Part 3), with a
    discreteness test accepting each split. The native port is in progress (user: port first); then the r131 / 692k
    global-coordinate test and the end-to-end chain.
+9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
+   re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
+   gate leaf on a fission copy with a threshold calibrated on honest readouts (e.g. against random tails of matched N).
 
 ## 9. Standing rules and traps
 
