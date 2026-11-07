@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:33 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:39 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -742,7 +742,8 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   closed on both). At the root's first flex call the fix moves labels against truth from NMI .456 to .512 and the class separation
   the coordinates keep from .48 to .70; the noise-scale gap is not pose error (1.25 with the profile on or off). A consumer the
   first audit missed: the root's first flex call's states build fflex's focus mask, so the fix also changes fflex's basis
-  (eigenvalues up to 12 %). Neutral to slightly negative on the gates; a third qtoy2 seed pair is running. Not committed.
+  (eigenvalues up to 12 %). Third qtoy2 seed pair: the fix merged closed again (NMI .753 vs .810), so 2 of 3 seeds vs 0 of 3
+  without it. HOLD, not committed.
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
   the parent's latent and refined, a view-matched map test selects, a continuum stays one leaf with its own coordinate.
   VERDICT (`$H/handoff/hier-ppca/STATUS.md`, scripts beside it, runs `$L/hppca/<key>`):
@@ -867,6 +868,14 @@ with the posterior precision A. The tree stays as the recursion that refits pose
 5. Minority directions ranked by separability, not variance (compressive classification): the RNase P closed spike sits far below
    every BBP edge.
 
+User, same evening: "a cohesive model over the entire tree". So the site basis is shared by the WHOLE tree, not refitted per node,
+and the mixture over it is tree-structured. Tests 1-3, re-aimed and started as sessions:
+- `tree-latent`: the tree built in latent space over one shared site basis, splits accepted by the saturation test; scored against
+  truth, the hetero tree and lever 3. Notes to `$H/handoff/tree-latent/`.
+- `site-coupling`: factorial (a product of per-site trees) vs one joint tree, from the cross-site coupling. Notes to
+  `$H/handoff/site-coupling/`.
+- `quad-manifold`: one curved coordinate per site. Notes to `$H/handoff/quad-manifold/`.
+
 Not to retry:
 - map-level soft EM (noise-locks);
 - post-hoc chart coordination (seams);
@@ -893,7 +902,8 @@ Not to retry:
    saturation test is the continuum check that would complete the rule.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
    fix (stacked patch, 7.8): correct in principle and closer to truth at the root latent, but neutral to slightly negative on the
-   gates (qtoy2 closed merged on 1 of 2 seeds); commit or hold after the third qtoy2 seed pair.
+   gates (qtoy2 closed merged on 2 of 3 seeds, 0 of 3 without it): HELD. The deconvolution's input is wrong today, but the gate
+   trees do better with it as it is.
 8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
    round, the best data-only chain (7.8 igm-refs Part 3), with a per-site acceptance test: GAPw (Part 4: 9/10 power, 0/10
    false accepts on IgM; fails qtoyflex both ways) or the fission saturation test (Part 5: fixes both qtoyflex failures, no

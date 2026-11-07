@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: c6b87431-7325-4b60-ad85-a72f7e8559d4
-  modified: 2026-11-07T22:43:09.441Z
+  modified: 2026-11-07T23:32:02.692Z
 ---
 
 Found 2026-11-07 (spectrum-stop session) by reading merge_master2's source. In fit/simple_flex_pca_embed.f90 every latent solve
@@ -32,7 +32,11 @@ The weak-axis inflation (8x on z5 and z10) is NOT this bug. It comes from the ha
 
 **Gated the same evening** (build `math_reworks/flex_precision/build_fp` = e7f7efb80 + the stacked patch; not committed):
 - passed: fast gate 15/15, the nulls as one leaf, the r131 corner on both seeds;
-- qtoy2: NMI .760 / .799 against pp_on's .811 / .813, and the closed state merged on seed 1 only.
+- qtoy2 FAILS over 3 seeds: the closed state merged on 2 of 3 (pp_on's binary 0 of 3); NMI .760 / .799 / .753 against
+  .811 / .813 / .810;
+- so the fix is HELD (coordinator's rule).
+- Likely cause (untested): the half split's low noise scale inflates the weak axes, so this fix probably needs a correct noise
+  level alongside it.
 
 The noise-scale gap is NOT pose error: truth / flex stays 1.25 with the pose profile on.
 
