@@ -151,7 +151,7 @@ Pass rules and the reference arm `mm2` (merge_master2 at `ee26d9bbf`, 2026-11-06
 | qtoy2 (6 arm conformers, closed 18, holo 101, junk) | discrete states | NMI(leaves, structure combo) inside the 0.71-0.87 spread of earlier arms (judge against the spread, not one run); closed and holo isolated | 8 leaves, NMI 0.780; best-leaf F1 closed 0.89, holo 0.94, arm combos 0.69-0.94 |
 | r131 (~7 % closed reference rows) | HARD GATE: the RNase P closed state is kept | a stage-B map at the closed corner (closed arm >= 0.95, open arm <= 0.6), read on both seeds | seed 2: r2 1.03/0.52 SEPARATES; seed 1 (read on `ports_s1`): r1 1.00/0.53 SEPARATES |
 | ole | real-data structure | no collapse | 8 leaves |
-| qtoyflex (positive control, section 4) | continuum vs discrete, minority isolation | no rule yet: production fails it | best-leaf F1 closed 0.39 (purity 0.27), holo 0.62 (purity 0.47), NMI(leaves, kind) 0.255; the arm is cut in two along its coordinate |
+| qtoyflex (positive control, section 4) | continuum vs discrete, minority isolation | no rule yet: production fails it | mm2 ran at tree maxdepth 1: best-leaf F1 closed 0.39 (purity 0.27), holo 0.62 (purity 0.47), NMI(leaves, kind) 0.255, the arm cut in two along its coordinate; at maxdepth 2 (the launcher's key; `ports4_qtoyflex`) closed 0.47 (purity 0.39), holo 0.62 |
 
 Arms on record that fail: `mb1` (`prob_beta=1`: r131 never reaches the corner, best 0.94/0.46) and `pb15` (`prob_beta=0.15`: the
 corner on 1 of 2 seeds, qtoy2's conformer 1/2 pair merged, NMI 0.748). The r131 corner sits at the readout threshold in every arm
@@ -176,7 +176,7 @@ discrete closed (6 %, conformer 18) and holo (conformer 101) states and junk.
 - Traps: write the CSVs with `lineterminator='\n'` (CRLF put `\r` into bash paths); `simulate_particles` refuses a class with an odd
   particle count.
 - Readings so far: the stage-B root states hold closed at F1 0.17 (recall 0.73, purity 0.10) and holo at 0.62; the finished tree
-  reaches closed 0.39. An oracle factorial (7.3) says references, not poses, limit closed here.
+  reaches closed 0.39 at maxdepth 1 and 0.47 at maxdepth 2. An oracle factorial (7.3) says references, not poses, limit closed here.
 
 ## 5. Harnesses: testing a change without a full tree
 
@@ -240,7 +240,8 @@ qtoy2 `qtoy_leaves.py <arm>=<tree dir>`; qtoyflex `qflex_leaves.py <tree dir>`; 
 | pose anchor (child poses held near the parent's) | key-only replays, 2 seeds | removes the drift tail (p99 62 -> 9 deg); r131 corner kept, enrichment within seed noise; qtoyflex NMI -0.007; qtoy2 children purity -0.01..-0.11, NMI -0.03..-0.14: it locks in the parent's tempered draw noise | no |
 | flex-corrected reconstruction (flexsub: each particle's within-state latent deformation subtracted before recB -> stage B -> split) | replays of the qtoyflex, qtoy2 and qtoynull roots | labels move 0.4-1.1 % (a seed change: 2.9-3.9 %); truth F1/NMI, split and state-map FSCs unchanged; null one leaf. The within-state deformation is ~0.05 % of a particle's flex-band power, and a linear latent cannot un-blur a state map | no |
 | better poses vs better references (stage-B oracle) | state_eval factorial, true vs stage-B poses x stage-B vs truth maps | poses are not the limit (true poses with stage-B maps: root accuracy 0.951 -> 0.947); references are: one per truth class lifts the qtoy2 root 0.674 -> 0.919 (ceiling 0.936), r1 0.756 -> 0.839; qtoyflex closed F1 0.17 -> 0.455 | headroom = references |
-| depth-tied tree_wiener (port) | 692k + gates | nominal leaf FSC 4.7 -> 4.3 A at 692k, state readouts unchanged; gated 2026-11-07 (nulls one leaf, qtoy2 identical, r131 corner kept on both seeds) | user's call to ship on |
+| depth-tied tree_wiener (port) | 692k + gates + truth maps | nominal leaf FSC 4.7 -> 4.3 A at 692k, state readouts unchanged, gates pass; against the truth maps of the qtoy2 and qtoyflex leaves depth2 never beats emp2 (qtoy2 relative error +0.010 at 20-14 A, +0.016 at 14-10 A; qtoyflex equal within 0.005) | no measurable benefit: the gain is nominal |
+| the tree-wide basis as a site dictionary (varimax / ICA localized modes) | six gate trees, input poses | modes localize (0.6-0.8 of a mode's energy in one site) and reproduce, but one mode holds a slice of a site's state: qtoy2 closed AUROC 0.69-0.74 vs 0.92 for the 30-mode span; r131 no mode reaches 0.60 (span 0.63-0.65, site factors 0.65-0.69), and the mode inside the closed-arm mask reads the arm swing | no: discovery and ranking cannot become a lookup |
 
 Findings that frame any next idea:
 
@@ -373,7 +374,7 @@ Test plan (Python first, existing outputs, no new Fortran):
 - Per node: each site's flex coordinates with their per-particle precision; dependence matrix between sites; joint mixture; per-site
   gap.
 - Readouts against truth: mm3q combination F1 (target >= 0.81, the pole product) and whether independence is recognised; qtoy2 and
-  qtoyflex closed and holo F1 (targets: the gate leaves, 0.89/0.94 and 0.39/0.62); nulls: K = 1 and no dependence.
+  qtoyflex closed and holo F1 (targets: the gate leaves, 0.89/0.94 and, at maxdepth 2, 0.47/0.62); nulls: K = 1 and no dependence.
 - Port only if the nulls stay at one state, mm3q's factors are found without fragmenting, and minorities are isolated at least as well
   as the current leaves. On RNase P use only data-discovered sites (as the site layer does): the user has ruled out predefined region
   or multibody bases for this molecule, and the r131 closed corner remains a hard gate.
@@ -406,8 +407,11 @@ null twin moves the same arms continuously. What the current tree does with it:
 - the best configuration so far (islands + cross-validated site stage B + GAPw, the basis of `site_split`) finds a1 alone (NMI
   0.146), with the null held.
 
+A 10 % arm variant at real Fab proportions (`/mnt/beegfs/elmlund/afan/igm_cryolo/tree/fixture_igm10`, built 2026-11-07, noise
+recalibrated) separates an SNR limit from a method limit; its stock roots and status: `$H/handoff/igm10/STATUS.md`.
+
 Second tier: `mm3q` (three independent rigid domains, 8 combinations: the tree has 1 of 8 clean, the site-pole product 8 of 8) and
-qtoyflex (closed F1 0.39). The gate fixtures of section 3 stay the guards.
+qtoyflex (closed F1 0.47 at maxdepth 2). The gate fixtures of section 3 stay the guards.
 
 Where the latent work fits:
 1. Several flexes per node, one joint coordinate (7.5): a focused flex per discovered site (`pcg_mskfile` = the site mask) at the
@@ -418,8 +422,9 @@ Where the latent work fits:
    on the site coordinate) in place of site_rank's ~45 EM fits and pole margins, whose order alone decides the r131 corner.
 3. Flex prior: the site coordinate's posterior as the prior on the site state in a site-focused stage B (harness 5.2). It failed
    where stage B already had the information; weak per-particle evidence, as on the IgM arms, is the regime it was meant for.
-4. Global coordinate and depth wiener: the tree-wide basis (7.2) as a site dictionary shared by every node (sites = localized
-   modes; every particle's coordinate available at every node, no refit); depth-tied pooling for the per-site state maps.
+4. Global coordinate and depth wiener: the tree-wide basis (7.2) as a site dictionary shared by every node; depth-tied pooling for
+   the per-site state maps. Both tested 2026-11-07 and closed (section 6): a site's state is spread over several directions inside
+   the site, which focused fits and site factors capture and single localized global modes do not; depth2 has no truth-map gain.
 
 Tests, in order:
 - T1 (decisive, ~1 h of cluster): focused flex_pca with `pcg_mskfile` = each arm island of
@@ -432,7 +437,7 @@ Tests, in order:
 
 ## 8. Decisions waiting for the user
 
-1. depth_wiener on by default (gated and cleared by the binary check; nominal FSC gain only, readouts unchanged).
+1. depth_wiener on by default: gated and cleared, but no truth-map benefit (section 6), so the measured case is for `depth_wiener=no`.
 2. Drop the chart-coordinate port (bundle ref `wip/tree-ports-charts`) unless the seam-free coordinate passes 7.2's rule (it does not on
    r131 so far).
 3. Keep state_eval as a developer harness: add it to `hetero-tree-wip` (after a build and fast gate) or leave it in the bundle.
