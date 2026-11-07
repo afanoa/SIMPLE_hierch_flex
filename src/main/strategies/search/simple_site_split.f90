@@ -23,8 +23,9 @@ public :: run_site_split, gap_call, gap_stats, hull_mask
 private
 #include "simple_local_flags.inc"
 
-integer, parameter :: KSPLIT = 2, NITER = 10, SEED0 = 1, NB_MIN = 10, LOBE_MIN = 4
-real,    parameter :: LPG = 15., TAU = 0.5, DIL_A = 10., LSEP_MIN = 10., ANG_MAX = 30., Z1_MIN = 3., R1_MIN = 0.5, GAP_THR = 0.28
+integer, parameter :: KSPLIT = 2, NITER = 10, SEED0 = 1, LOBE_MIN = 4
+real,    parameter :: LPG = 15., TAU = 0.5, DIL_A = 10., B_A3 = 1330., GRID_A = 5.11, LSEP_MIN = 10., ANG_MAX = 30., Z1_MIN = 3., &
+    &R1_MIN = 0.5, GAP_THR = 0.28
 
 type :: gap_stats
     real    :: z1 = 0., r1 = 0., lsep = 0., ang = 0., gapw = -1., gape = -1., gapo = -1.
@@ -51,8 +52,8 @@ contains
         type(image)     :: vol
         character(len=:), allocatable :: d, fl
         character(len=8) :: envv
-        real    :: smpd
-        integer :: box, j, i, funit, ios, n1, n2
+        real    :: smpd, smpd_g
+        integer :: box, bg, j, i, funit, ios, n1, n2
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
         if( .not. cline%defined('lp')    ) call cline%set('lp',    12.)
@@ -70,6 +71,10 @@ contains
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         d = params%dir%to_char()
         call site_masks(d, masks, tags)
+        ! the call's grid: the even box nearest GRID_A per voxel, where its constants were set
+        bg     = 2 * nint(real(params%box) * params%smpd / GRID_A / 2.)
+        smpd_g = real(params%box) * params%smpd / real(bg)
+        write(logfhandle,'(A,I0,A,F5.2,A)') '>>> SITE_SPLIT call grid ', bg, ' voxels of ', smpd_g, ' A'
         call fopen(funit, string('summary.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('site_split: cannot write summary.txt', ios)
         write(funit,'(A)') '# site n1 n2 z1 r1 lsep_A axis_deg nB GAPw GAPw_even GAPw_odd call fails'
@@ -90,14 +95,14 @@ contains
             call split%site_split_em(KSPLIT, NITER, SEED0, labels, ma, mb)
             n1 = count(labels == 1)
             n2 = count(labels == 2)
-            call to_real(ma(:,:,:,1), params%box_crop, params%smpd_crop, e1)
-            call to_real(ma(:,:,:,2), params%box_crop, params%smpd_crop, e2)
-            call to_real(mb(:,:,:,1), params%box_crop, params%smpd_crop, o1)
-            call to_real(mb(:,:,:,2), params%box_crop, params%smpd_crop, o2)
-            call vol%read_and_crop(masks(j), params%smpd, params%box_crop, params%smpd_crop)
+            call to_real(ma(:,:,:,1), params%box_crop, bg, smpd_g, e1)
+            call to_real(ma(:,:,:,2), params%box_crop, bg, smpd_g, e2)
+            call to_real(mb(:,:,:,1), params%box_crop, bg, smpd_g, o1)
+            call to_real(mb(:,:,:,2), params%box_crop, bg, smpd_g, o2)
+            call vol%read_and_crop(masks(j), params%smpd, bg, smpd_g)
             sm = vol%get_rmat()
             call vol%kill
-            call gap_call(e1, e2, o1, o2, real(n1), real(n2), sm > 0.5, params%smpd_crop, st)
+            call gap_call(e1, e2, o1, o2, real(n1), real(n2), sm > 0.5, smpd_g, st)
             call simple_mkdir(string(tags(j)%to_char()))
             allocate(out(build%spproj_field%get_noris()), source=0)
             out(rows) = labels
@@ -159,26 +164,32 @@ contains
         if( i < 10 ) str = '0'//str
     end function pad2
 
-    !> a reconstructed map (the EM's Fourier layout) to real space, 15 A Gaussian low-passed
-    subroutine to_real( cm, box, smpd, rmat )
+    !> a reconstructed map (the EM's Fourier layout at box) to real space on the call's grid (bg voxels), 15 A Gaussian low-passed
+    subroutine to_real( cm, box, bg, smpd_g, rmat )
         complex, intent(in)  :: cm(:,:,:)
-        integer, intent(in)  :: box
-        real,    intent(in)  :: smpd
+        integer, intent(in)  :: box, bg
+        real,    intent(in)  :: smpd_g
         real, allocatable, intent(out) :: rmat(:,:,:)
         type(image) :: img
         complex, allocatable :: c(:,:,:)
-        integer :: h, k, l, kk, ll
+        integer :: h, k, l, kk, ll, kt, lt
         real    :: f2
-        call img%new([box,box,box], smpd)
+        call img%new([bg,bg,bg], smpd_g)
         call img%zero_and_flag_ft
         c = img%get_cmat()
-        do l = 1, size(c,3)
+        c = cmplx(0.,0.)
+        do l = 1, size(cm,3)
             ll = l - 1 - merge(box, 0, l > box/2 + 1)
-            do k = 1, size(c,2)
+            if( abs(ll) > bg/2 ) cycle
+            lt = ll + 1 + merge(bg, 0, ll < 0)
+            do k = 1, size(cm,2)
                 kk = k - 1 - merge(box, 0, k > box/2 + 1)
-                do h = 1, size(c,1)
-                    f2 = real((h-1)**2 + kk*kk + ll*ll) / real(box*box)
-                    c(h,k,l) = cm(h,k,l) * exp(-f2 / smpd**2 * LPG**2 * log(2.))
+                if( abs(kk) > bg/2 ) cycle
+                kt = kk + 1 + merge(bg, 0, kk < 0)
+                do h = 1, size(cm,1)
+                    if( h - 1 > bg/2 ) cycle
+                    f2 = real((h-1)**2 + kk*kk + ll*ll) / real(bg*bg)
+                    c(h,kt,lt) = cm(h,k,l) * exp(-f2 / smpd_g**2 * LPG**2 * log(2.))
                 end do
             end do
         end do
@@ -293,7 +304,7 @@ contains
         g1 = st%z1 >= Z1_MIN .and. st%r1 >= R1_MIN
         g2 = st%lsep >= LSEP_MIN
         g3 = st%ang <= ANG_MAX
-        gb = st%nb >= NB_MIN
+        gb = st%nb >= nint(B_A3 / smpd**3)
         st%fails = ''
         if( .not. g1 ) st%fails = trim(st%fails)//'+G1'
         if( .not. g2 ) st%fails = trim(st%fails)//'+G2'
