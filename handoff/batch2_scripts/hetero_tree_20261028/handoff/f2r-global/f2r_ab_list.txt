@@ -1,0 +1,6 @@
+r131 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 argmin
+r131 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 marg
+qtoynull /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoynull/1_hetero_tree/node_r argmin
+qtoynull /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoynull/1_hetero_tree/node_r marg
+olenull /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_olenull/1_hetero_tree/node_r argmin
+olenull /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_olenull/1_hetero_tree/node_r marg

@@ -1,0 +1,234 @@
+r14_s1 exit 0 started 2026-10-28T19:15:48-04:00 finished 2026-10-29T00:06:42-04:00
+**** SIMPLE Git Commit:  
+**** Execution time: 17454.6 seconds
+r14_s2 exit 0 started 2026-10-28T19:15:48-04:00 finished 2026-10-29T00:25:33-04:00
+**** SIMPLE Git Commit:  
+**** Execution time: 18585.0 seconds
+score job 54606614
+######## depth cuts
+tree: leaves | placed rows | deepest leaf | groups at depth 1 / 2 / 3 / 4
+  ref6          31 |  80598 | 6 | 2 / 4 / 8 / 16
+  ref7          26 |  80598 | 6 | 2 / 4 / 8 / 15
+  recipe4_s1    18 |  80599 | 6 | 2 / 4 / 7 / 12
+  strong_s1     25 |  80599 | 6 | 2 / 4 / 8 / 16
+  strong_s2     25 |  80599 | 6 | 2 / 4 / 8 / 16
+  r14_s1        21 |  80599 | 4 | 5 / 10 / 19 / 21
+  r14_s2        25 |  80599 | 5 | 5 / 10 / 18 / 24
+
+pair: particle ARI at depth 1 / 2 / 3 / 4 (rows both placed)
+  ref6         ref7          80598 | 0.945  0.347  0.237  0.189
+  ref6         recipe4_s1    80598 | 0.657  0.316  0.307  0.180
+  ref6         strong_s1     80598 | 0.175  0.167  0.127  0.080
+  ref6         strong_s2     80598 | 0.128  0.163  0.128  0.089
+  ref6         r14_s1        80598 | 0.140  0.091  0.069  0.066
+  ref6         r14_s2        80598 | 0.138  0.110  0.086  0.065
+  ref7         recipe4_s1    80598 | 0.661  0.317  0.268  0.191
+  ref7         strong_s1     80598 | 0.173  0.166  0.128  0.084
+  ref7         strong_s2     80598 | 0.126  0.161  0.131  0.081
+  ref7         r14_s1        80598 | 0.142  0.090  0.073  0.069
+  ref7         r14_s2        80598 | 0.138  0.078  0.059  0.042
+  recipe4_s1   strong_s1     80599 | 0.211  0.294  0.139  0.097
+  recipe4_s1   strong_s2     80599 | 0.158  0.285  0.148  0.088
+  recipe4_s1   r14_s1        80599 | 0.159  0.120  0.075  0.074
+  recipe4_s1   r14_s2        80599 | 0.156  0.120  0.085  0.064
+  strong_s1    strong_s2     80599 | 0.806  0.767  0.370  0.212
+  strong_s1    r14_s1        80599 | 0.144  0.142  0.083  0.077
+  strong_s1    r14_s2        80599 | 0.140  0.141  0.090  0.070
+  strong_s2    r14_s1        80599 | 0.134  0.139  0.086  0.069
+  strong_s2    r14_s2        80599 | 0.133  0.140  0.097  0.072
+  r14_s1       r14_s2        80599 | 0.545  0.308  0.187  0.162
+
+######## node by node
+######## r14_s1: finished splits, matched per depth to r14_s2, ref6, ref7
+  r       d0 n  80599 K* 5 18328/17067/16752/14503/13949 | r14_s2 r J 1.00 ARI 0.54 | ref6 r J 1.00 ARI 0.14 | ref7 r J 1.00 ARI 0.14
+  r1      d1 n  18328 K* 2 9959/8369          | r14_s2 r1 J 0.63 ARI 0.06 | ref6 r1 J 0.34 ARI 0.01 | ref7 r1 J 0.34 ARI 0.29
+  r2      d1 n  17067 K* 2 9398/7669          | r14_s2 r4 J 0.61 ARI 0.03 | ref6 r1 J 0.21 ARI 0.00 | ref7 r1 J 0.21 ARI -0.01
+  r3      d1 n  16752 K* 2 8659/8093          | r14_s2 r2 J 0.80 ARI 0.17 | ref6 r2 J 0.47 ARI -0.00 | ref7 r2 J 0.48 ARI 0.00
+  r4      d1 n  14503 K* 2 7355/7148          | r14_s2 r3 J 0.50 ARI 0.33 | ref6 r1 J 0.19 ARI 0.00 | ref7 r1 J 0.20 ARI 0.01
+  r5      d1 n  13949 K* 2 8927/5022          | r14_s2 r5 J 0.69 ARI 0.17 | ref6 r1 J 0.16 ARI 0.01 | ref7 r1 J 0.16 ARI 0.02
+  r11     d2 n   9959 K* 2 5887/4072          | r14_s2 r12 J 0.30 ARI 0.08 | ref6 r11 J 0.22 ARI 0.00 | ref7 r11 J 0.22 ARI -0.01
+  r12     d2 n   8369 K* 2 5718/2651          | r14_s2 r11 J 0.34 ARI 0.09 | ref6 r11 J 0.16 ARI -0.00 | ref7 r12 J 0.29 ARI -0.00
+  r21     d2 n   9398 K* 2 5434/3964          | r14_s2 r41 J 0.36 ARI 0.04 | ref6 r12 J 0.12 ARI 0.00 | ref7 r11 J 0.13 ARI -0.01
+  r22     d2 n   7669 K* 2 6023/1646          | r14_s2 r42 J 0.21 leaf | ref6 r12 J 0.09 ARI -0.03 | ref7 r22 J 0.12 ARI 0.02
+  r31     d2 n   8659 K* 2 4789/3870          | r14_s2 r22 J 0.43 leaf | ref6 r21 J 0.27 ARI 0.03 | ref7 r21 J 0.23 ARI 0.01
+  r32     d2 n   8093 K* 2 5402/2691          | r14_s2 r21 J 0.48 ARI 0.11 | ref6 r21 J 0.27 ARI 0.08 | ref7 r21 J 0.24 ARI 0.05
+  r41     d2 n   7355 K* 2 3913/3442          | r14_s2 r32 J 0.36 ARI 0.02 | ref6 r12 J 0.10 ARI 0.00 | ref7 r11 J 0.11 ARI 0.00
+  r51     d2 n   8927 K* 2 4697/4230          | r14_s2 r51 J 0.45 ARI 0.00 | ref6 r12 J 0.11 ARI 0.00 | ref7 r12 J 0.11 ARI -0.00
+  r52     d2 n   5022 K* 2 2535/2487          | r14_s2 r52 J 0.34 ARI 0.01 | ref6 r22 J 0.18 ARI 0.02 | ref7 r21 J 0.08 ARI -0.00
+  r212    d3 n   3964 K* 2 2042/1922          | r14_s2 r411 J 0.17 leaf | ref6 r122 J 0.10 ARI 0.02 | ref7 r121 J 0.08 ARI -0.00
+  r511    d3 n   4697 K* 2 2359/2338          | r14_s2 r511 J 0.23 ARI -0.00 | ref6 r112 J 0.13 ARI -0.00 | ref7 r112 J 0.19 ARI 0.00
+######## r14_s2: finished splits, matched per depth to ref6, ref7
+  r       d0 n  80599 K* 5 17578/17057/15678/15467/14819 | ref6 r J 1.00 ARI 0.14 | ref7 r J 1.00 ARI 0.14
+  r1      d1 n  17578 K* 2 11417/6161         | ref6 r1 J 0.32 ARI -0.02 | ref7 r1 J 0.32 ARI 0.02
+  r2      d1 n  17057 K* 2 8744/8313          | ref6 r2 J 0.48 ARI -0.00 | ref7 r2 J 0.49 ARI 0.00
+  r3      d1 n  15678 K* 2 7938/7740          | ref6 r1 J 0.22 ARI 0.02 | ref7 r1 J 0.22 ARI 0.05
+  r4      d1 n  15467 K* 2 8920/6547          | ref6 r1 J 0.19 ARI 0.03 | ref7 r1 J 0.19 ARI 0.15
+  r5      d1 n  14819 K* 2 8468/6351          | ref6 r1 J 0.18 ARI 0.00 | ref7 r1 J 0.18 ARI 0.04
+  r11     d2 n  11417 K* 2 6457/4960          | ref6 r11 J 0.28 ARI -0.00 | ref7 r12 J 0.21 ARI -0.01
+  r12     d2 n   6161 K* 2 3332/2829          | ref6 r11 J 0.17 ARI 0.00 | ref7 r11 J 0.14 ARI -0.00
+  r21     d2 n   8744 K* 2 5132/3612          | ref6 r21 J 0.28 ARI 0.04 | ref7 r21 J 0.26 ARI 0.16
+  r31     d2 n   7938 K* 2 4013/3925          | ref6 r12 J 0.17 ARI 0.00 | ref7 r11 J 0.15 ARI 0.00
+  r32     d2 n   7740 K* 2 3898/3842          | ref6 r12 J 0.12 ARI 0.00 | ref7 r11 J 0.10 ARI 0.00
+  r41     d2 n   8920 K* 2 4711/4209          | ref6 r12 J 0.11 ARI 0.00 | ref7 r11 J 0.13 ARI -0.00
+  r51     d2 n   8468 K* 2 4251/4217          | ref6 r12 J 0.12 ARI 0.00 | ref7 r11 J 0.10 ARI -0.00
+  r52     d2 n   6351 K* 2 3278/3073          | ref6 r22 J 0.16 ARI 0.03 | ref7 r12 J 0.09 ARI -0.00
+  r111    d3 n   6457 K* 2 3361/3096          | ref6 r111 J 0.16 ARI 0.04 | ref7 r121 J 0.20 ARI 0.03
+  r112    d3 n   4960 K* 2 2510/2450          | ref6 r111 J 0.12 ARI 0.03 | ref7 r111 J 0.11 leaf
+  r211    d3 n   5132 K* 2 3011/2121          | ref6 r211 J 0.20 ARI 0.07 | ref7 r211 J 0.21 ARI 0.02
+  r511    d3 n   4251 K* 2 2163/2088          | ref6 r112 J 0.10 ARI 0.00 | ref7 r112 J 0.14 ARI 0.00
+  r512    d3 n   4217 K* 2 2218/1999          | ref6 r112 J 0.11 ARI 0.00 | ref7 r112 J 0.15 ARI -0.00
+  r522    d3 n   3073 K* 2 2084/989           | ref6 r221 J 0.10 ARI 0.14 | ref7 r122 J 0.08 leaf
+  r1111   d4 n   3361 K* 2 1695/1666          | ref6 r1112 J 0.13 leaf | ref7 r1211 J 0.10 ARI 0.00
+
+######## leaf maps
+maps 88^3 at 3.90 A, mask /mnt/beegfs/elmlund/afan/ole_12707/5_refine3D_auto/automask3D_state01.mrc (21496 voxels), 10 A low-pass
+  ref6       31 leaves,  80598 particles, half-map reliability median 0.91 (min 0.84)
+  ref7       26 leaves,  80598 particles, half-map reliability median 0.89 (min 0.23)
+  r14_s1     21 leaves,  80599 particles, half-map reliability median 0.93 (min 0.86)
+  r14_s2     25 leaves,  80599 particles, half-map reliability median 0.92 (min 0.88)
+
+pair A B: coverage A->B, B->A (particle-weighted best match) | particle share matched >= 0.7, A->B, B->A
+  ref6       ref7       0.70 0.76 | 0.68 0.74
+  ref6       r14_s1     0.64 0.64 | 0.33 0.35
+  ref6       r14_s2     0.65 0.63 | 0.34 0.33
+  ref7       r14_s1     0.68 0.59 | 0.32 0.36
+  ref7       r14_s2     0.62 0.58 | 0.15 0.31
+  r14_s1     r14_s2     0.80 0.80 | 0.88 0.87
+
+r14_s1 leaves -> best partner in ref6 (match, partner) | R
+  r42_g1_2       n  7148  0.44  r12111_s2    | R 0.93
+  r111_g1_2      n  5887  0.64  r11111_g1_2  | R 0.94
+  r211_g1_2      n  5434  0.54  r11111_g1_2  | R 0.91
+  r221_g1_2      n  5230  0.59  r12211_s1    | R 0.90
+  r311_g1_2      n  4789  0.74  r2112_s1     | R 0.93
+  r121_g1_2      n  4571  0.86  r1112_g1_2   | R 0.93
+  r321_s1        n  4259  0.81  r21111_s1    | R 0.94
+  r512_g1_2      n  4230  0.69  r1212_g1_2   | R 0.93
+  r112_g1_2      n  4072  0.65  r11111_g1_2  | R 0.91
+  r411_g1_2      n  3913  0.48  r12112_s2    | R 0.88
+  r312_g1_2      n  3870  0.71  r21112_g1_2  | R 0.92
+  r322_g1_2      n  3834  0.73  r21112_g1_2  | R 0.92
+  r122_g1_2      n  3798  0.66  r1112_g1_2   | R 0.91
+  r412_g1_2      n  3442  0.42  r12112_s2    | R 0.86
+  r52_s1         n  2535  0.69  r222_s2      | R 0.95
+  r52_s2         n  2487  0.77  r221_s2      | R 0.95
+  r22_s2         n  2439  0.65  r2122_s1     | R 0.94
+  r511_s1        n  2368  0.71  r11212_s1    | R 0.93
+  r511_s2        n  2329  0.71  r11212_s1    | R 0.93
+  r212_s2        n  2009  0.58  r1222_s2     | R 0.89
+  r212_s1        n  1955  0.58  r1222_s2     | R 0.90
+
+r14_s2 leaves -> best partner in ref6 (match, partner) | R
+  r22_g1_2       n  8313  0.83  r2112_s1     | R 0.96
+  r42_g1_2       n  6547  0.54  r1222_s1     | R 0.93
+  r411_g1_2      n  4711  0.47  r11112_g1_2  | R 0.90
+  r412_g1_2      n  4209  0.43  r1221_s2     | R 0.90
+  r311_g1_2      n  4013  0.58  r1221_s2     | R 0.89
+  r312_g1_2      n  3925  0.54  r12111_s2    | R 0.90
+  r321_g1_2      n  3898  0.46  r12112_s2    | R 0.88
+  r322_g1_2      n  3842  0.48  r12112_s2    | R 0.89
+  r212_g1_2      n  3612  0.78  r21112_g1_2  | R 0.92
+  r521_g1_2      n  3278  0.62  r1212_g1_2   | R 0.92
+  r122_g1_2      n  3124  0.78  r11111_g1_2  | R 0.90
+  r1112_g1_2     n  3096  0.84  r1112_g1_2   | R 0.88
+  r121_g1_2      n  3037  0.54  r1112_g1_2   | R 0.90
+  r211_s2        n  2568  0.76  r21111_s1    | R 0.94
+  r211_s1        n  2564  0.72  r21112_g1_2  | R 0.94
+  r112_s1        n  2524  0.63  r1112_g1_2   | R 0.91
+  r112_s2        n  2436  0.67  r1112_g1_2   | R 0.92
+  r511_s1        n  2163  0.65  r1212_g1_2   | R 0.92
+  r512_s2        n  2112  0.63  r1212_g1_2   | R 0.93
+  r512_s1        n  2105  0.64  r1212_g1_2   | R 0.93
+  r511_s2        n  2088  0.63  r1212_g1_2   | R 0.92
+  r522_s1        n  1777  0.61  r221_s1      | R 0.92
+  r1111_s1       n  1695  0.75  r1112_g1_2   | R 0.91
+  r1111_s2       n  1666  0.74  r1112_g1_2   | R 0.91
+  r522_s2        n  1296  0.68  r221_s2      | R 0.93
+
+######## landscapes (headline): ref6 root flex embedding, depth 4 and leaves
+space: /mnt/beegfs/elmlund/afan/ole_12707/6_hetero_tree/node_r/flex/flex_pca_coordinates.txt, 80599 particles, leading 3 axes (variance shares 0.25 0.17 0.11), each scaled to its 0.5-99.5 % span
+states: labels cut at depth 4; extrema from states >= 3000 particles, hulls from states >= 0; null = labels shuffled within depth-1 groups, 3 shuffles
+
+run: states (>= minpop) | ends per axis low..high in span units
+  ref6          16 (12) | a1 0.34..0.66  a2 0.35..0.54  a3 0.42..0.53
+  ref7          15 (11) | a1 0.37..0.65  a2 0.38..0.56  a3 0.42..0.57
+  recipe4_s1    12 (10) | a1 0.38..0.67  a2 0.38..0.52  a3 0.41..0.55
+  strong_s1     16 (13) | a1 0.34..0.68  a2 0.35..0.54  a3 0.43..0.61
+  strong_s2     16 (11) | a1 0.32..0.69  a2 0.37..0.48  a3 0.42..0.61
+  r14_s1        21 (14) | a1 0.33..0.68  a2 0.35..0.51  a3 0.40..0.59
+  r14_s2        24 (14) | a1 0.31..0.68  a2 0.36..0.56  a3 0.43..0.60
+
+pair                        extrema |d| max/mean  OT W1 coverage A>B B>A
+  ref6         ref7          0.040 / 0.021     0.051   0.68  0.54
+  ref6         recipe4_s1    0.039 / 0.022     0.059   0.55  0.68
+  ref6         strong_s1     0.077 / 0.021     0.072   0.66  0.54
+  ref6         strong_s2     0.078 / 0.035     0.076   0.64  0.53
+  ref6         r14_s1        0.059 / 0.027     0.067   0.82  0.46
+  ref6         r14_s2        0.068 / 0.027     0.068   0.86  0.44
+  ref7         recipe4_s1    0.045 / 0.018     0.058   0.54  0.84
+  ref7         strong_s1     0.037 / 0.027     0.080   0.60  0.62
+  ref7         strong_s2     0.081 / 0.035     0.079   0.69  0.71
+  ref7         r14_s1        0.054 / 0.031     0.072   0.90  0.63
+  ref7         r14_s2        0.057 / 0.024     0.076   0.78  0.50
+  recipe4_s1   strong_s1     0.056 / 0.032     0.076   0.82  0.55
+  recipe4_s1   strong_s2     0.061 / 0.033     0.083   0.88  0.59
+  recipe4_s1   r14_s1        0.056 / 0.027     0.074   0.97  0.44
+  recipe4_s1   r14_s2        0.072 / 0.037     0.070   0.94  0.39
+  strong_s1    strong_s2     0.057 / 0.017     0.046   0.79  0.79
+  strong_s1    r14_s1        0.030 / 0.016     0.058   0.88  0.60
+  strong_s1    r14_s2        0.028 / 0.014     0.059   0.94  0.59
+  strong_s2    r14_s1        0.027 / 0.015     0.060   0.90  0.61
+  strong_s2    r14_s2        0.085 / 0.021     0.059   0.90  0.56
+  r14_s1       r14_s2        0.058 / 0.021     0.044   0.82  0.75
+  ref6         null          0.094 / 0.061     0.070   0.00  1.00
+  ref7         null          0.108 / 0.059     0.063   0.01  1.00
+  recipe4_s1   null          0.065 / 0.046     0.062   0.00  1.00
+  strong_s1    null          0.108 / 0.070     0.087   0.00  1.00
+  strong_s2    null          0.121 / 0.065     0.094   0.00  1.00
+  r14_s1       null          0.054 / 0.034     0.053   0.11  1.00
+  r14_s2       null          0.070 / 0.036     0.050   0.07  1.00
+
+space: /mnt/beegfs/elmlund/afan/ole_12707/6_hetero_tree/node_r/flex/flex_pca_coordinates.txt, 80599 particles, leading 3 axes (variance shares 0.25 0.17 0.11), each scaled to its 0.5-99.5 % span
+states: leaves; extrema from states >= 3000 particles, hulls from states >= 0; null = labels shuffled within depth-1 groups, 3 shuffles
+
+run: states (>= minpop) | ends per axis low..high in span units
+  ref6          31 ( 7) | a1 0.34..0.68  a2 0.35..0.54  a3 0.42..0.54
+  ref7          26 ( 4) | a1 0.41..0.65  a2 0.38..0.56  a3 0.42..0.53
+  recipe4_s1    18 ( 8) | a1 0.38..0.67  a2 0.38..0.52  a3 0.42..0.54
+  strong_s1     25 (12) | a1 0.31..0.68  a2 0.37..0.54  a3 0.44..0.55
+  strong_s2     25 (11) | a1 0.31..0.69  a2 0.37..0.49  a3 0.42..0.58
+  r14_s1        21 (14) | a1 0.33..0.68  a2 0.35..0.51  a3 0.40..0.59
+  r14_s2        25 (13) | a1 0.31..0.68  a2 0.36..0.56  a3 0.43..0.60
+
+pair                        extrema |d| max/mean  OT W1 coverage A>B B>A
+  ref6         ref7          0.072 / 0.026     0.055   0.67  0.64
+  ref6         recipe4_s1    0.039 / 0.020     0.057   0.52  0.85
+  ref6         strong_s1     0.033 / 0.014     0.068   0.73  0.72
+  ref6         strong_s2     0.053 / 0.025     0.072   0.67  0.69
+  ref6         r14_s1        0.052 / 0.021     0.065   0.80  0.66
+  ref6         r14_s2        0.060 / 0.023     0.063   0.83  0.62
+  ref7         recipe4_s1    0.045 / 0.018     0.056   0.49  0.84
+  ref7         strong_s1     0.105 / 0.035     0.080   0.59  0.61
+  ref7         strong_s2     0.103 / 0.046     0.076   0.67  0.72
+  ref7         r14_s1        0.089 / 0.046     0.073   0.81  0.70
+  ref7         r14_s2        0.105 / 0.038     0.075   0.71  0.56
+  recipe4_s1   strong_s1     0.072 / 0.026     0.075   0.86  0.52
+  recipe4_s1   strong_s2     0.070 / 0.029     0.080   0.91  0.58
+  recipe4_s1   r14_s1        0.056 / 0.028     0.073   0.96  0.49
+  recipe4_s1   r14_s2        0.072 / 0.037     0.069   0.93  0.43
+  strong_s1    strong_s2     0.046 / 0.019     0.041   0.77  0.81
+  strong_s1    r14_s1        0.044 / 0.024     0.057   0.80  0.67
+  strong_s1    r14_s2        0.052 / 0.016     0.057   0.88  0.67
+  strong_s2    r14_s1        0.015 / 0.013     0.059   0.85  0.68
+  strong_s2    r14_s2        0.073 / 0.022     0.058   0.84  0.61
+  r14_s1       r14_s2        0.058 / 0.021     0.044   0.82  0.74
+  ref6         null          0.092 / 0.065     0.072   0.01  1.00
+  ref7         null          0.107 / 0.047     0.063   0.01  1.00
+  recipe4_s1   null          0.063 / 0.045     0.063   0.01  1.00
+  strong_s1    null          0.108 / 0.059     0.088   0.00  1.00
+  strong_s2    null          0.131 / 0.065     0.095   0.00  1.00
+  r14_s1       null          0.054 / 0.034     0.053   0.11  1.00
+  r14_s2       null          0.070 / 0.037     0.050   0.07  1.00
+
+
+[exited with code 0]

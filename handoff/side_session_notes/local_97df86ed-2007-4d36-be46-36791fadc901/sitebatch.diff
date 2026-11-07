@@ -1,0 +1,74 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index c920f12..ff098af 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -708,6 +708,20 @@ contains
+                     call log_site(sd, '')
+                 endif
+                 j = str2int(trim(adjustl(first_line(d//'/sites/seed_site.txt', '1'))))
++                if( s == S_SBATCH .and. .not. (self%l_motion .or. self%l_strong) )then
++                    ! the remaining sites were ranked at once: the first that gives a split is the one the chain stops at
++                    j = str2int(trim(adjustl(first_line(d//'/sites/rest_first.txt', '2'))))
++                    do while( j < nsites(d) )
++                        if( maxval([0, read_ints(site_dir_of(d, j)//'/site_seeds.txt')]) >= 2 ) exit
++                        j = j + 1
++                    end do
++                    call write_ints(d//'/sites/seed_site.txt', [j])
++                    sd    = seed_dir(d)
++                    seeds = read_ints(sd//'/site_seeds.txt')
++                    ks    = maxval([0, seeds])
++                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(j)//' of the batch '//&
++                        &merge('gives the split   ', 'is the last site  ', ks >= 2)
++                endif
+                 if( (self%l_motion .or. self%l_strong) .and. j < nsites(d) )then
+                     if( ks >= 2 )then
+                         call next_site(j, 'keeps a pole; every site is ranked')
+@@ -750,7 +764,7 @@ contains
+                 endif
+                 if( ks < 2 )then
+                     if( .not. self%l_strong .and. j < nsites(d) )then
+-                        call next_site(j, 'gives no split')
++                        call rest_batch(j)
+                         return
+                     endif
+                     ch = two_groups(d)
+@@ -899,6 +913,30 @@ contains
+                 &'once, '//int2str(nsub)//' jobs submitted'
+         end subroutine site_batch
+ 
++        subroutine rest_batch( jf )
++            integer, intent(in) :: jf
++            type(string), allocatable :: sds(:)
++            character(len=:), allocatable :: sdir
++            integer :: kk, nsub, ns
++            ns = nsites(d)
++            allocate(sds(0))
++            nsub = 0
++            do kk = jf + 1, ns
++                call simple_mkdir(string(d//'/nsite_'//self%nodes(i)%id//'_s'//int2str(kk)))
++                sdir = site_dir_of(d, kk)
++                sds  = [sds, string(sdir)]
++                if( self%dir_status(sdir) /= -2 ) cycle
++                call site_submit(d//'/sites/site_'//pad2(kk)//'.mrc', sdir)
++                nsub = nsub + 1
++            end do
++            call write_ints(d//'/sites/rest_first.txt', [jf + 1])
++            call write_lines(d//'/sites/batch.txt', sds)
++            call write_ints(d//'/sites/seed_site.txt', [ns])
++            self%nodes(i)%step = S_SBATCH
++            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//int2str(jf)//' gives no split, sites '//&
++                &int2str(jf + 1)//'..'//int2str(ns)//' are ranked at once, '//int2str(nsub)//' jobs submitted'
++        end subroutine rest_batch
++
+         subroutine log_site( sdl, pre )
+             character(len=*), intent(in) :: sdl, pre
+             call log_lines(sdl//'/site_poles.txt', pre//'pole (index, seeds, endpoints)')
+@@ -1605,7 +1643,7 @@ contains
+             case(S_SITE)
+                 if( self%p%site_disc .ne. 'yes' ) prev_step = S_FFLEX
+             case(S_SBATCH)
+-                prev_step = S_RECB0
++                prev_step = merge(S_RECB0, S_SITE, self%l_motion .or. self%l_strong)
+             case(S_MOTION, S_MBATCH, S_GATEW)
+                 prev_step = S_SITE
+         end select

@@ -1,0 +1,4 @@
+qtoy2_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoy2/1_hetero_tree/node_r 1 /mnt/beegfs/elmlund/afan/routes/toy55/simqtoy2/truth_qtoy.txt
+qtoynull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoynull/1_hetero_tree/node_r 1
+qtoy2_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoy2/1_hetero_tree/node_r 4 /mnt/beegfs/elmlund/afan/routes/toy55/simqtoy2/truth_qtoy.txt
+qtoynull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoynull/1_hetero_tree/node_r 4

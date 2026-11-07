@@ -1,0 +1,77 @@
+## qtoynull (1 leaves; finished=2026-11-01T21:37:58-05:00)
+   largest leaf 60000 of 60000 = 1.000
+>>> HETERO_TREE node r: states 1 2 (60000 particles) -> leaf      r_g1_2
+## olenull (1 leaves; finished=2026-11-01T21:42:51-05:00)
+   largest leaf 80599 of 80599 = 1.000
+>>> HETERO_TREE node r: states 1 2 (80599 particles) -> leaf      r_g1_2
+## micnull (1 leaves; finished=2026-11-01T21:26:11-05:00)
+   largest leaf 56808 of 56808 = 1.000
+>>> HETERO_TREE node r: states 1 2 (56808 particles) -> leaf      r_g1_2
+## qtoy2 (10 leaves; finished=2026-11-01T21:55:33-05:00)
+   largest leaf 12700 of 60000 = 0.212
+>>> HETERO_TREE node r: split group 1 (22101 particles; stage-B states 2:22101) -> node r1
+>>> HETERO_TREE node r: split group 2 (11471 particles; stage-B states 4:11471) -> node r2
+>>> HETERO_TREE node r: split group 3 (10522 particles; stage-B states 1:10522) -> node r3
+>>> HETERO_TREE node r: split group 4 (9289 particles; stage-B states 5:9289) -> node r4
+>>> HETERO_TREE node r: split group 5 (6617 particles; stage-B states 3:6617) -> node r5
+>>> HETERO_TREE node r4: states 2 (4955 particles) -> leaf      r4_s2
+>>> HETERO_TREE node r4: states 1 (4334 particles) -> leaf      r4_s1
+>>> HETERO_TREE node r2: states 2 (7150 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (4321 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r3: states 1 (4792 particles) -> leaf      r3_s1
+>>> HETERO_TREE node r3: states 2 (5730 particles) -> leaf      r3_s2
+>>> HETERO_TREE node r1: states 2 (12700 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (9401 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r5: states 2 (3358 particles) -> leaf      r5_s2
+>>> HETERO_TREE node r5: states 1 (3259 particles) -> leaf      r5_s1
+## r131 (3 leaves; finished=2026-11-01T22:04:00-05:00)
+   largest leaf 20424 of 44334 = 0.461
+>>> HETERO_TREE node r: split group 1 (23910 particles; stage-B states 2:23910) -> node r1
+>>> HETERO_TREE node r: split group 2 (20424 particles; stage-B states 1:20424) -> node r2
+>>> HETERO_TREE node r1: states 1 (12080 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r1: states 2 (11830 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r2: states 1 2 (20424 particles) -> leaf      r2_g1_2
+## ole: no leaves yet
+## qtoy2 leaves vs truth
+== r2c: 10 leaves over 60000 particles; NMI(leaves, structure combo) 0.728, NMI(leaves, quality quintile) 0.001 (genuine)
+ leaf    rows   junk  closed   A_dom  B_blob   holo    snrq  top combos (share)
+    7   12700  0.013   0.000   0.000   0.000  0.000   1.085  1 (0.71) 2 (0.22) 22 (0.05)
+    8    9401  0.096   0.000   0.001   0.000  0.001   1.052  2 (0.56) 1 (0.29) 0 (0.10)
+    3    7150  0.187   0.001   0.001   0.000  0.001   1.072  49 (0.76) 0 (0.19) 1 (0.02)
+    6    5730  0.060   0.000   0.001   0.000  0.001   1.065  28 (0.92) 0 (0.06) 49 (0.01)
+    1    4955  0.192   0.008   0.001   0.000  0.001   1.054  22 (0.71) 0 (0.19) 2 (0.05)
+    5    4792  0.098   0.001   0.001   0.000  0.001   1.036  28 (0.87) 0 (0.10) 49 (0.02)
+    2    4334  0.144   0.817   0.000   0.000  0.000   1.058  18 (0.82) 0 (0.14) 22 (0.01)
+    4    4321  0.151   0.000   0.000   0.000  0.000   1.057  43 (0.78) 0 (0.15) 49 (0.05)
+    9    3358  0.052   0.000   0.935   0.000  0.935   1.052  101 (0.93) 0 (0.05) 2 (0.01)
+   10    3259  0.117   0.000   0.866   0.000  0.866   1.058  101 (0.87) 0 (0.12) 2 (0.01)
+best-leaf F1 per combo: 1:0.73(l7) 2:0.59(l8) 18:0.89(l2) 22:0.72(l1) 28:0.69(l6) 43:0.85(l4) 49:0.83(l3) 101:0.67(l9)
+## r131 closed-corner readout (stage-B maps, closed corner >= 0.95 / <= 0.6)
+/mnt/beegfs/elmlund/afan/hetero_tree_20261028/fixtures/scripts/make_view.py:17: DeprecationWarning: `axes` should not be `None` if `s` is not `None` (Deprecated in NumPy 2.0). In a future version of NumPy, this will raise an error and `s[i]` will correspond to the size along the transformed axis specified by `axes[i]`. To retain current behaviour, pass a sequence [0, ..., k-1] to `axes` for an array of dimension k.
+  V = np.fft.irfftn(np.fft.rfftn((E + O) / 2) * filt, s=E.shape)
+== r2c (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   23910 rows | ref  1692 (recall 0.55, purity 0.0708) | stage-B states 2:23910
+    group 2   20424 rows | ref  1383 (recall 0.45, purity 0.0677) | stage-B states 1:20424
+    stage-B maps: s01 0.85/0.62  s02 0.89/0.53
+r1        d1   23910 rows | ref  1692 (share 0.0708) | SEPARATES(map)
+    group 1   12080 rows | ref   515 (recall 0.30, purity 0.0426) | stage-B states 
+    group 2   11830 rows | ref  1177 (recall 0.70, purity 0.0995) | stage-B states 
+    stage-B maps: s01 0.74/0.56  s02 1.02/0.49
+r2        d1   20424 rows | ref  1383 (share 0.0677) | 
+    group 1   20424 rows | ref  1383 (recall 1.00, purity 0.0677) | stage-B states 
+    stage-B maps: s01 0.77/0.60  s02 0.92/0.63
+## core-hours (sacct, this arm's controller jobs and their children by WorkDir)
+   qtoynull controller elapsed 00:28:53
+   olenull controller elapsed 00:33:46
+   micnull controller elapsed 00:17:06
+   qtoy2 controller elapsed 00:46:28
+   r131 controller elapsed 00:54:55
+   ole controller elapsed 00:56:31
+   r2c_micnull 6.3 core-h
+   r2c_qtoy2 24.3 core-h
+   r2c_qtoynull 8.9 core-h
+   r2c_olenull 14.1 core-h
+   r2c_ole 24.9 core-h
+   r2c_r131 16.3 core-h
+done

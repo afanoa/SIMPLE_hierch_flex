@@ -1,0 +1,241 @@
+diff -ruN a/src/fileio/simple_projfile_utils.f90 b/src/fileio/simple_projfile_utils.f90
+--- a/src/fileio/simple_projfile_utils.f90	2026-10-30 00:44:08
++++ b/src/fileio/simple_projfile_utils.f90	2026-10-30 06:14:52
+@@ -1494,7 +1494,8 @@
+             !! the project rows only when the stack holds one image per row.
+             subroutine fix_stack_nptcls_stk
+                 type(string) :: stkname
+-                integer :: istk, nptcls_stk, ldim(3)
++                character(len=8) :: ev
++                integer :: istk, nptcls_stk, ldim(3), ios
+                 do istk = 1,nstks
+                     if( stack_counts(istk) == 0 ) cycle
+                     if( proj%os_stk%isthere(istk, 'nptcls_stk') )then
+@@ -1517,8 +1518,13 @@
+                     call find_ldim_nptcls(stkname, ldim, nptcls_stk)
+                     call proj%os_stk%set(istk, 'nptcls_stk', nptcls_stk)
+                     call repair('stack '//int2str(istk)//' nptcls_stk set to '//int2str(nptcls_stk)//' from the file header')
++                    ! test switch SIMPLE_FIX_TRUST_INDSTK=yes: a legacy stack with more images than rows keeps its rows' indstk
++                    call get_environment_variable('SIMPLE_FIX_TRUST_INDSTK', ev, status=ios)
+                     if( nptcls_stk == stack_counts(istk) )then
+                         derive_indstk(istk) = .true.
++                    else if( ios == 0 .and. ev == 'yes' )then
++                        call repair('stack '//int2str(istk)//': '//int2str(stack_counts(istk))//' rows of '//&
++                            &int2str(nptcls_stk)//' images keep their recorded indstk (SIMPLE_FIX_TRUST_INDSTK)')
+                     else
+                         call err('stack '//int2str(istk)//' has '//int2str(stack_counts(istk))//' project rows for '//&
+                             &int2str(nptcls_stk)//' images and no recorded indstk contract; the physical image of each '//&
+diff -ruN a/src/main/params/simple_parameters.f90 b/src/main/params/simple_parameters.f90
+--- a/src/main/params/simple_parameters.f90	2026-10-30 00:44:08
++++ b/src/main/params/simple_parameters.f90	2026-10-30 03:28:16
+@@ -219,6 +219,8 @@
+     type(string)              :: frcs                 !< binary file with per-class/proj Fourier Ring Correlations(.bin)
+     type(string)              :: fsc                  !< binary file with FSC info{fsc_state01.bin}
+     type(string)              :: pcg_mskfile          !< real-space [0,1] mask volume constraining the PCG solve (hard support projection P H P; experimental focused/support mode, pcg_priors_history.md dev item 5); accepted on both backends; spherical mskdiam support when absent
++    type(string)              :: pcg_bgmskfile        !< pcg_focus: [0,1] mask volume for the consensus background solve; mskdiam sphere when absent
++    type(string)              :: tree_mskfile         !< hetero_tree user support mask in [0,1]; node focus/site masks and the root flex stay inside it
+     type(string)              :: gainref              !< gain reference for movie alignment
+     type(string)              :: import_dir           !< dir to import .star files from for import_starproject
+     type(string)              :: infile               !< file with inputs(.txt)
+diff -ruN a/src/main/params/simple_parameters_parse.f90 b/src/main/params/simple_parameters_parse.f90
+--- a/src/main/params/simple_parameters_parse.f90	2026-10-30 00:44:08
++++ b/src/main/params/simple_parameters_parse.f90	2026-10-30 03:28:16
+@@ -298,6 +298,8 @@
+         call reg%add_file('frcs', self%frcs,'B')
+         call reg%add_file('fsc', self%fsc,'B')
+         call reg%add_file('pcg_mskfile', self%pcg_mskfile,'M','S')
++        call reg%add_file('tree_mskfile', self%tree_mskfile,'M','S')
++        call reg%add_file('pcg_bgmskfile', self%pcg_bgmskfile,'M','S')
+         call reg%add_file('gainref', self%gainref)
+         ! 'T' for the text index/assignment files flex_analysis reads, 'B' for the binary
+         ! flex_pca embedding cache (flex_pca_embedding.bin)
+diff -ruN a/src/main/project/simple_eo_partition.f90 b/src/main/project/simple_eo_partition.f90
+--- a/src/main/project/simple_eo_partition.f90	2026-10-30 00:44:08
++++ b/src/main/project/simple_eo_partition.f90	2026-10-30 06:07:34
+@@ -386,12 +386,19 @@
+         logical,           intent(in)    :: active(nrows), l_lab2, l_lab3
+         integer,           intent(out)   :: status
+         character(len=*),  intent(out)   :: msg
+-        integer :: i, s, n2, n3
++        character(len=8) :: ev
++        integer :: i, s, n2, n3, ios
+         status = EO_COMPLETE
+         msg    = ''
+         n2 = spproj%os_ptcl2D%get_noris()
+         n3 = spproj%os_ptcl3D%get_noris()
+-        if( n2 > 0 .and. n3 > 0 )then
++        ! test switch SIMPLE_EO_ADOPT3D=yes: legacy ptcl2D halves that differ from ptcl3D's (the refinement's) take ptcl3D's
++        call get_environment_variable('SIMPLE_EO_ADOPT3D', ev, status=ios)
++        if( n2 > 0 .and. n3 > 0 .and. l_lab2 .and. l_lab3 .and. ios == 0 .and. ev == 'yes' )then
++            do i = 1, nrows
++                call spproj%os_ptcl2D%set(i, 'eo', real(spproj%os_ptcl3D%get_eo(i)))
++            end do
++        else if( n2 > 0 .and. n3 > 0 )then
+             if( l_lab2 .and. l_lab3 )then
+                 do i = 1, nrows
+                     if( .not. active(i) ) cycle
+diff -ruN a/src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90 b/src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90
+--- a/src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90	2026-10-30 00:44:08
++++ b/src/main/strategies/parallelization/simple_rec3D_pcg_strategy.f90	2026-10-30 03:28:16
+@@ -151,6 +151,21 @@
+         call pcgop%set_window_sphere(params%msk_crop)
+     end subroutine set_pcg_solve_support
+ 
++    subroutine set_pcg_background_support( pcgop, params )
++        class(reconstructor_pcg), intent(inout) :: pcgop
++        class(parameters),        intent(in)    :: params
++        type(image) :: mskvol
++        if( params%pcg_bgmskfile%is_allocated() )then
++            if( len_trim(params%pcg_bgmskfile%to_char()) > 0 )then
++                call mskvol%read_and_crop(params%pcg_bgmskfile, params%smpd, params%box_crop, params%smpd_crop)
++                call pcgop%set_window_volume(mskvol)
++                call mskvol%kill
++                return
++            endif
++        endif
++        call pcgop%set_window_sphere(params%msk_crop)
++    end subroutine set_pcg_background_support
++
+     subroutine floor_focus_window( mskvol, wfloor )
+         class(image), intent(inout) :: mskvol
+         real,         intent(out)   :: wfloor
+@@ -1202,7 +1217,7 @@
+             if( allocated(job%rel_res_hist) ) deallocate(job%rel_res_hist)
+             if( allocated(job%d_raw) )        deallocate(job%d_raw)
+             call job%pcgop%new(params%box_crop, params%smpd_crop, PCG_LAMBDA, fft_nthreads=pcg_half_nthreads)
+-            call job%pcgop%set_window_sphere(params%msk_crop)
++            call set_pcg_background_support(job%pcgop, params)
+             call job%pcgop%begin_reduction
+             t_phase = tic()
+             do istate = 1, params%nstates
+@@ -1885,7 +1900,7 @@
+             job%time_reduce = 0.0_dp
+             if( L_BENCH_GLOB ) t_phase = tic()
+             if( job%state == 0 )then
+-                call job%pcgop%set_window_sphere(params%msk_crop)
++                call set_pcg_background_support(job%pcgop, params)
+             else
+                 call set_pcg_solve_support(job%pcgop, params, state_support_msk, l_state_support)
+                 if( params%l_pcg_focus ) call job%pcgop%set_fixed_background(fbg_ml(job%eo+1)%get_rmat())
+diff -ruN a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+--- a/src/main/strategies/search/simple_hetero_tree.f90	2026-10-30 03:27:38
++++ b/src/main/strategies/search/simple_hetero_tree.f90	2026-10-30 03:31:08
+@@ -157,6 +157,9 @@
+     procedure, private :: floor_value
+ end type hetero_tree
+ 
++! tree_mskfile: user support mask (e.g. protein without micelle); every node mask and the root flex stay inside it
++character(len=:), allocatable :: umask_file
++
+ contains
+ 
+     subroutine new( self, params, l_rows, cline )
+@@ -204,6 +207,13 @@
+             absproj       = simple_abspath(params%pcg_mskfile)
+             self%sitemask = absproj%to_char()
+         endif
++        umask_file = ''
++        if( params%tree_mskfile%strlen() > 0 )then
++            if( .not. file_exists(params%tree_mskfile) ) THROW_HARD('tree_mskfile not found')
++            absproj    = simple_abspath(params%tree_mskfile)
++            umask_file = absproj%to_char()
++            write(logfhandle,'(A)') '>>> HETERO_TREE user support mask (tree_mskfile): '//umask_file
++        endif
+         call spproj%read_segment('stk', params%projfile)
+         self%box  = spproj%get_box()
+         self%smpd = spproj%get_smpd()
+@@ -1651,6 +1661,7 @@
+             call cj%set('mskdiam',     self%p%mskdiam)
+             call cj%set('postprocess', 'no')
+             call cj%set('nthr',        max(self%p%nthr, SITE_NTHR))
++            call user_mask_keys(cj)
+             if( self%box > GATE_BOX )then
+                 call cj%set('box_crop',  GATE_BOX)
+                 call cj%set('smpd_crop', real(self%box) * self%smpd / real(GATE_BOX))
+@@ -4499,6 +4510,7 @@
+             call read_lp(odds(j),  o(:,:,:,j))
+         end do
+         sph = sphere(n, mskdiam / 2. / smpd)
++        if( len(umask_file) > 0 ) sph = sph .and. user_support(n, smpd)
+         em  = wsum(e)
+         om  = wsum(o)
+         sup = (0.5 * (em + om) > MSUP * maxval(0.5 * (em + om), mask=sph)) .and. sph
+@@ -4550,6 +4562,17 @@
+ 
+     end subroutine half_variance
+ 
++    function user_support( n, smpd ) result( s )
++        integer, intent(in) :: n
++        real,    intent(in) :: smpd
++        logical, allocatable :: s(:,:,:)
++        type(image) :: vol
++        call vol%new([n,n,n], smpd)
++        call vol%read_and_crop(string(umask_file), find_img_smpd(string(umask_file)), n, smpd)
++        s = vol%get_rmat() > 0.5
++        call vol%kill
++    end function user_support
++
+     subroutine discover_sites( evens, odds, counts, names, mskdiam, outdir, nsite, pgrp )
+         type(string),     intent(in)  :: evens(:), odds(:)
+         real(dp),         intent(in)  :: counts(:)
+@@ -5010,6 +5033,7 @@
+             call cl%delete('nparts')
+         endif
+         call cl%set('nthr',    self%p%nthr)
++        call user_mask_keys(cl)
+         if( self%p%rec_plane_reuse == 'yes' ) call cl%set('rec_plane_reuse', 'yes')
+         if( self%p%state_assembly > 0 )then
+             call cl%set('state_assembly', self%p%state_assembly)
+@@ -5017,6 +5041,18 @@
+         endif
+     end subroutine common_keys
+ 
++    subroutine user_mask_keys( cl )
++        class(cmdline), intent(inout) :: cl
++        if( len(umask_file) == 0 ) return
++        if( .not. cl%defined('prg') ) return
++        if( cl%get_carg('prg') /= 'reconstruct3D' .and. cl%get_carg('prg') /= 'refine3D' ) return
++        if( .not. cl%defined('pcg_mskfile') )then
++            call cl%set('pcg_mskfile', umask_file)
++        else if( cl%defined('pcg_focus') )then
++            if( cl%get_carg('pcg_focus') == 'yes' ) call cl%set('pcg_bgmskfile', umask_file)
++        endif
++    end subroutine user_mask_keys
++
+     subroutine crop_keys( self, cl, boxc )
+         class(hetero_tree), intent(in)    :: self
+         class(cmdline),     intent(inout) :: cl
+@@ -5038,6 +5074,8 @@
+         class(cmdline),     intent(inout) :: cl
+         character(len=*),   intent(in)    :: mean
+         integer,            intent(in)    :: k
++        character(len=8) :: ev
++        integer          :: ios
+         call cl%set('prg',            'flex_pca')
+         call cl%set('projfile',       'f.simple')
+         call cl%set('vol1',           mean)
+@@ -5047,7 +5085,11 @@
+         call cl%set('min_state_frac', 0.)
+         call cl%set('umap',           'no')
+         call cl%set('n_probe_iters',  NPROBE)
++        if( len(umask_file) > 0 ) call cl%set('pcg_mskfile', umask_file)
+         call common_keys(self, cl)
++        ! test switch SIMPLE_TREE_FLEX_C1=yes: flex_pca gets no pgrp (pgrp sets its nsym, which symmetrises every accumulation)
++        call get_environment_variable('SIMPLE_TREE_FLEX_C1', ev, status=ios)
++        if( ios == 0 .and. (ev == 'yes' .or. ev == '1') ) call cl%delete('pgrp')
+     end subroutine flex_keys
+ 
+     subroutine refine_keys( self, cl, lp, maxits, nspace, boxc, mask )
+diff -ruN a/src/main/ui/simple/simple_ui_heterogeneity.f90 b/src/main/ui/simple/simple_ui_heterogeneity.f90
+--- a/src/main/ui/simple/simple_ui_heterogeneity.f90	2026-10-30 00:44:08
++++ b/src/main/ui/simple/simple_ui_heterogeneity.f90	2026-10-30 03:27:39
+@@ -747,6 +747,9 @@
+         call hetero_tree%add_input(UI_FILE, 'pcg_mskfile', 'file', 'Site mask', &
+         &'Real-space mask with values in [0,1] confining the pole classes of every node''s site ranking{the node''s &
+         &focus mask}', 'e.g. site.mrc', .false., '', visibility=UI_VIS_ADVANCED)
++        call hetero_tree%add_input(UI_FILE, 'tree_mskfile', 'file', 'Support mask', &
++        &'Real-space mask with values in [0,1] (e.g. protein without micelle or solvent): every node''s focus and site &
++        &masks and the root flex stay inside it{none}', 'e.g. protein_mask.mrc', .false., '', visibility=UI_VIS_ADVANCED)
+         call hetero_tree%add_input(UI_PARM, 'minpop', 'num', 'Smallest child node', &
+         &'A supported group with at least this many particles becomes a child node{15000}', 'particles{15000}', .false., &
+         &15000., visibility=UI_VIS_ADVANCED, preserve_default=.true.)

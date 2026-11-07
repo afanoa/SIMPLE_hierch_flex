@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/hetero_tree_regression_20261026/null_controls/ole_null_v1/src.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/build_r2c/install
+simple_exec_sha256=fbc7fb0ef6f0a4ba469c61d496e5968d1d0dd64b6a3083b5033f800e2f08d85c
+seed=1
+keys=nthr=8 nodepar=1 maxdepth=0 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=5 pgrp=c2 mskdiam=240 minpop=3000 site_layer=yes site_states=yes  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54799280
+started=2026-11-01T21:09:07-05:00
+finished=2026-11-01T21:42:51-05:00

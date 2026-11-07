@@ -1,0 +1,33 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index a37a56983..88152d390 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -877,7 +877,7 @@ contains
+                 call cl%set('mskdiam',     self%p%mskdiam)
+                 call cl%set('pcg_mskfile', mask)
+                 call cl%set('pgrp',        trim(self%p%pgrp))
+-                call cl%set('split_ntests', self%ntests)
++                call cl%set('split_ntests', node_ntests(self, i))
+                 call cl%set('junk_screen', trim(self%p%junk_screen))
+                 if( self%p%merge_geom_reuse == 'yes' ) call cl%set('merge_geom_reuse', 'yes')
+                 if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
+@@ -3792,6 +3792,19 @@ contains
+         keep_maps = ios == 0 .and. ev == 'yes'
+     end function keep_maps
+ 
++    ! SIMPLE_SPLIT_HIER=yes: hierarchical Bonferroni, a node is tested at N_root / N_node tests (its children only after it splits)
++    integer function node_ntests( self, i )
++        class(hetero_tree), intent(in) :: self
++        integer,            intent(in) :: i
++        character(len=8) :: ev
++        integer :: ios
++        node_ntests = self%ntests
++        call get_environment_variable('SIMPLE_SPLIT_HIER', ev, status=ios)
++        if( ios /= 0 .or. ev /= 'yes' ) return
++        node_ntests = max(1, nint(real(nlines(string(self%root//'/node_r/rows.txt'))) / &
++            &real(max(1, nlines(string(self%ndir(i)//'/rows.txt'))))))
++    end function node_ntests
++
+     ! a step's partials, neighbour tables, reprojection models, embedding and sigma2 state (but stage B's) are read only inside it
+     subroutine prune_step( dir )
+         character(len=*), intent(in) :: dir

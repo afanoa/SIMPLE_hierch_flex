@@ -1,0 +1,47 @@
+>>> HETERO_TREE node r: split group 1 (22101 particles; stage-B states 2:22101) -> node r1
+>>> HETERO_TREE node r: split group 2 (11471 particles; stage-B states 4:11471) -> node r2
+>>> HETERO_TREE node r: split group 3 (10522 particles; stage-B states 1:10522) -> node r3
+>>> HETERO_TREE node r: split group 4 (9289 particles; stage-B states 5:9289) -> node r4
+>>> HETERO_TREE node r: split group 5 (6617 particles; stage-B states 3:6617) -> node r5
+>>> HETERO_TREE node r4: states 2 (4955 particles) -> leaf      r4_s2
+>>> HETERO_TREE node r4: states 1 (4334 particles) -> leaf      r4_s1
+>>> HETERO_TREE node r3: states 1 2 (10522 particles) -> leaf      r3_g1_2
+>>> HETERO_TREE node r2: states 2 (7150 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (4321 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r1: states 2 (12700 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (9401 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r5: states 1 2 (6617 particles) -> leaf      r5_g1_2
+== sub: 8 leaves over 60000 particles; NMI(leaves, structure combo) 0.764, NMI(leaves, quality quintile) 0.001 (genuine)
+ leaf    rows   junk  closed   A_dom  B_blob   holo    snrq  top combos (share)
+    6   12700  0.013   0.000   0.000   0.000  0.000   1.085  1 (0.71) 2 (0.22) 22 (0.05)
+    3   10522  0.077   0.000   0.001   0.000  0.001   1.051  28 (0.90) 0 (0.08) 49 (0.02)
+    7    9401  0.096   0.000   0.001   0.000  0.001   1.052  2 (0.56) 1 (0.29) 0 (0.10)
+    4    7150  0.187   0.001   0.001   0.000  0.001   1.072  49 (0.76) 0 (0.19) 1 (0.02)
+    8    6617  0.084   0.000   0.901   0.000  0.901   1.055  101 (0.90) 0 (0.08) 2 (0.01)
+    1    4955  0.192   0.008   0.001   0.000  0.001   1.054  22 (0.71) 0 (0.19) 2 (0.05)
+    2    4334  0.144   0.817   0.000   0.000  0.000   1.058  18 (0.82) 0 (0.14) 22 (0.01)
+    5    4321  0.151   0.000   0.000   0.000  0.000   1.057  43 (0.78) 0 (0.15) 49 (0.05)
+best-leaf F1 per combo: 1:0.73(l6) 2:0.59(l7) 18:0.89(l2) 22:0.72(l1) 28:0.94(l3) 43:0.85(l5) 49:0.83(l4) 101:0.94(l8)
+## root site_rank outcomes (sub vs base)
+--- base
+site: 1 17987 z1lo;2 42013 rest;
+nsite_r_s2: 1 9707 z1lo;2 50293 rest;
+nsite_r_s3: 1 60000 rest;
+nsite_r_s4: 1 60000 rest;
+nsite_r_s5: 1 49693 z1hi z3lo;2 10307 rest;
+nsite_r_s6: 1 52315 z3lo;2 7685 rest;
+1
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 95.440, site 2 77.861, site 5 52.057, site 6 59.842),
+>>> HETERO_TREE node r: site r_s2 pole 1 (4890 equivalent pure members, Spearman 0.232 with the seeding site) seeds state 3
+>>> HETERO_TREE node r: site r_s5 pole 1 (13646 equivalent pure members, Spearman 0.273 with the seeding site) seeds state 4
+--- sub
+site: 1 17987 z1lo;2 42013 rest;
+nsite_r_s2: 1 9707 z1lo;2 50293 rest;
+nsite_r_s3: 1 35124 z1lo;2 24846 z3hi;3 30 rest;
+nsite_r_s4: 1 41697 z1hi;2 9028 z3lo;3 9275 rest;
+nsite_r_s5: 1 49693 z1hi z3lo;2 10219 z3hi;3 88 rest;
+nsite_r_s6: 1 52364 z1hi z3lo;2 7636 rest;
+1
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 21.399, site 2 14.954, site 3 10.964, site 4 10.805, 
+>>> HETERO_TREE node r: site r_s2 pole 1 (4890 equivalent pure members, Spearman 0.232 with the seeding site) seeds state 3
+>>> HETERO_TREE node r: site r_s3 pole 1 (14833 equivalent pure members, Spearman 0.142 with the seeding site) seeds state 4

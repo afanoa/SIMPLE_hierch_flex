@@ -1,0 +1,273 @@
+## dump_sites/qtoy2_nsite_r_s2/   n_eff 135.9  band 18..23  (old) 1 9707 z1lo ; 2 50293 rest
+  end z1lo  r_eo  0.861 z_self  14.95 ACC | old pole 1 accept z row/col 108.58/   nan hpk 0.861
+  end z1hi  r_eo  0.777 z_self  11.97 ACC | old pole 2 accept z row/col  70.02/   nan hpk 0.777
+  end z3lo  r_eo  0.772 z_self  11.82 ACC | old pole 2 accept z row/col  69.23/   nan hpk 0.772
+  end z3hi  r_eo  0.778 z_self  12.00 ACC | old pole 2 accept z row/col  69.91/   nan hpk 0.778
+  pair z1lo  z1hi  rho_hat -0.920 z_res(b|a)   5.12 z_res(a|b)   6.36 resid share 0.27/0.27 -> distinct | old merge False (-132.46)
+  pair z1lo  z3lo  rho_hat -0.921 z_res(b|a)   5.01 z_res(a|b)   6.30 resid share 0.27/0.27 -> distinct | old merge False (-138.49)
+  pair z1lo  z3hi  rho_hat -0.924 z_res(b|a)   5.04 z_res(a|b)   6.24 resid share 0.25/0.25 -> distinct | old merge False (-104.11)
+  pair z1hi  z3lo  rho_hat  1.000 z_res(b|a)   1.02 z_res(a|b)   1.07 resid share 0.01/0.01 -> SAME | old merge True (0.44)
+  pair z1hi  z3hi  rho_hat  0.997 z_res(b|a)   1.91 z_res(a|b)   1.89 resid share 0.03/0.03 -> SAME | old merge True (0.41)
+  pair z3lo  z3hi  rho_hat  0.998 z_res(b|a)   1.97 z_res(a|b)   1.90 resid share 0.02/0.02 -> SAME | old merge True (0.00)
+  new poles: z1lo ; z1hi+z3lo+z3hi
+  state1+z1lo                  r_eo  0.861 z_self  14.95 z_dist    inf (anti/orth: state2+rest) | old rule: share 0.162 z 77.86/137.05 kept
+  state2+rest                  r_eo  0.706 z_self  10.12 z_dist    inf (anti/orth: state1+z1lo) | old rule: rest/none
+  eigen of sym C: 3.089 0.097 0.002 0.000  null max (1-alpha) 0.364 -> rank 1
+
+## dump_sites/qtoy2_nsite_r_s3/   n_eff 117.2  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.847 z_self  13.31 ACC | old pole 0 accept z row/col   3.58/   nan hpk 0.847
+  end z1hi  r_eo  0.816 z_self  12.22 ACC | old pole 1 accept z row/col 106.32/   nan hpk 0.816
+  end z3lo  r_eo  0.826 z_self  12.56 ACC | old pole 1 accept z row/col  13.60/   nan hpk 0.826
+  end z3hi  r_eo  0.831 z_self  12.74 ACC | old pole 1 accept z row/col 116.18/   nan hpk 0.831
+  pair z1lo  z1hi  rho_hat -0.844 z_res(b|a)   8.34 z_res(a|b)   8.93 resid share 0.37/0.37 -> distinct | old merge False (-2.96)
+  pair z1lo  z3lo  rho_hat -0.828 z_res(b|a)   8.12 z_res(a|b)   8.45 resid share 0.43/0.43 -> distinct | old merge False (-3.21)
+  pair z1lo  z3hi  rho_hat -0.998 z_res(b|a)   0.90 z_res(a|b)   1.08 resid share 0.05/0.05 -> distinct | old merge False (-2.96)
+  pair z1hi  z3lo  rho_hat  0.985 z_res(b|a)   2.16 z_res(a|b)   2.05 resid share 0.13/0.13 -> SAME | old merge True (-0.33)
+  pair z1hi  z3hi  rho_hat  0.856 z_res(b|a)   8.48 z_res(a|b)   8.21 resid share 0.34/0.34 -> distinct | old merge True (-0.12)
+  pair z3lo  z3hi  rho_hat  0.844 z_res(b|a)   8.34 z_res(a|b)   8.28 resid share 0.38/0.38 -> distinct | old merge True (-0.32)
+  new poles: z1lo ; z1hi+z3lo ; z3hi
+  state1+rest                  r_eo  0.083 z_self   0.89 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 3.051 0.254 0.012 0.002  null max (1-alpha) 0.392 -> rank 1
+
+## dump_sites/qtoy2_nsite_r_s4/   n_eff 102.8  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.777 z_self  10.36 ACC | old pole 1 accept z row/col   4.62/   nan hpk 0.777
+  end z1hi  r_eo  0.832 z_self  11.94 ACC | old pole 1 accept z row/col   3.99/   nan hpk 0.832
+  end z3lo  r_eo  0.818 z_self  11.51 ACC | old pole 0 accept z row/col   3.29/   nan hpk 0.818
+  end z3hi  r_eo  0.790 z_self  10.72 ACC | old pole 0 accept z row/col -31.36/   nan hpk 0.790
+  pair z1lo  z1hi  rho_hat -0.211 z_res(b|a)  11.55 z_res(a|b)   9.93 resid share 0.98/0.98 -> distinct | old merge True (-2.68)
+  pair z1lo  z3lo  rho_hat -0.595 z_res(b|a)  10.46 z_res(a|b)   9.47 resid share 0.66/0.66 -> distinct | old merge False (-4.99)
+  pair z1lo  z3hi  rho_hat  0.585 z_res(b|a)   9.77 z_res(a|b)   9.44 resid share 0.67/0.67 -> distinct | old merge False (0.31)
+  pair z1hi  z3lo  rho_hat  0.279 z_res(b|a)  11.13 z_res(a|b)  11.50 resid share 0.93/0.93 -> distinct | old merge False (-3.93)
+  pair z1hi  z3hi  rho_hat -0.271 z_res(b|a)  10.30 z_res(a|b)  11.24 resid share 0.94/0.94 -> distinct | old merge False (-0.10)
+  pair z3lo  z3hi  rho_hat -0.994 z_res(b|a)   1.32 z_res(a|b)   1.60 resid share 0.07/0.07 -> distinct | old merge False (-3.80)
+  new poles: z1lo ; z1hi ; z3lo ; z3hi
+  state1+rest                  r_eo  0.029 z_self   0.29 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 2.074 0.727 0.412 0.004  null max (1-alpha) 0.418 -> rank 2
+
+## dump_sites/qtoy2_nsite_r_s5/   n_eff 108.4  band 18..23  (old) 1 49693 z1hi z3lo ; 2 10307 rest
+  end z1lo  r_eo  0.849 z_self  12.87 ACC | old pole 1 accept z row/col  10.73/   nan hpk 0.849
+  end z1hi  r_eo  0.852 z_self  12.99 ACC | old pole 2 accept z row/col  61.75/   nan hpk 0.853
+  end z3lo  r_eo  0.853 z_self  13.00 ACC | old pole 2 accept z row/col  61.29/   nan hpk 0.853
+  end z3hi  r_eo  0.850 z_self  12.91 ACC | old pole 3 accept z row/col  11.16/   nan hpk 0.850
+  pair z1lo  z1hi  rho_hat -0.799 z_res(b|a)   8.23 z_res(a|b)   8.15 resid share 0.46/0.46 -> distinct | old merge False (-76.94)
+  pair z1lo  z3lo  rho_hat -0.798 z_res(b|a)   8.26 z_res(a|b)   8.18 resid share 0.46/0.46 -> distinct | old merge False (-74.66)
+  pair z1lo  z3hi  rho_hat  0.721 z_res(b|a)   9.60 z_res(a|b)   9.56 resid share 0.54/0.54 -> distinct | old merge False (-9.03)
+  pair z1hi  z3lo  rho_hat  1.000 z_res(b|a)   0.01 z_res(a|b)   0.01 resid share 0.00/0.00 -> SAME | old merge True (-0.22)
+  pair z1hi  z3hi  rho_hat -0.988 z_res(b|a)   2.34 z_res(a|b)   2.37 resid share 0.09/0.09 -> distinct | old merge False (-89.75)
+  pair z3lo  z3hi  rho_hat -0.988 z_res(b|a)   2.35 z_res(a|b)   2.38 resid share 0.09/0.09 -> distinct | old merge False (-90.22)
+  new poles: z1lo ; z1hi+z3lo ; z3hi
+  state1+z1hi+z3lo             r_eo  0.853 z_self  13.00 z_dist    inf (anti/orth: state2+rest) | old rule: share 0.476 z 55.19/52.06 kept
+  state2+rest                  r_eo  0.753 z_self  10.06 z_dist    inf (anti/orth: state1+z1hi+z3lo) | old rule: rest/none
+  eigen of sym C: 3.114 0.284 0.006 -0.000  null max (1-alpha) 0.407 -> rank 1
+
+## dump_sites/qtoy2_nsite_r_s6/   n_eff 90.6  band 18..23  (old) 1 52315 z3lo ; 2 7685 rest
+  end z1lo  r_eo  0.886 z_self  13.12 ACC | old pole 1 accept z row/col  35.31/   nan hpk 0.886
+  end z1hi  r_eo  0.875 z_self  12.69 ACC | old pole 0 accept z row/col   0.00/   nan hpk 0.875
+  end z3lo  r_eo  0.877 z_self  12.75 ACC | old pole 2 accept z row/col  58.93/   nan hpk 0.877
+  end z3hi  r_eo  0.886 z_self  13.15 ACC | old pole 3 accept z row/col  38.08/   nan hpk 0.886
+  pair z1lo  z1hi  rho_hat -0.702 z_res(b|a)   9.22 z_res(a|b)   9.39 resid share 0.57/0.57 -> distinct | old merge False (-2.79)
+  pair z1lo  z3lo  rho_hat -0.702 z_res(b|a)   9.27 z_res(a|b)   9.41 resid share 0.56/0.56 -> distinct | old merge False (-77.27)
+  pair z1lo  z3hi  rho_hat  0.625 z_res(b|a)  10.44 z_res(a|b)  10.42 resid share 0.66/0.66 -> distinct | old merge False (-24.67)
+  pair z1hi  z3lo  rho_hat  1.000 z_res(b|a)   0.50 z_res(a|b)   0.49 resid share 0.00/0.00 -> SAME | old merge False (0.00)
+  pair z1hi  z3hi  rho_hat -0.985 z_res(b|a)   2.88 z_res(a|b)   2.77 resid share 0.10/0.10 -> distinct | old merge False (-3.69)
+  pair z3lo  z3hi  rho_hat -0.985 z_res(b|a)   2.91 z_res(a|b)   2.81 resid share 0.10/0.10 -> distinct | old merge False (-53.05)
+  new poles: z1lo ; z1hi+z3lo ; z3hi
+  state1+z3lo                  r_eo  0.877 z_self  12.75 z_dist    inf (anti/orth: state2+rest) | old rule: share 0.442 z 76.09/59.84 kept
+  state2+rest                  r_eo  0.732 z_self   8.74 z_dist    inf (anti/orth: state1+z3lo) | old rule: rest/none
+  eigen of sym C: 3.103 0.410 0.012 0.000  null max (1-alpha) 0.446 -> rank 1
+
+## dump_sites/qtoy2_site/   n_eff 197.5  band 18..23  (old) 1 17987 z1lo ; 2 42013 rest
+  end z1lo  r_eo  0.919 z_self  22.10 ACC | old pole 1 accept z row/col 176.70/   nan hpk 0.919
+  end z1hi  r_eo  0.919 z_self  22.10 ACC | old pole 2 accept z row/col 108.78/   nan hpk 0.919
+  end z3lo  r_eo  0.919 z_self  22.10 ACC | old pole 2 accept z row/col 109.89/   nan hpk 0.919
+  end z3hi  r_eo  0.920 z_self  22.13 ACC | old pole 2 accept z row/col 110.97/   nan hpk 0.920
+  pair z1lo  z1hi  rho_hat -0.993 z_res(b|a)   5.20 z_res(a|b)   5.19 resid share 0.03/0.03 -> distinct | old merge False (-109.86)
+  pair z1lo  z3lo  rho_hat -0.993 z_res(b|a)   5.19 z_res(a|b)   5.19 resid share 0.03/0.03 -> distinct | old merge False (-110.93)
+  pair z1lo  z3hi  rho_hat -0.993 z_res(b|a)   5.19 z_res(a|b)   5.19 resid share 0.03/0.03 -> distinct | old merge False (-112.82)
+  pair z1hi  z3lo  rho_hat  1.000 z_res(b|a)   0.26 z_res(a|b)   0.26 resid share 0.00/0.00 -> SAME | old merge True (0.00)
+  pair z1hi  z3hi  rho_hat  1.000 z_res(b|a)   0.73 z_res(a|b)   0.73 resid share 0.00/0.00 -> SAME | old merge True (0.00)
+  pair z3lo  z3hi  rho_hat  1.000 z_res(b|a)   0.49 z_res(a|b)   0.48 resid share 0.00/0.00 -> SAME | old merge True (0.00)
+  new poles: z1lo ; z1hi+z3lo+z3hi
+  state1+z1lo                  r_eo  0.911 z_self  21.40 z_dist    inf (anti/orth: state2+rest) | old rule: share 0.300 z 99.40/95.44 kept
+  state2+rest                  r_eo  0.858 z_self  17.93 z_dist    inf (anti/orth: state1+z1lo) | old rule: rest/none
+  eigen of sym C: 3.669 0.009 0.000 -0.000  null max (1-alpha) 0.302 -> rank 1
+
+## dump_sites/qtoynull_nsite_r_s10/   n_eff 74.3  band 18..23  (old) 
+  end z1lo  r_eo  0.102 z_self   0.86 rej | old pole 0 accept z row/col   1.95/   nan hpk 0.102
+  end z1hi  r_eo  0.130 z_self   1.11 rej | old pole 0 accept z row/col   2.88/   nan hpk 0.131
+  end z3lo  r_eo  0.084 z_self   0.71 rej | old pole 0 accept z row/col   2.08/   nan hpk 0.084
+  end z3hi  r_eo  0.106 z_self   0.90 rej | old pole 0 accept z row/col  -1.39/   nan hpk 0.106
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s11/   n_eff 72.9  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.172 z_self   1.45 rej | old pole 0 accept z row/col  -2.10/   nan hpk 0.172
+  end z1hi  r_eo  0.166 z_self   1.40 rej | old pole 0 accept z row/col   3.17/   nan hpk 0.166
+  end z3lo  r_eo  0.178 z_self   1.51 rej | old pole 1 accept z row/col   7.83/   nan hpk 0.178
+  end z3hi  r_eo  0.157 z_self   1.32 rej | old pole 0 accept z row/col   1.14/   nan hpk 0.157
+  new poles: none
+  state1+rest                  r_eo  0.118 z_self   0.99 z_dist    inf (anti/orth: -) | old rule: rest/none
+
+## dump_sites/qtoynull_nsite_r_s12/   n_eff 61.3  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.389 z_self   3.14 ACC | old pole 1 accept z row/col  20.41/   nan hpk 0.389
+  end z1hi  r_eo  0.738 z_self   7.22 ACC | old pole 2 accept z row/col  11.12/   nan hpk 0.738
+  end z3lo  r_eo  0.811 z_self   8.63 ACC | old pole 2 accept z row/col  14.93/   nan hpk 0.811
+  end z3hi  r_eo  0.739 z_self   7.24 ACC | old pole 1 accept z row/col  32.41/   nan hpk 0.739
+  pair z1lo  z1hi  rho_hat  0.355 z_res(b|a)   6.57 z_res(a|b)   2.93 resid share 0.99/0.99 -> distinct | old merge False (-32.32)
+  pair z1lo  z3lo  rho_hat -0.475 z_res(b|a)   7.47 z_res(a|b)   2.64 resid share 0.97/0.97 -> distinct | old merge False (-26.66)
+  pair z1lo  z3hi  rho_hat  0.379 z_res(b|a)   6.69 z_res(a|b)   2.86 resid share 0.99/0.99 -> distinct | old merge True (0.06)
+  pair z1hi  z3lo  rho_hat -0.907 z_res(b|a)   4.33 z_res(a|b)   3.60 resid share 0.29/0.29 -> distinct | old merge True (-1.39)
+  pair z1hi  z3hi  rho_hat  0.987 z_res(b|a)   1.29 z_res(a|b)   1.29 resid share 0.14/0.14 -> SAME | old merge False (-18.78)
+  pair z3lo  z3hi  rho_hat -0.919 z_res(b|a)   4.43 z_res(a|b)   5.21 resid share 0.21/0.21 -> distinct | old merge False (-17.35)
+  new poles: z1lo ; z1hi+z3hi ; z3lo
+  state1+rest                  r_eo  0.171 z_self   1.31 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 2.268 0.323 0.076 0.009  null max (1-alpha) 0.542 -> rank 1
+
+## dump_sites/qtoynull_nsite_r_s13/   n_eff 54.5  band 18..23  (old) 
+  end z1lo  r_eo  0.056 z_self   0.40 rej | old pole 0 accept z row/col  -1.71/   nan hpk 0.056
+  end z1hi  r_eo  0.082 z_self   0.59 rej | old pole 0 accept z row/col  -0.05/   nan hpk 0.082
+  end z3lo  r_eo  0.071 z_self   0.51 rej | old pole 0 accept z row/col  -0.91/   nan hpk 0.071
+  end z3hi  r_eo  0.088 z_self   0.63 rej | old pole 0 accept z row/col  -0.73/   nan hpk 0.088
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s14/   n_eff 54.0  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.228 z_self   1.66 rej | old pole 0 accept z row/col   0.46/   nan hpk 0.228
+  end z1hi  r_eo  0.307 z_self   2.27 rej | old pole 1 accept z row/col  12.48/   nan hpk 0.307
+  end z3lo  r_eo  0.338 z_self   2.51 rej | old pole 1 accept z row/col   3.00/   nan hpk 0.338
+  end z3hi  r_eo  0.327 z_self   2.42 rej | old pole 1 accept z row/col   3.47/   nan hpk 0.327
+  new poles: none
+  state1+rest                  r_eo  0.143 z_self   1.03 z_dist    inf (anti/orth: -) | old rule: rest/none
+
+## dump_sites/qtoynull_nsite_r_s15/   n_eff 37.8  band 18..23  (old) 
+  end z1lo  r_eo  0.160 z_self   0.95 rej | old pole 0 accept z row/col  -1.66/   nan hpk 0.160
+  end z1hi  r_eo  0.100 z_self   0.59 rej | old pole 0 accept z row/col  -2.02/   nan hpk 0.100
+  end z3lo  r_eo  0.253 z_self   1.53 rej | old pole 0 accept z row/col   1.08/   nan hpk 0.253
+  end z3hi  r_eo  0.279 z_self   1.69 rej | old pole 0 accept z row/col   2.80/   nan hpk 0.279
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s16/   n_eff 48.4  band 18..23  (old) 
+  end z1lo  r_eo  0.186 z_self   1.27 rej | old pole 0 accept z row/col   0.19/   nan hpk 0.186
+  end z1hi  r_eo  0.155 z_self   1.05 rej | old pole 0 accept z row/col  -3.93/   nan hpk 0.155
+  end z3lo  r_eo  0.117 z_self   0.79 rej | old pole 0 accept z row/col   0.39/   nan hpk 0.117
+  end z3hi  r_eo  0.140 z_self   0.95 rej | old pole 0 accept z row/col   0.86/   nan hpk 0.140
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s17/   n_eff 50.9  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.309 z_self   2.21 rej | old pole 0 accept z row/col   0.57/   nan hpk 0.309
+  end z1hi  r_eo  0.292 z_self   2.08 rej | old pole 1 accept z row/col   8.63/   nan hpk 0.292
+  end z3lo  r_eo  0.411 z_self   3.03 ACC | old pole 0 accept z row/col   4.51/   nan hpk 0.411
+  end z3hi  r_eo  0.430 z_self   3.18 ACC | old pole 1 accept z row/col  10.09/   nan hpk 0.430
+  pair z3lo  z3hi  rho_hat -1.022 z_res(b|a)   0.22 z_res(a|b)   0.07 resid share 0.39/0.39 -> distinct | old merge False (-4.03)
+  new poles: z3lo ; z3hi
+  state1+rest                  r_eo  0.216 z_self   1.52 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 0.851 -0.009  null max (1-alpha) 0.459 -> rank 1
+
+## dump_sites/qtoynull_nsite_r_s18/   n_eff 53.7  band 18..23  (old) 
+  end z1lo  r_eo  0.240 z_self   1.74 rej | old pole 0 accept z row/col   1.62/   nan hpk 0.240
+  end z1hi  r_eo  0.136 z_self   0.98 rej | old pole 0 accept z row/col  -0.09/   nan hpk 0.136
+  end z3lo  r_eo  0.186 z_self   1.34 rej | old pole 0 accept z row/col   2.42/   nan hpk 0.186
+  end z3hi  r_eo  0.121 z_self   0.87 rej | old pole 0 accept z row/col  -0.56/   nan hpk 0.121
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s19/   n_eff 40.0  band 18..23  (old) 
+  end z1lo  r_eo  0.104 z_self   0.63 rej | old pole 0 accept z row/col  -1.79/   nan hpk 0.104
+  end z1hi  r_eo  0.139 z_self   0.85 rej | old pole 0 accept z row/col   2.36/   nan hpk 0.139
+  end z3lo  r_eo  0.151 z_self   0.93 rej | old pole 0 accept z row/col   0.92/   nan hpk 0.151
+  end z3hi  r_eo  0.195 z_self   1.20 rej | old pole 0 accept z row/col  -1.05/   nan hpk 0.195
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s2/   n_eff 389.6  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.446 z_self   9.44 ACC | old pole 1 accept z row/col   8.56/   nan hpk 0.446
+  end z1hi  r_eo  0.277 z_self   5.60 ACC | old pole 2 accept z row/col   7.80/   nan hpk 0.277
+  end z3lo  r_eo  0.302 z_self   6.12 ACC | old pole 0 accept z row/col  -2.51/   nan hpk 0.301
+  end z3hi  r_eo  0.277 z_self   5.59 ACC | old pole 2 accept z row/col  21.38/   nan hpk 0.277
+  pair z1lo  z1hi  rho_hat -0.925 z_res(b|a)   2.26 z_res(a|b)   5.71 resid share 0.36/0.36 -> distinct | old merge False (-4.37)
+  pair z1lo  z3lo  rho_hat  0.975 z_res(b|a)   0.93 z_res(a|b)   3.46 resid share 0.28/0.28 -> distinct | old merge False (0.02)
+  pair z1lo  z3hi  rho_hat -0.927 z_res(b|a)   2.20 z_res(a|b)   5.65 resid share 0.36/0.36 -> distinct | old merge False (-5.47)
+  pair z1hi  z3lo  rho_hat -0.901 z_res(b|a)   2.91 z_res(a|b)   2.13 resid share 0.43/0.43 -> distinct | old merge False (-0.38)
+  pair z1hi  z3hi  rho_hat  1.000 z_res(b|a)  -0.75 z_res(a|b)  -0.74 resid share 0.01/0.01 -> SAME | old merge True (0.02)
+  pair z3lo  z3hi  rho_hat -0.903 z_res(b|a)   2.10 z_res(a|b)   2.87 resid share 0.44/0.44 -> distinct | old merge False (-0.40)
+  new poles: z1lo ; z1hi+z3hi ; z3lo
+  state1+rest                  r_eo  0.078 z_self   1.54 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 1.244 0.050 0.008 -0.000  null max (1-alpha) 0.215 -> rank 1
+
+## dump_sites/qtoynull_nsite_r_s20/   n_eff 41.1  band 18..23  (old) 
+  end z1lo  r_eo  0.150 z_self   0.93 rej | old pole 0 accept z row/col   0.15/   nan hpk 0.150
+  end z1hi  r_eo  0.217 z_self   1.36 rej | old pole 0 accept z row/col  -0.84/   nan hpk 0.217
+  end z3lo  r_eo  0.181 z_self   1.13 rej | old pole 0 accept z row/col   2.06/   nan hpk 0.181
+  end z3hi  r_eo  0.209 z_self   1.31 rej | old pole 0 accept z row/col   0.65/   nan hpk 0.209
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s3/   n_eff 320.1  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.559 z_self  11.24 ACC | old pole 1 accept z row/col  54.30/   nan hpk 0.559
+  end z1hi  r_eo  0.474 z_self   9.18 ACC | old pole 2 accept z row/col  23.46/   nan hpk 0.474
+  end z3lo  r_eo  0.524 z_self  10.35 ACC | old pole 1 accept z row/col  22.76/   nan hpk 0.524
+  end z3hi  r_eo  0.472 z_self   9.13 ACC | old pole 2 accept z row/col  29.64/   nan hpk 0.472
+  pair z1lo  z1hi  rho_hat -0.927 z_res(b|a)   4.66 z_res(a|b)   6.31 resid share 0.26/0.26 -> distinct | old merge False (-7.24)
+  pair z1lo  z3lo  rho_hat  0.992 z_res(b|a)   1.22 z_res(a|b)   1.85 resid share 0.13/0.13 -> SAME | old merge True (-0.10)
+  pair z1lo  z3hi  rho_hat -0.928 z_res(b|a)   4.60 z_res(a|b)   6.29 resid share 0.26/0.26 -> distinct | old merge False (-6.42)
+  pair z1hi  z3lo  rho_hat -0.925 z_res(b|a)   5.01 z_res(a|b)   4.07 resid share 0.31/0.31 -> distinct | old merge False (-12.86)
+  pair z1hi  z3hi  rho_hat  1.000 z_res(b|a)  -0.57 z_res(a|b)  -0.53 resid share 0.01/0.01 -> SAME | old merge True (0.03)
+  pair z3lo  z3hi  rho_hat -0.923 z_res(b|a)   4.19 z_res(a|b)   5.17 resid share 0.30/0.30 -> distinct | old merge False (-9.89)
+  new poles: z1lo+z3lo ; z1hi+z3hi
+  state1+rest                  r_eo  0.056 z_self   1.01 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 1.951 0.073 0.004 -0.000  null max (1-alpha) 0.237 -> rank 1
+
+## dump_sites/qtoynull_nsite_r_s4/   n_eff 250.7  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.049 z_self   0.78 rej | old pole 0 accept z row/col   2.21/   nan hpk 0.049
+  end z1hi  r_eo  0.024 z_self   0.38 rej | old pole 0 accept z row/col  -1.39/   nan hpk 0.024
+  end z3lo  r_eo  0.040 z_self   0.62 rej | old pole 0 accept z row/col   0.43/   nan hpk 0.040
+  end z3hi  r_eo  0.089 z_self   1.40 rej | old pole 1 accept z row/col   5.19/   nan hpk 0.089
+  new poles: none
+  state1+rest                  r_eo  0.050 z_self   0.79 z_dist    inf (anti/orth: -) | old rule: rest/none
+
+## dump_sites/qtoynull_nsite_r_s5/   n_eff 173.6  band 18..23  (old) 
+  end z1lo  r_eo  0.051 z_self   0.67 rej | old pole 0 accept z row/col  -0.20/   nan hpk 0.051
+  end z1hi  r_eo  0.048 z_self   0.63 rej | old pole 0 accept z row/col  -0.24/   nan hpk 0.048
+  end z3lo  r_eo  0.060 z_self   0.78 rej | old pole 0 accept z row/col  -1.28/   nan hpk 0.060
+  end z3hi  r_eo  0.029 z_self   0.38 rej | old pole 0 accept z row/col  -0.70/   nan hpk 0.029
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s6/   n_eff 108.9  band 18..23  (old) 
+  end z1lo  r_eo  0.160 z_self   1.66 rej | old pole 0 accept z row/col   2.53/   nan hpk 0.160
+  end z1hi  r_eo  0.124 z_self   1.28 rej | old pole 0 accept z row/col   0.68/   nan hpk 0.124
+  end z3lo  r_eo  0.117 z_self   1.21 rej | old pole 0 accept z row/col  -3.31/   nan hpk 0.117
+  end z3hi  r_eo  0.132 z_self   1.36 rej | old pole 0 accept z row/col   0.95/   nan hpk 0.132
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s7/   n_eff 105.2  band 18..23  (old) 
+  end z1lo  r_eo  0.087 z_self   0.88 rej | old pole 0 accept z row/col  -0.29/   nan hpk 0.087
+  end z1hi  r_eo  0.140 z_self   1.42 rej | old pole 0 accept z row/col   0.04/   nan hpk 0.140
+  end z3lo  r_eo  0.150 z_self   1.53 rej | old pole 0 accept z row/col  -0.01/   nan hpk 0.150
+  end z3hi  r_eo  0.096 z_self   0.97 rej | old pole 0 accept z row/col  -0.27/   nan hpk 0.096
+  new poles: none
+
+## dump_sites/qtoynull_nsite_r_s8/   n_eff 60.6  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.180 z_self   1.38 rej | old pole 0 accept z row/col   3.06/   nan hpk 0.180
+  end z1hi  r_eo  0.136 z_self   1.04 rej | old pole 1 accept z row/col   3.71/   nan hpk 0.136
+  end z3lo  r_eo  0.095 z_self   0.73 rej | old pole 0 accept z row/col   1.64/   nan hpk 0.095
+  end z3hi  r_eo  0.136 z_self   1.04 rej | old pole 1 accept z row/col   5.24/   nan hpk 0.136
+  new poles: none
+  state1+rest                  r_eo  0.074 z_self   0.56 z_dist    inf (anti/orth: -) | old rule: rest/none
+
+## dump_sites/qtoynull_nsite_r_s9/   n_eff 67.5  band 18..23  (old) 
+  end z1lo  r_eo  0.203 z_self   1.65 rej | old pole 0 accept z row/col   2.19/   nan hpk 0.203
+  end z1hi  r_eo  0.201 z_self   1.63 rej | old pole 0 accept z row/col   2.62/   nan hpk 0.201
+  end z3lo  r_eo  0.252 z_self   2.07 rej | old pole 0 accept z row/col   1.05/   nan hpk 0.252
+  end z3hi  r_eo  0.235 z_self   1.92 rej | old pole 0 accept z row/col   2.37/   nan hpk 0.235
+  new poles: none
+
+## dump_sites/qtoynull_site/   n_eff 635.1  band 18..23  (old) 1 60000 rest
+  end z1lo  r_eo  0.428 z_self  11.50 ACC | old pole 0 accept z row/col   6.95/   nan hpk 0.428
+  end z1hi  r_eo  0.360 z_self   9.48 ACC | old pole 1 accept z row/col  27.13/   nan hpk 0.360
+  end z3lo  r_eo  0.409 z_self  10.92 ACC | old pole 0 accept z row/col  12.07/   nan hpk 0.409
+  end z3hi  r_eo  0.354 z_self   9.30 ACC | old pole 1 accept z row/col  15.15/   nan hpk 0.354
+  pair z1lo  z1hi  rho_hat -0.892 z_res(b|a)   5.33 z_res(a|b)   7.14 resid share 0.36/0.36 -> distinct | old merge False (-7.23)
+  pair z1lo  z3lo  rho_hat  0.992 z_res(b|a)   1.30 z_res(a|b)   1.79 resid share 0.13/0.13 -> SAME | old merge True (-0.07)
+  pair z1lo  z3hi  rho_hat -0.914 z_res(b|a)   4.54 z_res(a|b)   6.50 resid share 0.33/0.33 -> distinct | old merge False (-5.60)
+  pair z1hi  z3lo  rho_hat -0.876 z_res(b|a)   6.45 z_res(a|b)   5.15 resid share 0.43/0.43 -> distinct | old merge False (-8.43)
+  pair z1hi  z3hi  rho_hat  0.981 z_res(b|a)   1.71 z_res(a|b)   1.86 resid share 0.38/0.38 -> SAME | old merge True (-0.03)
+  pair z3lo  z3hi  rho_hat -0.906 z_res(b|a)   4.27 z_res(a|b)   5.72 resid share 0.39/0.39 -> distinct | old merge False (-5.45)
+  new poles: z1lo+z3lo ; z1hi+z3hi
+  state1+rest                  r_eo  0.090 z_self   2.28 z_dist    inf (anti/orth: -) | old rule: rest/none
+  eigen of sym C: 1.467 0.075 0.007 0.003  null max (1-alpha) 0.168 -> rank 1
+

@@ -1,0 +1,201 @@
+diff --git a/src/main/flex/run/simple_flex_pca_project_gateway.f90 b/src/main/flex/run/simple_flex_pca_project_gateway.f90
+index f1b07bd..51562b8 100644
+--- a/src/main/flex/run/simple_flex_pca_project_gateway.f90
++++ b/src/main/flex/run/simple_flex_pca_project_gateway.f90
+@@ -357,8 +357,19 @@ contains
+         type(commander_rec3D) :: xrec3D
+         type(cmdline)         :: cline_rec
+         type(string)          :: vol_fname, fsc_fname
+-        integer :: state, nstates_out
++        integer :: state, nstates_out, box_out
++        real    :: smpd_out
++        box_out  = params%box
++        smpd_out = params%smpd
++        if( params%rec_states_box > 0 .and. params%rec_states_box < params%box )then
++            box_out  = params%rec_states_box
++            smpd_out = real(params%box) * params%smpd / real(box_out)
++        endif
+         call cline_rec%set('prg',         'reconstruct3D')
++        if( box_out < params%box )then
++            call cline_rec%set('box_crop',  box_out)
++            call cline_rec%set('smpd_crop', smpd_out)
++        endif
+         call cline_rec%set('projfile',    params%projfile%to_char())
+         call cline_rec%set('mkdir',       'no')
+         call cline_rec%set('oritype',     'ptcl3D')
+@@ -378,8 +389,8 @@ contains
+         call cline_rec%set('rtol',        params%rtol)
+         ! a distributed run reconstructs its delivered maps on its parts, as it runs its rounds
+         if( params%nparts > 1 ) call cline_rec%set('nparts',      params%nparts)
+-        write(logfhandle,'(A,I0,A)') '>>> FLEX_PCA DELIVERED STATE MAPS: reconstruct3D m_estimator=flex nstates=', nstates, &
+-            &' from the published state weight set'
++        write(logfhandle,'(A,I0,A,I0,A)') '>>> FLEX_PCA DELIVERED STATE MAPS: reconstruct3D m_estimator=flex nstates=', nstates, &
++            &' from the published state weight set, box ', box_out
+         call flush(logfhandle)
+         call xrec3D%execute(cline_rec)
+         call cline_rec%kill
+@@ -399,8 +410,8 @@ contains
+                 cycle
+             endif
+             vol_fname = simple_abspath(vol_fname)
+-            call build%spproj%add_vol2os_out(vol_fname, params%smpd, state, 'vol', box=params%box)
+-            call build%spproj%add_fsc2os_out(fsc_fname, state, params%box)
++            call build%spproj%add_vol2os_out(vol_fname, smpd_out, state, 'vol', box=box_out)
++            call build%spproj%add_fsc2os_out(fsc_fname, state, box_out)
+         end do
+         call build%spproj%write_segment_inside('out', params%projfile)
+         call vol_fname%kill
+diff --git a/src/main/params/simple_parameters.f90 b/src/main/params/simple_parameters.f90
+index 9105717..aacf516 100644
+--- a/src/main/params/simple_parameters.f90
++++ b/src/main/params/simple_parameters.f90
+@@ -465,6 +465,7 @@ type :: parameters
+     integer :: min_neff=2000       !< minimum effective particle count for covariance state kernels
+     integer :: state_axis=0        !< covariance latent coordinate for state targets; 0=diffusion k-center over all comps
+     integer :: nkern=0             !< # leading latent components used for state placement/kernel; 0=all (neigs)
++    integer :: rec_states_box=0
+     integer :: nbins=1             !< # kernel bandwidth bins for cross-validated state selection (1=off)
+     integer :: column_separation=2 !< minimum grid separation between selected covariance columns
+     integer :: n_probe_iters=0     !< EM/probe subspace-iteration refinements of the flex_pca column basis (0=off; commander sets 5)
+diff --git a/src/main/params/simple_parameters_parse.f90 b/src/main/params/simple_parameters_parse.f90
+index ec1f201..95a6ee1 100644
+--- a/src/main/params/simple_parameters_parse.f90
++++ b/src/main/params/simple_parameters_parse.f90
+@@ -424,6 +424,7 @@ contains
+         call reg%add_int('min_neff', self%min_neff)
+         call reg%add_int('state_axis', self%state_axis)
+         call reg%add_int('nkern', self%nkern)
++        call reg%add_int('rec_states_box', self%rec_states_box)
+         call reg%add_int('nbins', self%nbins)
+         call reg%add_int('column_separation', self%column_separation)
+         call reg%add_int('n_probe_iters', self%n_probe_iters)
+diff --git a/src/main/params/simple_parameters_phases.f90 b/src/main/params/simple_parameters_phases.f90
+index 9873635..fff1d7e 100644
+--- a/src/main/params/simple_parameters_phases.f90
++++ b/src/main/params/simple_parameters_phases.f90
+@@ -1257,6 +1257,7 @@ contains
+             case DEFAULT
+                 THROW_HARD('rec_plane_reuse must be yes or no')
+         end select
++        if( self%rec_states_box < 0 ) THROW_HARD('rec_states_box must be >= 0')
+         select case(trim(self%cache))
+             case('yes','no')
+             case DEFAULT
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index 170e973..c920f12 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -400,6 +400,7 @@ contains
+         call cl%set('projfile', 'm.simple')
+         call cl%set('nstates',  1)
+         call common_keys(self, cl)
++        call cl%set('postprocess', 'no')
+         call self%submit(i, S_MEAN, cl)
+     end subroutine start
+ 
+@@ -613,6 +614,7 @@ contains
+                     call cl%set('projfile', 'c.simple')
+                     call cl%set('nstates',  NCHILD)
+                     call common_keys(self, cl)
++                    call halves_only_keys(cl)
+                     call self%submit(i, S_CHEAP, cl)
+                 endif
+             case(S_CHEAP)
+@@ -667,6 +669,7 @@ contains
+                 call cl%set('projfile', 'b.simple')
+                 call cl%set('nstates',  ks)
+                 call common_keys(self, cl)
++                call halves_only_keys(cl)
+                 call self%submit(i, S_RECB0, cl)
+             case(S_RECB0)
+                 st   = project_states(d//'/recB0/b.simple')
+@@ -792,6 +795,8 @@ contains
+                 call cl%set('projfile', 'b.simple')
+                 call cl%set('nstates',  ks)
+                 call common_keys(self, cl)
++                call cl%set('postprocess', 'no')
++                call crop_keys(self, cl, BOXB)
+                 call self%submit(i, S_RECB, cl)
+             case(S_RECB)
+                 ch = compact(fold_small(project_states(d//'/stageA/r.simple')))
+@@ -945,6 +950,8 @@ contains
+             call cl%set('projfile', 's.simple')
+             call cl%set('nstates',  kss)
+             call common_keys(self, cl)
++            call cl%set('postprocess', 'no')
++            call crop_keys(self, cl, BOXA)
+             call self%submit(i, S_SEEDS, cl)
+         end subroutine seed_node
+ 
+@@ -1619,6 +1626,8 @@ contains
+         call cl%set('pcg_mskfile', d//'/mask.mrc')
+         if( self%p%flex_min_neff > 0 ) call cl%set('min_neff', self%p%flex_min_neff)
+         if( local_rows(d) ) call cl%set('rowmap', d//'/rows.txt')
++        ! its state maps feed only stA0's references and the two-group fallback's 40-10 A tree: stage A's box suffices
++        if( self%box > BOXA ) call cl%set('rec_states_box', BOXA)
+         call self%submit(i, S_FFLEX, cl)
+     end subroutine submit_fflex
+ 
+@@ -2289,6 +2298,7 @@ contains
+         call cl%set('nstates',  size(pres))
+         call self%set_parts(count(st > 0))
+         call common_keys(self, cl)
++        call cl%set('postprocess', 'no')
+         call self%submit_in(wd, cl)
+         self%fs(j)%st = F_MAPS
+         write(logfhandle,'(A)') '>>> HETERO_TREE site '//self%fs(j)%name//': maps of its '//int2str(size(pres))//' pole(s) at '//&
+@@ -2550,6 +2560,7 @@ contains
+             call cl%set('nstates',  size(pres))
+             call self%set_parts(count(st > 0))
+             call common_keys(self, cl)
++            call halves_only_keys(cl)
+             call self%submit_in(wd//'/refine_rec', cl)
+             nrun = nrun + 1
+             self%fs(j)%st = F_REC
+@@ -2734,6 +2745,7 @@ contains
+             call cl%set('nstates',  size(pres))
+             call self%set_parts(count(st > 0))
+             call common_keys(self, cl)
++            call halves_only_keys(cl)
+             call self%submit_in(wd//'/pre_rec', cl)
+             nrun = nrun + 1
+             self%fs(j)%st = F_PREC
+@@ -4559,6 +4571,22 @@ contains
+         endif
+     end subroutine common_keys
+ 
++    subroutine crop_keys( self, cl, boxc )
++        class(hetero_tree), intent(in)    :: self
++        class(cmdline),     intent(inout) :: cl
++        integer,            intent(in)    :: boxc
++        if( self%box <= boxc ) return
++        call cl%set('box_crop',  boxc)
++        call cl%set('smpd_crop', real(self%box) * self%smpd / real(boxc))
++    end subroutine crop_keys
++
++    ! a reconstruction whose consumers read only its unfiltered halves needs neither ML regularization nor postprocessing
++    subroutine halves_only_keys( cl )
++        class(cmdline), intent(inout) :: cl
++        call cl%set('ml_reg',      'no')
++        call cl%set('postprocess', 'no')
++    end subroutine halves_only_keys
++
+     subroutine flex_keys( self, cl, mean, k )
+         class(hetero_tree), intent(in)    :: self
+         class(cmdline),     intent(inout) :: cl
+diff --git a/src/main/ui/simple/simple_ui_heterogeneity.f90 b/src/main/ui/simple/simple_ui_heterogeneity.f90
+index f1b0555..b538f14 100644
+--- a/src/main/ui/simple/simple_ui_heterogeneity.f90
++++ b/src/main/ui/simple/simple_ui_heterogeneity.f90
+@@ -136,6 +136,11 @@ contains
+             '', .false., 'gridding', &
+         &choices=ui_choices([character(len=8) :: 'gridding', 'pcg']), &
+         &visibility=UI_VIS_ADVANCED)
++        call flex_pca%add_input(UI_FILT, 'rec_states_box', 'num', &
++            'Box of the final state maps (default 0 = the particle box)', &
++            'The state maps are reconstructed on this cropped box when it is smaller than the particle box; &
++            &hetero_tree sets the box its next refinement starts at', &
++            'voxels, 0=particle box', .false., 0.0, visibility=UI_VIS_DEVELOPER)
+         call flex_pca%add_input(UI_PARM, 'infile', 'file', &
+             'Cached embedding to resume from', &
+             'Path to a flex_pca_embedding.bin written by an earlier run. Skips the covariance &

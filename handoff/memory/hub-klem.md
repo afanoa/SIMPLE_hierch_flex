@@ -1,0 +1,110 @@
+---
+name: hub-klem
+description: "Topic index (95 memories): klem kernel-latent EM: method findings, the f692 RNase P runs, synthetic benchmarks (IgM/PDH-like), code traps"
+metadata:
+  node_type: memory
+  type: reference
+  originSessionId: 1ca67e82-4d15-4725-b95d-0ee5719be9f4
+  modified: 2026-10-25T06:15:15.074Z
+---
+
+Moved here verbatim from MEMORY.md on 2026-10-20 (the index had outgrown its read limit). One line per memory file.
+
+- [singer-laplacian-spectral-volumes-paper](singer-laplacian-spectral-volumes-paper.md) — Moscovich/Halevi/Andén/Singer…
+- [klem-kernel-latent-em-2026-10-15](klem-kernel-latent-em-2026-10-15.md) — kernel-latent EM (GTM-style 2-D grid of…
+- [klem-synthetic-arms-first-result-2026-10-17](klem-synthetic-arms-first-result-2026-10-17.md) — IgM-like synthetic:…
+- [klem-synthetic-benchmarks-arms-tethered](klem-synthetic-benchmarks-arms-tethered.md) — IgM-like (4 hinged arms) and…
+- [klem-f692-fortran-chain](klem-f692-fortran-chain.md) — the 692k Fortran-board tree runs as one resumable sbatch…
+- [klem-solvent-mask-and-supportk-verdicts-2026-10-17](klem-solvent-mask-and-supportk-verdicts-2026-10-17.md) — toy A/B: solvent mask…
+- [klem-leaf-states-are-redundant-across-regions](klem-leaf-states-are-redundant-across-regions.md) — map-based merge tree:…
+- [klem-board-convergence-and-exchange-2026-10-16](klem-board-convergence-and-exchange-2026-10-16.md) — board timing facts: 8 A…
+- [klem-focus-step-was-the-board-floor](klem-focus-step-was-the-board-floor.md) — focused boards were slow because of…
+- [klem-speed-plan-board-server](klem-speed-plan-board-server.md) — SPEED PRIORITY: boards spend ~17 of 37 min loading…
+- [klem-region-local-pooling-2026-10-17](klem-region-local-pooling-2026-10-17.md) — region-local merge of zoomed…
+- [direction-bin-route-synthetic-2026-10-18](direction-bin-route-synthetic-2026-10-18.md) — per-bin sub-classes carry…
+- [klem-gridding-deapodisation-ab-2026-10-18](klem-gridding-deapodisation-ab-2026-10-18.md) — KB gridding +…
+- [klem-tree-vs-product-organisation-2026-10-18](klem-tree-vs-product-organisation-2026-10-18.md) — f692e region tuples: 57k…
+- [klem-core-borrowing-composed-maps-2026-10-18](klem-core-borrowing-composed-maps-2026-10-18.md) — composed maps:…
+- [klem-scaling-synthetic-55-2026-10-18](klem-scaling-synthetic-55-2026-10-18.md) — 55-conformer landscape at…
+- [klem-refine-late-and-mppca-design-2026-10-16](klem-refine-late-and-mppca-design-2026-10-16.md) — toy: family-level…
+- [klem-fortran-port-state-2026-10-16](klem-fortran-port-state-2026-10-16.md) — port in progress: ~/SIMPLE_klem…
+- [klem-fortran-home-state-weight-set](klem-fortran-home-state-weight-set.md) — klem's Fortran home: master's…
+- [klem-null-leaves-sort-by-alignment-quality-2026-10-19](klem-null-leaves-sort-by-alignment-quality-2026-10-19.md) — null leaves…
+- [klem-cross-tree-merge-design-2026-10-19](klem-cross-tree-merge-design-2026-10-19.md) — within-tree halves share…
+- [klem-chain-speed-audit-2026-10-19](klem-chain-speed-audit-2026-10-19.md) — chain ~75-85 min/tree; applied:…
+- [klem-cross-tree-two50k-result-2026-10-19](klem-cross-tree-two50k-result-2026-10-19.md) — cross-tree gate: 8 states…
+- [arm-llr-ceiling-needs-fitted-map-scale](arm-llr-ceiling-needs-fitted-map-scale.md) — TRAP: sim images 300x weaker…
+- [igm-arms-ceiling-pose-limited-2026-10-19](igm-arms-ceiling-pose-limited-2026-10-19.md) — arms: board E-step =…
+- [klem-merge-threshold-needs-noise-null-2026-10-19](klem-merge-threshold-needs-noise-null-2026-10-19.md) — merge FSC 0.143…
+- [klem-forced-family-split-and-offset-mode-2026-10-19](klem-forced-family-split-and-offset-mode-2026-10-19.md) — overcount causes: forced…
+- [klem-split-test-statistic-traps-2026-10-19](klem-split-test-statistic-traps-2026-10-19.md) — split test traps: size…
+- [igm-pdh-papers-heterogeneity-baseline](igm-pdh-papers-heterogeneity-baseline.md) — IgM/PDH papers: what SPA resolved
+- [klem-data-derived-tree-v3-rule-2026-10-19](klem-data-derived-tree-v3-rule-2026-10-19.md) — tree rule that counts right…
+- [igm-like-synthetic-armsigm1-2026-10-19](igm-like-synthetic-armsigm1-2026-10-19.md) — IgM-like arms: PAUSED as limits case
+- [splitbench-rotation-convention-trap](splitbench-rotation-convention-trap.md) — TRAP: conv = transpose; truth ceiling first
+- [klem-tree-representation-assessment-2026-10-19](klem-tree-representation-assessment-2026-10-19.md) — deeper nesting is noise…
+- [klem-cross-half-final-pass-2026-10-19](klem-cross-half-final-pass-2026-10-19.md) — --xem pass beats own-half EM
+- [klem-six-conformer-700k-and-junk-flag-2026-10-19](klem-six-conformer-700k-and-junk-flag-2026-10-19.md) — 7 states; junk flag
+- [klem-state-graph-umap-and-real-halves-2026-10-19](klem-state-graph-umap-and-real-halves-2026-10-19.md) — UMAP; halves need |CTF|
+- [f692e-validation-cross-half-2026-10-19](f692e-validation-cross-half-2026-10-19.md) — f692e on independent halves
+- [klem-f692e-branch-snapshot](klem-f692e-branch-snapshot.md) — tag f692e-2026-10-18; klem_tree on fork
+- [klem-dtree-per-node-refinement-2026-10-20](klem-dtree-per-node-refinement-2026-10-20.md) — dtree_v13 per-node poses
+- [klem-data-derived-schedule-2026-10-20](klem-data-derived-schedule-2026-10-20.md) — node FSC coarsens; dtree_v14
+- [klem-board-rewrites-shared-project-trap](klem-board-rewrites-shared-project-trap.md) — TRAP: use private project copies
+- [klem-polish-loop-refine3d-states-2026-10-20](klem-polish-loop-refine3d-states-2026-10-20.md) — BEST: polish per half…
+- [f692e-landscape-pruning-test-2026-10-20](f692e-landscape-pruning-test-2026-10-20.md) — f692e diversity is the target
+- [halves-split-by-eo-break-refinement-trap](halves-split-by-eo-break-refinement-trap.md) — TRAP: MINHALF guard
+- [klem-organization-and-merge-up-2026-10-20](klem-organization-and-merge-up-2026-10-20.md) — boards redundant; merge-up
+- [klem-bottom-up-organization-2026-10-20](klem-bottom-up-organization-2026-10-20.md) — bottom-up tree, K <= 20
+- [klem-leaf-recipe-score-coordinate-2026-10-20](klem-leaf-recipe-score-coordinate-2026-10-20.md) — leaf recipe: K=8 basis + score-PC loop, ends 5/25 A
+- [state-tree-mergeup-port-2026-10-21](state-tree-mergeup-port-2026-10-21.md) — SIMPLE port of state_merge/bu_merge (uncommitted); swing30hs gap = per-particle noise normalization on unnormalized sim stacks
+- [klem-integrated-hierarchical-model-vision](klem-integrated-hierarchical-model-vision.md) — user 2026-10-21: tree = the latent model's prior; tree-weighted reconstruction; flex per branch with focus masks
+- [split-test-holdout-and-drain-traps-2026-10-21](split-test-holdout-and-drain-traps-2026-10-21.md) — data-derived split test (splitbench16, rflex6split joint decision), traps, s30split5 result; em_min 1000 floor removed 2026-10-23 (m8c39)
+- [split-routing-em-vs-stageB-2026-10-23](split-routing-em-vs-stageB-2026-10-23.md) — children follow the <=20 A EM labels: lose CAHRA's high-res open state, win on toy junk; no fixed routing rule
+- [junk-free-component-needs-scale-fair-maps-2026-10-21](junk-free-component-needs-scale-fair-maps-2026-10-21.md) — free comps 0.99 precision, blob 1.00, only with beta + same regulariser
+- [tree-as-prior-tests-2026-10-21](tree-as-prior-tests-2026-10-21.md) — continuous/discrete: rho = 1-D capture ratio; tree2 E-step refs; mask units artifact; tw_units final maps
+- [node-type-test-disjoint-band-2026-10-21](node-type-test-disjoint-band-2026-10-21.md) — stop test works (disjoint-band cross-half z, children + hard states); per-state gate names distinct states; states assigned at lp 20 + gate at 17-10 A fix the r4 miss (null calibration pending); continuous vs compositional not decidable; default hard states
+- [minority-soft-em-fixed-poses-no-rescue-2026-10-21](minority-soft-em-fixed-poses-no-rescue-2026-10-21.md) — f692st r1 state 5 = closed 1.00/open 0.47 (14.8k, depth 1, falloff masks); site ranking 0.96; axis EM no rescue
+- [focus-mask-truncates-mobile-tip-falloff-prior-2026-10-21](focus-mask-truncates-mobile-tip-falloff-prior-2026-10-21.md) — 20 % focus masks cut the arm tip under pcg_focus; use the falloff prior; deliver PLAIN (unfocused) maps, focused stage-B maps still damp the tip
+- [simsites-build-traps-2026-10-21](simsites-build-traps-2026-10-21.md) — TRAP: variants/domain_mask = arm swept volume; simulate_particles masks the volume at mskdiam (200 clipped the arm tip)
+- [landscape-sampling-stage-2026-10-21](landscape-sampling-stage-2026-10-21.md) — lsamp stage (spec section 5): pixel-split CV, check-3 gate; f692st r1 4-tree repro: leaf-only tip varies (lam1~lam2), pole-axis coordinate reproduces the whole landscape incl. tip; axis 2 = order-disorder
+- [f692st-final-deliverables-2026-10-21](f692st-final-deliverables-2026-10-21.md) — f692st done: 64 leaves; plain final maps view_rflex/f692st_final_emp2 (+units_index); closed r1_s5 1.07/0.51 to the tip; r51_s5 other arm position; 107k neither-position leaves = junk (user), mostly r6
+- [arm-landscape-deconvolution-truth-tests-2026-10-21](arm-landscape-deconvolution-truth-tests-2026-10-21.md) — occupancy landscapes: naive flattens barriers 60-85 %; 1-D deconvolution cannot resolve 2 kT, full path likelihood can; map-level gets basin masses only
+- [factorial-site-layer-test-2026-10-21](factorial-site-layer-test-2026-10-21.md) — site layer built INTO the tree (tree_sites.py); closed pole automatic, reproduces across runs/halves; mask-robust EM; sibling-factor and ranking traps
+- [pole-census-synthetic-validation-2026-10-22](pole-census-synthetic-validation-2026-10-22.md) — census of site-EM fixed points on truth: discrete states are attractors, continua give their ends; middle-start test; converge EMs
+- [tree-leaves-not-reproducible-across-runs-2026-10-21](tree-leaves-not-reproducible-across-runs-2026-10-21.md) — TRAP: two runs of node r1 agree at NMI 0.24 / ARI 0.17; closed leaf split over two port leaves; compare reruns before judging a change
+- [split-recurrence-across-seeds-2026-10-24](split-recurrence-across-seeds-2026-10-24.md) — seed recurrence vets only strong splits (CAHRA AUC 0.975; cdisc 0.667, below root 0.604); merge-up, not recurrence, absorbs null splits
+- [m52-toy-arms-merged-units-2026-10-24](m52-toy-arms-merged-units-2026-10-24.md) — m8c52s arms: merge-up collapses cdisc null splits (unit NMI 0.40 > p27 0.36); IgM M over-splits (45 units vs 21)
+- [toy-tree-validation-toolkit-2026-10-24](toy-tree-validation-toolkit-2026-10-24.md) — validate_tree3 / units_prep / track_node / compare_spread / split_support; TRAP old scorer counted junk leaves as genuine
+- [igm-motion-extremes-capture-2026-10-24](igm-motion-extremes-capture-2026-10-24.md) — IgM: tree units miss arm extremes; site-posterior tails/bins give extremes + monotone paths; tree-state paths coarse
+- [motion-series-prototype-2026-10-24](motion-series-prototype-2026-10-24.md) — posterior bins -> 5-state rec3D: smooth series, ends ~9.6 A at 10k (IgM), OLE ~5.5 A; recipe + costs; 2-column post TRAP
+- [latent-graph-cannot-tell-discrete-from-continuous-2026-10-24](latent-graph-cannot-tell-discrete-from-continuous-2026-10-24.md) — diffusion maps/conductance on root MAP z: no bottleneck even for discrete states; imposed dip lost; decide on binned-map evidence (per-shell mixture residual + step share); OLE r1_s4 / r2_s4 / r_s2 call two-state
+- [at-node-switch-swing-call-2026-10-24](at-node-switch-swing-call-2026-10-24.md) — at-node call: nb_SF >= 0.030 = swing (switches 8/8, swings 22/23); false splits are not map-null (composition / views / defocus); RNase P m33 all switch; spec doc
+- [selected-subset-maps-imprint-inflates-extremes-2026-10-22](selected-subset-maps-imprint-inflates-extremes-2026-10-22.md) — TRAP: own-pixel maps of selected subsets overstate extremes (+4-7 A on truth); judge on held-out pixels
+- [overnight-reproducibility-investigation-2026-10-22](overnight-reproducibility-investigation-2026-10-22.md) — overnight r1 reproducibility tests (v2, 12-iteration, K=2/3/4/8, merge-up, poles): job ids, outputs, morning report
+- [pole-merge-line-inside-closed-pair-2026-10-22](pole-merge-line-inside-closed-pair-2026-10-22.md) — r1: z1/z3 closed endpoints distinct (0.93-0.98 vs 0.99-1.00 replicate); 0.95 line gives P 3/3/4; P=4: z3 seed = closed extremum 0.93, z1 seed = intermediate; extrema reproduce at P=3 and 4
+- [poles-are-minority-vs-rest-k-includes-rest-2026-10-22](poles-are-minority-vs-rest-k-includes-rest-2026-10-22.md) — site EM poles = minority vs rest: K = poles + rest, seed at posterior >= 0.5, twin rescue; poles per site (user-approved defaults)
+- [junk-detected-per-node-not-only-root-2026-10-22](junk-detected-per-node-not-only-root-2026-10-22.md) — junk = fits no state, tested at EVERY node at seeding (splits rest into interior vs junk); junk STATES flagged for the user, not removed
+- [per-node-junk-rule-prototype-2026-10-22](per-node-junk-rule-prototype-2026-10-22.md) — the rule as built: amplitude NUM/DEN vs every state + 3-component heteroscedastic cut (>= 2 sd); per-defocus-bin mixture rejected; real r1/r2/r4/r6 no junk
+- [port-tree-site-layer-recovers-closed-2026-10-22](port-tree-site-layer-recovers-closed-2026-10-22.md) — all port candidates as sites recover the closed arm the port tree misses (AUC 0.79 -> 0.86 re-masked; ceiling 0.95); masks are fragments
+- [factorial-site-layer-port-2026-10-23](factorial-site-layer-port-2026-10-23.md) — lean site layer built in hetero_tree (uncommitted, m8c6-14, test switch SIMPLE_FSITE_GATE); V3 + EPM labels chosen, full692 job 54110499; p27 toy validation; TRAP sacct COMPLETED != tree finished
+- [margin-weighted-membership-2026-10-23](margin-weighted-membership-2026-10-23.md) — hetero_tree margin weights (m8c17, uncommitted): likelihood scale T = f*pi*wsqsum/(2*pftsz), likelier-only, + discovery re-cut (m8c16) + stage-A compaction fix
+- [tree-contrast-and-identity-junk-2026-10-23](tree-contrast-and-identity-junk-2026-10-23.md) — tree fits its own contrast; every junk rule fails on toys or CAHRA; EMPTY ONLY default (m8c30); per-particle evidence no-go (cdisc 0.55 vs 2.1 nats); node_rows on (m8c32); RNase P runs: junk_screen=no (user)
+- [tree-junk-pole-reentry-2026-10-24](tree-junk-pole-reentry-2026-10-24.md) — junk unit + ONE group = unexplored leaf (m8c52 cdisc); SIMPLE_TREE_REENTER fix (uncommitted, m8c58t); amplitude rule 57 % toy junk but dropped for CAHRA; EM floor moot; mid-tree node replay recipe
+- [final-estep-ole-real-data-2026-10-24](final-estep-ole-real-data-2026-10-24.md) — 4c final K-state E-step on OLE (2 seeds): moves 22 %, FSC flat, depth-2 still chance, root 0.986 -> 0.901; constrain to reproducible splits
+- [ole-motions-reproduce-partitions-dont-2026-10-24](ole-motions-reproduce-partitions-dont-2026-10-24.md) — OLE s1 vs s2: root motions reproduce, node motions only >~8k; split-half REFIT gate predicts it (AUC 0.83; cut = null median + 3 MAD); m33: size and depth both matter; TRAPs inside
+- [hetero-tree-flex-singleton-state-aborts-sta0](hetero-tree-flex-singleton-state-aborts-sta0.md) — TRAP: flex occupancy floor keeps a 1-particle runner-up, stA0 refine3D aborts, the node's rows end in no leaf (RNase P r221111/r221112); controller fix priced
+- [path-model-pose-marginalised-reweighting-2026-10-22](path-model-pose-marginalised-reweighting-2026-10-22.md) — VALIDATED: OT morph + pose-marginalised likelihood + truth-chosen smoothing; barriers read 60 % of true; r1 not a few-state switch
+- [flex-latent-density-basins-no-power-2026-10-22](flex-latent-density-basins-no-power-2026-10-22.md) — kNN-density basins of flex latents read 1 basin even for a 4 kT double well; coordinates z are XD posterior means; embedding.bin layout
+- [r1-deconvolved-latent-landscape-reproducible-2026-10-22](r1-deconvolved-latent-landscape-reproducible-2026-10-22.md) — r1 3 runs: deconvolved latent density + poles reproduce (BC 0.9988 / 0.97, poles within noise); XD latent basins miss 5 % states
+- [fixed-pose-node-mask-em-is-not-refine3d-2026-10-22](fixed-pose-node-mask-em-is-not-refine3d-2026-10-22.md) — TRAP: fixed-pose K-class EM in the node mask != refine3D states (collapse/jitter, wrong site, r1 one leaf); only the local site mask works
+- [hetero-tree-schedule-cuts-fail-unconverged-drift-2026-10-22](hetero-tree-schedule-cuts-fail-unconverged-drift-2026-10-22.md) — TRAP: cheaper schedules fail the v47 LABEL standard; scored vs truth 1+1 per stage won (toys), user made it default 2026-10-23
+- [hetero-tree-4p5m-12h-serial-profile-2026-10-23](hetero-tree-4p5m-12h-serial-profile-2026-10-23.md) — TARGET 4.5M tree in ~12 h: 692k root 60 % master-only (flex_pca all-particle embed 0.42 ms/ptcl, one-job site_rank / state_split); plan v1 12.4-14.7 h
+- [flex-delivered-state-maps-one-process-2026-10-24](flex-delivered-state-maps-one-process-2026-10-24.md) — flex_pca state maps rebuilt in ONE process (34-47 % of depth>0 fflex); distributed = same maps, r1 599 -> 189 s; root rec = updatecnt>0 rows (25k), not a cap
+- [latent-first-kmeans-loses-to-tree-root-2026-10-23](latent-first-kmeans-loses-to-tree-root-2026-10-23.md) — global k-means on flex/fflex MAP z never beats the tree root split (CAHRA 0.18-0.24 vs 0.463; cdisc 0.10-0.17 vs 0.41); no stable clusters (ARI <= 0.16); NMI-stability picks max K
+- [hetero-tree-toy-root-flex-nondeterminism-and-oneflex-2026-10-22](hetero-tree-toy-root-flex-nondeterminism-and-oneflex-2026-10-22.md) — TRAP: 1 of 3 identical toy roots diverged in flex_pca latents (2 vs 5 leaves); oneflex kept the 5-leaf tree, children -41 %
+
+Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read limit again).
+
+- [klem-worker-scripts-collide-in-shared-cwd](klem-worker-scripts-collide-in-shared-cwd.md) — TRAP: concurrent board…
+- [klem-worker-jobs-are-named-simple-afm-cryoem](klem-worker-jobs-are-named-simple-afm-cryoem.md) — the klem board/rec…

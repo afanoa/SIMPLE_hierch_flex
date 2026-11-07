@@ -1,0 +1,758 @@
+diff --git a/src/main/params/simple_parameters.f90 b/src/main/params/simple_parameters.f90
+index 42bf261db..7d1541dbf 100644
+--- a/src/main/params/simple_parameters.f90
++++ b/src/main/params/simple_parameters.f90
+@@ -97,6 +97,8 @@ type :: parameters
+     character(len=3)          :: mcpatch='yes'        !< whether to perform patch-based alignment during motion correction
+     character(len=3)          :: mcpatch_thres='yes'  !< whether to use the threshold for motion correction patch solution(yes|no){yes}
+     character(len=3)          :: memreport='no'       !< enable per-process runtime memory telemetry(yes|no){no}
++    character(len=3)          :: merge_geom_reuse='no'
++    character(len=3)          :: merge_insert_reuse='no'
+     character(len=3)          :: mirr='no'            !< mirror(no|x|y){no}
+     character(len=3)          :: mirr_proj='no'       !< mirror projections(no|x|y){no}
+     character(len=3)          :: mkdir='no'           !< make auto-named execution directory(yes|no){no}
+diff --git a/src/main/params/simple_parameters_parse.f90 b/src/main/params/simple_parameters_parse.f90
+index 22b6e38f2..c271bfbe0 100644
+--- a/src/main/params/simple_parameters_parse.f90
++++ b/src/main/params/simple_parameters_parse.f90
+@@ -132,6 +132,8 @@ contains
+         call reg%add_char('mcpatch', self%mcpatch)
+         call reg%add_char('mcpatch_thres', self%mcpatch_thres)
+         call reg%add_char('memreport', self%memreport)
++        call reg%add_char('merge_geom_reuse', self%merge_geom_reuse)
++        call reg%add_char('merge_insert_reuse', self%merge_insert_reuse)
+         call reg%add_char('mic_old_root', self%mic_old_root)
+         call reg%add_char('mirr', self%mirr)
+         call reg%add_char('mirr_proj', self%mirr_proj)
+diff --git a/src/main/params/simple_parameters_phases.f90 b/src/main/params/simple_parameters_phases.f90
+index 6b0fd5014..1c133e904 100644
+--- a/src/main/params/simple_parameters_phases.f90
++++ b/src/main/params/simple_parameters_phases.f90
+@@ -1180,6 +1180,16 @@ contains
+                     THROW_HARD('model_cavgs_rejection quality_context must be chunk, pool, or sieve')
+             end select
+         endif
++        select case(trim(self%merge_geom_reuse))
++            case('yes','no')
++            case DEFAULT
++                THROW_HARD('merge_geom_reuse must be yes or no')
++        end select
++        select case(trim(self%merge_insert_reuse))
++            case('yes','no')
++            case DEFAULT
++                THROW_HARD('merge_insert_reuse must be yes or no')
++        end select
+         select case(trim(self%cache))
+             case('yes','no')
+             case DEFAULT
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index 82bddc55f..46c7a9e74 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -748,6 +748,8 @@ contains
+                 call cl%set('mskdiam',     self%p%mskdiam)
+                 call cl%set('pcg_mskfile', mask)
+                 call cl%set('pgrp',        trim(self%p%pgrp))
++                if( self%p%merge_geom_reuse   == 'yes' ) call cl%set('merge_geom_reuse',   'yes')
++                if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
+                 call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
+                 call self%submit(i, S_SPLIT, cl, count(st > 0))
+             case(S_SPLIT)
+@@ -1088,6 +1090,8 @@ contains
+         call cl%set('infile2',  md//'/leaf_masks.txt')
+         call cl%set('mskdiam',  self%p%mskdiam)
+         call cl%set('pgrp',     trim(self%p%pgrp))
++        if( self%p%merge_geom_reuse   == 'yes' ) call cl%set('merge_geom_reuse',   'yes')
++        if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
+         call cl%set('nthr',     max(self%p%nthr, min(SITE_NTHR, ceiling(real(np) / real(PTCLS_PER_PART)))))
+         call self%submit_in(md, cl, np)
+         write(logfhandle,'(A)') '>>> HETERO_TREE merge-up of the '//int2str(nn)//' leaves submitted'
+diff --git a/src/main/strategies/search/simple_state_mergeup.f90 b/src/main/strategies/search/simple_state_mergeup.f90
+index b82eb2fd2..16e1cf22e 100644
+--- a/src/main/strategies/search/simple_state_mergeup.f90
++++ b/src/main/strategies/search/simple_state_mergeup.f90
+@@ -79,6 +79,7 @@ type :: state_mergeup
+     procedure, private :: cross_em
+     procedure, private :: estep
+     procedure, private :: maps
++    procedure, private :: maps_weighted_shared
+     procedure, private :: accumulate
+     procedure, private :: accumulate_jobs
+     procedure, private :: finish
+@@ -1216,10 +1217,14 @@ contains
+             real,    allocatable :: jscale(:), jw(:)
+             integer :: gg, nn
+             nn     = size(idx)
++            jscale = [[(max(sum(w(:,gg)), 1.)/real(neq), gg=1,k)], real(nn)/real(neq)]
++            if( self%p%merge_insert_reuse == 'yes' )then
++                call self%maps_weighted_shared(idx, w, jscale, eps, .true., m)
++                return
++            endif
+             jidx   = [[(idx, gg=1,k)], idx]
+             joff   = [(1 + gg*nn, gg=0,k+1)]
+             jw     = [reshape(w, [nn*k]), [(1., gg=1,nn)]]
+-            jscale = [[(max(sum(w(:,gg)), 1.)/real(neq), gg=1,k)], real(nn)/real(neq)]
+             call self%maps(jidx, joff, jscale, eps, .false., .true., m, jw)
+         end subroutine em_maps
+ 
+@@ -2661,11 +2666,13 @@ contains
+         logical,              intent(in)    :: l_alive(:)
+         real, allocatable,    intent(out)   :: wnew(:,:)
+         real,    allocatable :: aa(:,:,:), bb(:,:,:)
++        complex, allocatable :: projected(:,:)
+         integer, allocatable :: mp(:)
+         real(dp) :: sa(self%nshem), sb(self%nshem), sf(self%nshem), sc(self%nshem), scl(self%nshem), sig2(self%nshem)
+         real(dp) :: prior(size(refs)), s(size(refs)), smax
+         complex  :: pv, wv
+-        integer  :: n, k, i, ip, g, j, h, kk, sh, it, nyq_save
++        integer  :: n, k, i, ip, g, j, h, kk, sh, it, nyq_save, nthr
++        logical  :: l_reuse
+         n  = size(idx)
+         k  = size(refs)
+         mp = maxloc(w, dim=2)
+@@ -2673,6 +2680,14 @@ contains
+             prior(g) = log(max(real(sum(w(:,g)),dp) / real(n,dp), 1.e-6_dp))
+         end do
+         allocate(aa(self%nshem,k,n), bb(self%nshem,k,n), source=0.)
++        l_reuse = self%p%merge_geom_reuse == 'yes'
++        if( l_reuse )then
++            nthr = 1
++            !$ nthr = omp_get_max_threads()
++            if( nthr > size(self%smps) ) THROW_HARD('projection geometry scratch is smaller than the OpenMP team')
++            ! the half-disc of the E-step band fits inside this rectangle
++            allocate(projected((2*self%kb+1)*(self%kb+1),nthr))
++        endif
+         sa = 0._dp
+         sb = 0._dp
+         sf = 0._dp
+@@ -2685,10 +2700,17 @@ contains
+             call self%os(it)%set_euler(self%eul(:,ip))
+             nyq_save = self%fpls(ip)%nyq
+             self%fpls(ip)%nyq = OSMPL_PAD_FAC * self%kb
++            ! cross_em creates all refs on one lattice with one kernel; only their values differ
++            if( l_reuse ) call self%smps(it)%new_plane(refs(1), self%os(it), self%fpls(ip))
+             do g = 1, k
+                 if( .not. l_alive(g) .and. g /= mp(i) ) cycle
+-                call refs(g)%project_fplane(self%os(it), self%fpls(ip), self%pouts(it), apply_ctf_amp=.false., &
+-                    &samples=self%smps(it))
++                if( l_reuse )then
++                    call self%smps(it)%gather(refs(g), projected(:,it))
++                    call self%smps(it)%put_plane(projected(:,it), self%fpls(ip), self%pouts(it), .false.)
++                else
++                    call refs(g)%project_fplane(self%os(it), self%fpls(ip), self%pouts(it), apply_ctf_amp=.false., &
++                        &samples=self%smps(it))
++                endif
+                 do j = 1, self%nem
+                     h  = self%emhk(1,j)
+                     kk = self%emhk(2,j)
+@@ -2863,6 +2885,89 @@ contains
+         !$omp end parallel do
+     end subroutine maps
+ 
++    ! EM targets share an ordered row list; the per-map chunks and their reduction order are those of maps
++    subroutine maps_weighted_shared( self, idx, w, jscale, eps, l_band, cms )
++        use simple_reconstructor, only: insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
++        class(state_mergeup), intent(inout) :: self
++        integer,              intent(in)    :: idx(:)
++        real,                 intent(in)    :: w(:,:), jscale(:), eps(0:)
++        logical,              intent(in)    :: l_band
++        complex,              intent(inout) :: cms(:,:,:,:)
++        class(ori), allocatable :: poses(:)
++        type(fplane_type), allocatable :: planes(:)
++        integer :: slots(MAX_INSERT_TARGETS), nj, nc, nthr, first, nt, q, c, i, j, h, kk, lo, hi, it, ib, nr, begin
++        real :: weights(MAX_INSERT_TARGETS,MAX_INSERT_PLANES)
++        nj = size(jscale)
++        if( size(w,1) /= size(idx) .or. size(w,2)+1 /= nj ) THROW_HARD('EM weight shape; maps_weighted_shared')
++        nthr = 1
++        !$ nthr = omp_get_max_threads()
++        nc = 1
++        if( nj < nthr .and. nj <= self%nslots ) nc = max(1, min(self%nslots, max(nthr,nj)) / nj)
++        allocate(poses(MAX_INSERT_PLANES), planes(MAX_INSERT_PLANES))
++        do ib = 1, MAX_INSERT_PLANES
++            call poses(ib)%new(is_ptcl=.true.)
++            if( l_band )then
++                planes(ib) = self%fpls(1)
++                planes(ib)%cmplx_plane = cmplx(0.,0.)
++                planes(ib)%ctfsq_plane = 0.
++            endif
++        end do
++        first = 1
++        do while( first <= nj )
++            nt = min(MAX_INSERT_TARGETS, self%nslots/nc, nj-first+1)
++            if( nt < 1 ) THROW_HARD('no target slots; maps_weighted_shared')
++            do it = 1, nt*nc
++                call self%recs(it)%reset
++                call self%recs(it)%reset_exp
++            end do
++            do c = 1, nc
++                slots(:nt) = [((q-1)*nc+c, q=1,nt)]
++                it = slots(1)
++                lo = ((c-1)*size(idx))/nc + 1
++                hi = (c*size(idx))/nc
++                do begin = lo, hi, MAX_INSERT_PLANES
++                    nr = min(MAX_INSERT_PLANES,hi-begin+1)
++                    do ib = 1, nr
++                        i = begin+ib-1
++                        do q = 1, nt
++                            j = first+q-1
++                            weights(q,ib) = 1.
++                            if( j < nj ) weights(q,ib) = w(i,j)
++                        end do
++                        call poses(ib)%set_euler(self%eul(:,idx(i)))
++                        if( l_band )then
++                            do j = 1, self%nem
++                                h  = self%emhk(1,j)
++                                kk = self%emhk(2,j)
++                                planes(ib)%cmplx_plane(h,kk) = self%fpls(idx(i))%cmplx_plane(h,kk)
++                                planes(ib)%ctfsq_plane(h,kk) = self%fpls(idx(i))%ctfsq_plane(h,kk)
++                            end do
++                        else
++                            planes(ib) = self%fpls(idx(i))
++                        endif
++                    end do
++                    call insert_planes_targets(self%recs, slots(:nt), self%syms(it), poses, planes, weights(:nt,:nr), nr)
++                end do
++            end do
++            !$omp parallel do default(shared) private(q,c,it) schedule(static,1) proc_bind(close)
++            do q = 1, nt
++                it = (q-1)*nc+1
++                do c = 0, nc-1
++                    call self%recs(it+c)%compress_exp
++                end do
++                do c = 1, nc-1
++                    call self%recs(it)%sum_reduce(self%recs(it+c))
++                end do
++                call self%finish(it, eps*jscale(first+q-1), .false., cms(:,:,:,first+q-1))
++            end do
++            !$omp end parallel do
++            first = first + nt
++        end do
++        do ib = 1, MAX_INSERT_PLANES
++            call poses(ib)%kill()
++        end do
++    end subroutine maps_weighted_shared
++
+     function strata( self, idx ) result( st )
+         use simple_srch_sort_loc, only: hpsort
+         class(state_mergeup), intent(in) :: self
+diff --git a/src/main/ui/simple/simple_ui_heterogeneity.f90 b/src/main/ui/simple/simple_ui_heterogeneity.f90
+index 451de50fc..ab43da550 100644
+--- a/src/main/ui/simple/simple_ui_heterogeneity.f90
++++ b/src/main/ui/simple/simple_ui_heterogeneity.f90
+@@ -489,6 +489,14 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
+         call state_mergeup%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+         call state_mergeup%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+         call state_mergeup%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
++        call state_mergeup%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
++        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
++        call state_mergeup%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
++        &'Prepare each particle''s fixed interpolation geometry once for all candidate maps(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+         call add_ui_program('state_mergeup', state_mergeup, prgtab, UI_CATEGORY)
+     end subroutine new_state_mergeup
+ 
+@@ -521,6 +529,14 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
+         call state_split%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
+         call state_split%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
+         call state_split%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)
++        call state_split%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
++        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
++        call state_split%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
++        &'Prepare each particle''s fixed interpolation geometry once for all candidate maps(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+         call add_ui_program('state_split', state_split, prgtab, UI_CATEGORY)
+     end subroutine new_state_split
+ 
+@@ -630,6 +646,14 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
+         &upward while the parent''s ranking agrees; per particle and kept site a pole label and posterior, a site table and &
+         &unsharpened pole maps (factorial/)(yes|no){yes}', '', .false., 'yes', visibility=UI_VIS_ADVANCED, &
+         &choices=ui_choices([character(len=3) :: 'yes', 'no']))
++        call hetero_tree%add_input(UI_COMP, 'merge_insert_reuse', 'binary', 'Reuse EM insertion geometry', &
++        &'Share exact interpolation geometry across a bounded set of candidate maps(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
++        call hetero_tree%add_input(UI_COMP, 'merge_geom_reuse', 'binary', 'Reuse projection geometry', &
++        &'Reuse fixed particle interpolation geometry across candidate maps in split and merge tests(yes|no){no}', '', &
++        &.false., 'no', group='compute', visibility=UI_VIS_DEVELOPER, &
++        &choices=ui_choices([character(len=3) :: 'yes', 'no']))
+         call hetero_tree%add_input(UI_PARM, 'pole_merge', 'num', 'Pole merge line', &
+         &'0: a node''s poles are accepted and merged by their versions in two disjoint particle halves; a Spearman value &
+         &instead merges endpoints whose rankings correlate at least that much{0}', 'Spearman{0}', .false., 0., &
+diff --git a/src/main/volume/simple_reconstructor.f90 b/src/main/volume/simple_reconstructor.f90
+index a47512a0c..9a3484687 100644
+--- a/src/main/volume/simple_reconstructor.f90
++++ b/src/main/volume/simple_reconstructor.f90
+@@ -8,9 +8,13 @@ use simple_gridding,   only: kb_stencil_inv_envelope_1d, deapodize3D_inplace
+ implicit none
+ 
+ public :: reconstructor, gridding_half_restore, exp_samples, insert_planes_multi
++public :: insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
+ private
+ #include "simple_local_flags.inc"
+ 
++integer, parameter :: MAX_INSERT_TARGETS = 4
++integer, parameter :: MAX_INSERT_PLANES = 32
++
+ !> Dense outputs produced while restoring one gridding half. The base image is
+ !! deliberately undeapodized because FSC and cFAR are estimated on it;
+ !! final is the deapodized map handed to downstream consumers.
+@@ -572,6 +576,173 @@ contains
+ 
+     end subroutine insert_plane_oversamp
+ 
++    ! Bounded ordered batch: one team shares geometry across targets without changing per-map addition order.
++    subroutine insert_planes_targets( recs, slots, se, orientations, fpls, w, nrecords )
++        use simple_math, only: ceil_div, floor_div
++        class(reconstructor), intent(inout) :: recs(:)
++        integer,              intent(in)    :: slots(:)
++        class(sym),           intent(inout) :: se
++        class(ori),           intent(inout) :: orientations(:)
++        class(fplane_type),   intent(in)    :: fpls(:)
++        real,                 intent(in)    :: w(:,:)
++        integer,              intent(in)    :: nrecords
++        type(ori) :: o_sym
++        complex   :: comp(MAX_INSERT_TARGETS), cmplx_raw
++        real      :: rotmats(se%get_nsym(),3,3,MAX_INSERT_PLANES), loc(3), hrow(3), ctfval(MAX_INSERT_TARGETS)
++        integer, parameter :: WDIM = 2 * ceiling(KBWINSZ - 0.5) + 1
++        real      :: wx(WDIM), wy(WDIM), wz(WDIM), ww, ctfsq_raw
++        real      :: r11, r12, r13, r21, r22, r23
++        integer   :: win(2, 3), h, k, l, nsym, isym, iwinsz, stride, fpllims_pd(3, 2)
++        integer   :: fpllims(3, 2,MAX_INSERT_PLANES), pf, ix, iy, iz, hx, ky, mz, i
++        integer   :: nyq_disk, h_sq, k_max_h, k_lo, k_hi, q, r0, nt
++        real      :: source_scale(MAX_INSERT_TARGETS,MAX_INSERT_PLANES), eps_norm, inv_wdim
++        nt = size(slots)
++        if( nt < 1 .or. nt > MAX_INSERT_TARGETS .or. size(w,1) /= nt ) THROW_HARD('invalid target count; insert_planes_targets')
++        if( nrecords < 1 .or. nrecords > MAX_INSERT_PLANES ) THROW_HARD('invalid batch size; insert_planes_targets')
++        if( min(size(orientations),size(fpls),size(w,2)) < nrecords ) THROW_HARD('batch arrays too small; insert_planes_targets')
++        if( any(slots < 1) .or. any(slots > size(recs)) ) THROW_HARD('target slot outside array; insert_planes_targets')
++        r0 = slots(1)
++        do q = 1, nt
++            if( any(slots(:q-1) == slots(q)) ) THROW_HARD('duplicate target slot; insert_planes_targets')
++            if( .not. allocated(recs(slots(q))%cmat_exp) ) THROW_HARD('missing expanded target; insert_planes_targets')
++            if( .not. allocated(recs(slots(q))%rho_exp) ) THROW_HARD('missing density target; insert_planes_targets')
++            if( recs(slots(q))%wdim /= WDIM .or. recs(slots(q))%nyq /= recs(r0)%nyq ) &
++                THROW_HARD('incompatible target kernel; insert_planes_targets')
++            if( any(recs(slots(q))%lims /= recs(r0)%lims) ) THROW_HARD('incompatible target limits; insert_planes_targets')
++            if( any(lbound(recs(slots(q))%cmat_exp) /= lbound(recs(r0)%cmat_exp)) .or. &
++                &any(ubound(recs(slots(q))%cmat_exp) /= ubound(recs(r0)%cmat_exp)) ) &
++                THROW_HARD('incompatible target lattice; insert_planes_targets')
++            if( any(lbound(recs(slots(q))%rho_exp) /= lbound(recs(r0)%rho_exp)) .or. &
++                &any(ubound(recs(slots(q))%rho_exp) /= ubound(recs(r0)%rho_exp)) ) &
++                THROW_HARD('incompatible target density; insert_planes_targets')
++        end do
++        if( all(w(:,:nrecords) <= 0.) ) return
++        iwinsz = ceiling(KBWINSZ - 0.5)
++        stride = ceiling(sqrt(3.0) * real(recs(r0)%wdim))
++        nsym   = se%get_nsym()
++        pf     = OSMPL_PAD_FAC
++        source_scale(:nt,:nrecords) = real(pf*pf) * w(:,:nrecords)
++        do i = 1, nrecords
++            rotmats(1,:,:,i) = orientations(i)%get_mat()
++            do isym = 2, nsym
++                call se%apply(orientations(i), isym, o_sym)
++                rotmats(isym,:,:,i) = o_sym%get_mat()
++            end do
++            fpllims_pd        = fpls(i)%frlims
++            fpllims(:,:,i)    = fpllims_pd
++            fpllims(1,1,i)    = ceil_div (fpllims_pd(1,1), pf)
++            fpllims(1,2,i)    = floor_div(fpllims_pd(1,2), pf)
++            fpllims(2,1,i)    = ceil_div (fpllims_pd(2,1), pf)
++            fpllims(2,2,i)    = floor_div(fpllims_pd(2,2), pf)
++        end do
++        eps_norm     = epsilon(1.0)
++        inv_wdim     = 1.0 / real(recs(r0)%wdim)
++        nyq_disk = recs(r0)%nyq * (recs(r0)%nyq + 1)
++        !$omp parallel default(shared) shared(recs,fpls) private(h,k,l,h_sq,k_max_h,k_lo,k_hi,comp,cmplx_raw,&
++        !$omp& ctfsq_raw,ctfval,wx,wy,wz,ww,win,loc,hrow,r11,r12,r13,r21,r22,r23,&
++        !$omp& isym,ix,iy,iz,hx,ky,mz,q,i) proc_bind(close)
++        do i = 1, nrecords
++            if( all(w(:,i) <= 0.) ) cycle
++            do isym = 1, nsym
++                r11 = rotmats(isym,1,1,i); r12 = rotmats(isym,1,2,i); r13 = rotmats(isym,1,3,i)
++                r21 = rotmats(isym,2,1,i); r22 = rotmats(isym,2,2,i); r23 = rotmats(isym,2,3,i)
++                do l = 0, stride-1
++                    !$omp do schedule(static,1)
++                    do h = fpllims(1,1,i)+l, fpllims(1,2,i), stride
++                        h_sq = h*h
++                        if( h_sq > nyq_disk ) cycle
++                        k_max_h = int(sqrt(real(nyq_disk - h_sq)))
++                        k_lo    = max(fpllims(2,1,i), -k_max_h)
++                        k_hi    = min(fpllims(2,2,i),  k_max_h)
++                        hrow(1) = real(h) * r11
++                        hrow(2) = real(h) * r12
++                        hrow(3) = real(h) * r13
++                        do k = k_lo, k_hi
++                            if( k <= 0 )then
++                                cmplx_raw = fpls(i)%cmplx_plane(h,k)
++                                ctfsq_raw = fpls(i)%ctfsq_plane(h,k)
++                            else
++                                cmplx_raw = conjg(fpls(i)%cmplx_plane(-h,-k))
++                                ctfsq_raw = fpls(i)%ctfsq_plane(-h,-k)
++                            endif
++                            if( abs(real(cmplx_raw)) + abs(aimag(cmplx_raw)) <= TINY .and. &
++                                ctfsq_raw <= TINY ) cycle
++                            loc(1) = hrow(1) + real(k) * r21
++                            loc(2) = hrow(2) + real(k) * r22
++                            loc(3) = hrow(3) + real(k) * r23
++                            win(1,:) = nint(loc)
++                            win(2,:) = win(1,:) + iwinsz
++                            win(1,:) = win(1,:) - iwinsz
++                            if( win(2,1) < recs(r0)%lims(1,1) ) cycle
++                            do q = 1, nt
++                                comp(q)   = source_scale(q,i) * cmplx_raw
++                                ctfval(q) = w(q,i) * ctfsq_raw
++                            end do
++                            call kb_apod_vecs_3d_fast(loc, wx, wy, wz, recs(r0)%kbwin, recs(r0)%wdim)
++                            do iz = 1, recs(r0)%wdim
++                                mz = win(1,3) + iz - 1
++                                do iy = 1, recs(r0)%wdim
++                                    ky = win(1,2) + iy - 1
++                                    do ix = 1, recs(r0)%wdim
++                                        hx = win(1,1) + ix - 1
++                                        ww = wx(ix) * (wy(iy) * wz(iz))
++                                        do q = 1, nt
++                                            if( w(q,i) <= 0. ) cycle
++                                            recs(slots(q))%cmat_exp(hx,ky,mz) = recs(slots(q))%cmat_exp(hx,ky,mz) + comp(q) * ww
++                                            recs(slots(q))%rho_exp( hx,ky,mz) = recs(slots(q))%rho_exp( hx,ky,mz) + ctfval(q) * ww
++                                        end do
++                                    end do
++                                end do
++                            end do
++                        end do
++                    end do
++                    !$omp end do
++                end do
++            end do
++        end do
++        !$omp end parallel
++        call o_sym%kill
++
++    contains
++
++        subroutine kb_apod_vecs_3d_fast( point, vx, vy, vz, kernel, nwin )
++            use simple_kbinterpol, only: kbinterpol
++            type(kbinterpol), intent(in) :: kernel
++            integer, intent(in) :: nwin
++            real, intent(in)  :: point(3)
++            real, intent(out) :: vx(:), vy(:), vz(:)
++            integer :: iw, win_lo(3)
++            real    :: base(3), kernel_values(3), sx, sy, sz
++            win_lo = nint(point) - iwinsz
++            base   = real(win_lo) - point
++            do iw = 1, nwin
++                kernel_values    = kernel%apod_fast(base + real(iw-1))
++                vx(iw) = kernel_values(1)
++                vy(iw) = kernel_values(2)
++                vz(iw) = kernel_values(3)
++            end do
++            sx = sum(vx)
++            sy = sum(vy)
++            sz = sum(vz)
++            if( abs(sx) > eps_norm )then
++                vx = vx * (1.0 / sx)
++            else
++                vx = inv_wdim
++            endif
++            if( abs(sy) > eps_norm )then
++                vy = vy * (1.0 / sy)
++            else
++                vy = inv_wdim
++            endif
++            if( abs(sz) > eps_norm )then
++                vz = vz * (1.0 / sz)
++            else
++                vz = inv_wdim
++            endif
++        end subroutine kb_apod_vecs_3d_fast
++
++    end subroutine insert_planes_targets
++
+     !>  Floor rho at its shell mean / frac (default 1000, RELION-style; clamped >= 1) before
+     !!  sampl_dens_correct, which divides unfloored. Needed for kernel-weighted (flex) state maps,
+     !!  whose rho is small and noisy in low-occupancy regions.
+diff --git a/src/main/volume/simple_reconstructor_tester.f90 b/src/main/volume/simple_reconstructor_tester.f90
+index 1be44bf0d..20be26cb8 100644
+--- a/src/main/volume/simple_reconstructor_tester.f90
++++ b/src/main/volume/simple_reconstructor_tester.f90
+@@ -2,6 +2,9 @@
+ ! Linearity: a plane inserted with weight w equals the plane inserted with weight one and the
+ ! accumulators scaled by w, to round-off; weight one is the unweighted insertion bit for bit.
+ module simple_reconstructor_tester
++!$ use omp_lib,             only: omp_get_thread_num, omp_get_dynamic, omp_set_dynamic
++!$ use omp_lib,             only: omp_get_max_threads, omp_set_num_threads
++use iso_fortran_env,        only: int32
+ use simple_defs,            only: OSMPL_PAD_FAC
+ use simple_image,           only: image
+ use simple_fplane_grid,     only: fplane_grid
+@@ -12,7 +15,7 @@ use simple_sp_project,      only: sp_project
+ use simple_sym,             only: sym
+ use simple_memoize_ft_maps, only: forget_ft_maps, memoize_ft_maps
+ use simple_type_defs,       only: CTFFLAG_NO, ctfparams, fplane_type
+-use simple_reconstructor,   only: reconstructor
++use simple_reconstructor,   only: reconstructor, exp_samples, insert_planes_targets, MAX_INSERT_TARGETS, MAX_INSERT_PLANES
+ use simple_test_utils
+ implicit none
+ private
+@@ -29,8 +32,256 @@ contains
+     subroutine run_all_reconstructor_tests()
+         write(*,'(A)') '**** running all reconstructor tests ****'
+         call test_weighted_insertion_linearity()
++        call test_projection_geometry_reuse()
++        call test_insertion_geometry_reuse()
+     end subroutine run_all_reconstructor_tests
+ 
++    subroutine test_insertion_geometry_reuse()
++        integer, parameter :: NSLOTS = 6, MAXTEAM = 4, SLOTS(4) = [5,2,6,1], NINSERT = MAX_INSERT_PLANES+3
++        real, parameter :: WW(6) = [0., 0.05, 0.37, 1., 1.25, -0.1]
++        character(len=3), parameter :: SYMMETRIES(2) = ['c1 ', 'c11']
++        class(parameters), target, allocatable :: params
++        class(sp_project),         allocatable :: project
++        class(reconstructor),      allocatable :: direct(:), shared(:)
++        class(ori),                allocatable :: poses(:)
++        class(sym),                allocatable :: symmetry
++        class(image),              allocatable :: obs, obs_pad
++        class(fplane_grid),        allocatable :: grid
++        type(fplane_type) :: template, planes(MAX_INSERT_PLANES)
++        type(ctfparams) :: ctfparms
++        real :: img(BOX,BOX,1), weights(MAX_INSERT_TARGETS,MAX_INSERT_PLANES)
++        complex, allocatable :: serial_cmat(:,:,:,:)
++        real, allocatable :: serial_rho(:,:,:,:)
++        integer :: lo(3), hi(3), seen(MAXTEAM), saved_team, wanted, nt, team, isym, pass, i, q, h, k, it, begin, ib, nr
++        !$ logical :: saved_dynamic
++        write(*,'(A)') 'test_insertion_geometry_reuse'
++        allocate(params, project, direct(NSLOTS), shared(NSLOTS), poses(MAX_INSERT_PLANES), symmetry, obs, obs_pad, grid)
++        params%box        = BOX
++        params%box_crop   = BOX
++        params%box_croppd = OSMPL_PAD_FAC * BOX
++        params%smpd_crop  = SMPD
++        params%nstates    = 1
++        params%numlen     = 1
++        params%oritype    = 'cls3D'
++        do q = 1, NSLOTS
++            call direct(q)%new_accumulator(params, project, expand=.true., wthreads=.false.)
++            call shared(q)%new_accumulator(params, project, expand=.true., wthreads=.false.)
++        end do
++        lo = lbound(direct(1)%cmat_exp)
++        hi = ubound(direct(1)%cmat_exp)
++        allocate(serial_cmat(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3),MAX_INSERT_TARGETS))
++        allocate(serial_rho(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3),MAX_INSERT_TARGETS))
++        do ib = 1, MAX_INSERT_PLANES
++            call poses(ib)%new(.true.)
++        end do
++        call obs%new([BOX,BOX,1], SMPD, wthreads=.false.)
++        call obs_pad%new([OSMPL_PAD_FAC*BOX,OSMPL_PAD_FAC*BOX,1], SMPD, wthreads=.false.)
++        call grid%new(OSMPL_PAD_FAC*BOX)
++        call memoize_ft_maps([OSMPL_PAD_FAC*BOX,OSMPL_PAD_FAC*BOX,1], SMPD)
++        do k = 1, BOX
++            do h = 1, BOX
++                img(h,k,1) = sin(real(3*h+7*k))
++            end do
++        end do
++        call obs%set_rmat(img, .false.)
++        call obs%pad(obs_pad, backgr=0., antialiasing=.false.)
++        call obs_pad%fft()
++        ctfparms%smpd    = SMPD
++        ctfparms%ctfflag = CTFFLAG_NO
++        call obs_pad%gen_fplane4rec(SMPD, ctfparms, [0.,0.], template, grid)
++        saved_team = 1
++        !$ saved_team = omp_get_max_threads()
++        !$ saved_dynamic = omp_get_dynamic()
++        !$ call omp_set_dynamic(.false.)
++        do isym = 1, size(SYMMETRIES)
++            call symmetry%new(trim(SYMMETRIES(isym)))
++            do nt = 2, MAX_INSERT_TARGETS, 2
++                do team = 1, MAXTEAM, MAXTEAM-1
++                    !$ call omp_set_num_threads(team)
++                    seen = 0
++                    !$omp parallel default(shared) private(it)
++                    it = 1
++                    !$ it = omp_get_thread_num()+1
++                    seen(it) = 1
++                    !$omp end parallel
++                    wanted = 1
++                    !$ wanted = team
++                    call assert_true(sum(seen) == wanted, 'insertion reuse exercises the requested team')
++                    do q = 1, NSLOTS
++                        call direct(q)%reset_exp()
++                        call shared(q)%reset_exp()
++                    end do
++                    do pass = 1, 2
++                        do begin = 1, NINSERT, MAX_INSERT_PLANES
++                            nr = min(MAX_INSERT_PLANES,NINSERT-begin+1)
++                            do ib = 1, nr
++                                i = begin+ib-1
++                                call poses(ib)%set_euler([real(19*i), real(11*i+pass), real(7*i)])
++                                planes(ib) = template
++                                planes(ib)%cmplx_plane = template%cmplx_plane * real(i+pass)/16.
++                                do k = lbound(planes(ib)%ctfsq_plane,2), ubound(planes(ib)%ctfsq_plane,2)
++                                    do h = lbound(planes(ib)%ctfsq_plane,1), ubound(planes(ib)%ctfsq_plane,1)
++                                        planes(ib)%ctfsq_plane(h,k) = real(1+abs(h+k))/16.
++                                        if( pass == 2 .and. h*h+k*k > 9 )then
++                                            planes(ib)%cmplx_plane(h,k) = cmplx(0.,0.)
++                                            planes(ib)%ctfsq_plane(h,k) = 0.
++                                        endif
++                                    end do
++                                end do
++                                do q = 1, nt
++                                    weights(q,ib) = WW(mod(i+q+pass-3,size(WW))+1)
++                                    if( weights(q,ib) <= 0. ) cycle
++                                    call direct(SLOTS(q))%insert_plane_oversamp(symmetry, poses(ib), planes(ib), weights(q,ib))
++                                end do
++                            end do
++                            call insert_planes_targets(shared, SLOTS(:nt), symmetry, poses, planes, weights(:nt,:nr), nr)
++                        end do
++                        do q = 1, NSLOTS
++                            call assert_true(all(transfer(direct(q)%cmat_exp,[0_int32]) == &
++                                &transfer(shared(q)%cmat_exp,[0_int32])), 'shared insertion data match bit for bit')
++                            call assert_true(all(transfer(direct(q)%rho_exp,[0_int32]) == &
++                                &transfer(shared(q)%rho_exp,[0_int32])), 'shared insertion density matches bit for bit')
++                        end do
++                    end do
++                    do q = 1, nt
++                        if( team == 1 )then
++                            serial_cmat(:,:,:,q) = shared(SLOTS(q))%cmat_exp
++                            serial_rho(:,:,:,q)  = shared(SLOTS(q))%rho_exp
++                        else
++                            call assert_true(all(transfer(serial_cmat(:,:,:,q),[0_int32]) == &
++                                &transfer(shared(SLOTS(q))%cmat_exp,[0_int32])), 'insertion data match the serial team')
++                            call assert_true(all(transfer(serial_rho(:,:,:,q),[0_int32]) == &
++                                &transfer(shared(SLOTS(q))%rho_exp,[0_int32])), 'insertion density matches the serial team')
++                        endif
++                    end do
++                end do
++            end do
++            call symmetry%kill()
++        end do
++        !$ call omp_set_num_threads(saved_team)
++        !$ call omp_set_dynamic(saved_dynamic)
++        do q = 1, NSLOTS
++            call direct(q)%kill()
++            call shared(q)%kill()
++        end do
++        do ib = 1, MAX_INSERT_PLANES
++            call poses(ib)%kill()
++        end do
++        call obs%kill()
++        call obs_pad%kill()
++        call grid%kill()
++        call forget_ft_maps()
++    end subroutine test_insertion_geometry_reuse
++
++    subroutine test_projection_geometry_reuse()
++        integer, parameter :: NGROUPS = 3, MAXTEAM = 4, BANDS(3) = [4,6,3], MAXBAND = maxval(BANDS)
++        class(parameters), target, allocatable :: params
++        class(sp_project),         allocatable :: project
++        class(reconstructor),      allocatable :: refs(:)
++        class(ori),                allocatable :: poses(:)
++        class(image),              allocatable :: obs, obs_pad
++        class(fplane_grid),        allocatable :: grid
++        type(exp_samples), allocatable :: samples(:)
++        type(fplane_type), allocatable :: planes(:), output(:)
++        type(fplane_type) :: template, direct
++        type(ctfparams)   :: ctfparms
++        complex, allocatable :: expected(:,:,:,:), values(:,:)
++        logical :: failed(NPLANES,NGROUPS)
++        !$ logical :: saved_dynamic
++        integer :: seen(MAXTEAM), lo(3), hi(3), plo(2), phi(2), team, wanted, it, i, g, h, k, l, pass
++        write(*,'(A)') 'test_projection_geometry_reuse'
++        allocate(params, project, refs(NGROUPS), poses(NPLANES), obs, obs_pad, grid)
++        allocate(samples(MAXTEAM), planes(NPLANES), output(MAXTEAM))
++        params%box        = BOX
++        params%box_crop   = BOX
++        params%box_croppd = OSMPL_PAD_FAC * BOX
++        params%smpd_crop  = SMPD
++        params%nstates    = 1
++        params%numlen     = 1
++        params%oritype    = 'cls3D'
++        do g = 1, NGROUPS
++            call refs(g)%new_accumulator(params, project, expand=.true., wthreads=.false.)
++        end do
++        call obs%new([BOX,BOX,1], SMPD, wthreads=.false.)
++        call obs_pad%new([OSMPL_PAD_FAC*BOX,OSMPL_PAD_FAC*BOX,1], SMPD, wthreads=.false.)
++        call obs%zero_and_unflag_ft()
++        call obs%pad(obs_pad, backgr=0., antialiasing=.false.)
++        call obs_pad%fft()
++        call grid%new(OSMPL_PAD_FAC*BOX)
++        call memoize_ft_maps([OSMPL_PAD_FAC*BOX,OSMPL_PAD_FAC*BOX,1], SMPD)
++        ctfparms%smpd    = SMPD
++        ctfparms%ctfflag = CTFFLAG_NO
++        call obs_pad%gen_fplane4rec(SMPD, ctfparms, [0.,0.], template, grid)
++        do i = 1, NPLANES
++            call poses(i)%new(.true.)
++            call poses(i)%set_euler([real(19*i), real(11*i), real(7*i)])
++            planes(i) = template
++            planes(i)%nyq = OSMPL_PAD_FAC * BANDS(mod(i-1,size(BANDS))+1)
++        end do
++        plo = lbound(template%cmplx_plane)
++        phi = ubound(template%cmplx_plane)
++        allocate(expected(plo(1):phi(1),plo(2):phi(2),NPLANES,NGROUPS))
++        allocate(values((2*MAXBAND+1)*(MAXBAND+1),MAXTEAM))
++        lo = lbound(refs(1)%cmat_exp)
++        hi = ubound(refs(1)%cmat_exp)
++        !$ saved_dynamic = omp_get_dynamic()
++        !$ call omp_set_dynamic(.false.)
++        do pass = 1, 2
++            do g = 1, NGROUPS
++                do l = lo(3), hi(3)
++                    do k = lo(2), hi(2)
++                        do h = lo(1), hi(1)
++                            refs(g)%cmat_exp(h,k,l) = cmplx(real(pass*g*h-k)/16., real(l+2*g)/32.)
++                        end do
++                    end do
++                end do
++            end do
++            do i = 1, NPLANES
++                do g = 1, NGROUPS
++                    call refs(g)%project_fplane(poses(i), planes(i), direct, apply_ctf_amp=.false.)
++                    expected(:,:,i,g) = direct%cmplx_plane
++                end do
++            end do
++            do team = 1, MAXTEAM, MAXTEAM-1
++                failed = .false.
++                seen   = 0
++                !$omp parallel do default(shared) private(i,it,g) num_threads(team) schedule(static)
++                do i = 1, NPLANES
++                    it = 1
++                    !$ it = omp_get_thread_num() + 1
++                    seen(it) = 1
++                    call samples(it)%new_plane(refs(1), poses(i), planes(i))
++                    do g = 1, NGROUPS
++                        if( g == 1 .and. mod(i,3) == 0 ) cycle
++                        call samples(it)%gather(refs(g), values(:,it))
++                        call samples(it)%put_plane(values(:,it), planes(i), output(it), .false.)
++                        failed(i,g) = any(transfer(output(it)%cmplx_plane, [0_int32]) /= &
++                            &transfer(expected(:,:,i,g), [0_int32]))
++                    end do
++                end do
++                !$omp end parallel do
++                wanted = 1
++                !$ wanted = team
++                call assert_true(sum(seen) == wanted, 'projection reuse exercises the requested OpenMP team')
++                call assert_true(.not. any(failed), 'reused projection geometry matches the original path bit for bit')
++            end do
++        end do
++        !$ call omp_set_dynamic(saved_dynamic)
++        do it = 1, MAXTEAM
++            call samples(it)%kill()
++        end do
++        do g = 1, NGROUPS
++            call refs(g)%kill()
++        end do
++        do i = 1, NPLANES
++            call poses(i)%kill()
++        end do
++        call obs%kill()
++        call obs_pad%kill()
++        call grid%kill()
++        call forget_ft_maps()
++    end subroutine test_projection_geometry_reuse
++
+     subroutine test_weighted_insertion_linearity()
+         real, parameter :: WEIGHTS(3) = [0.37, 0.05, 0.81]
+         type(parameters), target :: params

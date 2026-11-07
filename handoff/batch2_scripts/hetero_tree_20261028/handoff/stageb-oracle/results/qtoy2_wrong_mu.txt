@@ -1,0 +1,42 @@
+# mu: non-junk 54000; stage-B wrong 0.325 (merged 0.278, misassigned 0.047); state owners {1: 28, 2: 1, 3: 101, 4: 22, 5: 49}
+# classes whose majority state another class owns: [2, 18, 43]
+right (non-junk)       n  36473 | angle median  2.50 mean  2.76 p90   4.47 >10 0.001 >30 0.000 | shift median 0.33 p90 0.63 | snrq median 1.006 mean 1.067 | bfac median 99.4
+wrong: merged          n  14985 | angle median  2.33 mean  2.58 p90   4.13 >10 0.001 >30 0.000 | shift median 0.32 p90 0.66 | snrq median 1.013 mean 1.075 | bfac median 99.7
+wrong: misassigned     n   2542 | angle median  3.06 mean  7.04 p90   5.67 >10 0.034 >30 0.028 | shift median 0.40 p90 0.86 | snrq median 0.862 mean 0.929 | bfac median 107.4
+junk                   n   6000 | angle median 10.78 mean 34.27 p90 134.98 >10 0.525 >30 0.239 | shift median 2.10 p90 6.09 | snrq median 0.995 mean 1.060 | bfac median 99.8
+AUROC for misassigned vs right: angle error 0.623, shift error 0.597, low snrq 0.614, B-factor 0.530
+
+# wrong share of non-junk by stage-B pose error (deg): n, merged, misassigned
+  [  0,  1) n   3528  merged 0.335  misassigned 0.021
+  [  1,  2) n  14741  merged 0.306  misassigned 0.028
+  [  2,  3) n  17186  merged 0.284  misassigned 0.044
+  [  3,  5) n  15273  merged 0.246  misassigned 0.059
+  [  5, 10) n   3139  merged 0.201  misassigned 0.101
+  [ 10, 30) n     41  merged 0.171  misassigned 0.341
+  [ 30,181) n     92  merged 0.076  misassigned 0.783
+# wrong share of non-junk by snrq quintile
+  snrq [0.400,0.746] n  10806  merged 0.266  misassigned 0.078  angle median 2.70
+  snrq [0.746,0.917] n  10801  merged 0.270  misassigned 0.056  angle median 2.54
+  snrq [0.917,1.093] n  10801  merged 0.280  misassigned 0.040  angle median 2.47
+  snrq [1.093,1.342] n  10809  merged 0.284  misassigned 0.035  angle median 2.38
+  snrq [1.342,2.500] n  10801  merged 0.288  misassigned 0.028  angle median 2.32
+# per class: n, right, merged, misassigned; angle median right / misassigned
+  class   1 n  12000 right 0.975 merged 0.000 misassigned 0.025 | angle 2.16 / 3.79
+  class   2 n   8400 right 0.000 merged 0.948 misassigned 0.052 | angle nan / 3.20
+  class  18 n   3600 right 0.000 merged 0.994 misassigned 0.006 | angle nan / 3.17
+  class  22 n   4800 right 0.773 merged 0.000 misassigned 0.227 | angle 2.56 / 2.58
+  class  28 n   9600 right 0.984 merged 0.000 misassigned 0.016 | angle 2.63 / 3.97
+  class  43 n   3600 right 0.000 merged 0.957 misassigned 0.043 | angle nan / 4.27
+  class  49 n   6000 right 0.941 merged 0.000 misassigned 0.059 | angle 2.21 / 3.16
+  class 101 n   6000 right 0.994 merged 0.000 misassigned 0.006 | angle 3.40 / 6.32
+
+# posteriors from /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mu_qtoy2/1_hetero_tree/node_r/stageB/prob_state_evidence.txt: evidence label = project label on 1.0000 of the active rows
+non-junk with max posterior >= .99: 0.840; of them wrong 0.293; wrong share among all non-junk 0.325
+wrong        n  17527: max posterior median 1.000, >= .99 0.758; mass on a state their class owns median 0.000 mean 0.016
+merged       n  14985: max posterior median 1.000, >= .99 0.858; mass on a state their class owns median 0.000 mean 0.000
+misassigned  n   2542: max posterior median 0.872, >= .99 0.171; mass on a state their class owns median 0.030 mean 0.110
+confidently right      n  32041 | angle median  2.49 mean  2.70 p90   4.43 >10 0.001 >30 0.000 | shift median 0.32 p90 0.62 | snrq median 1.034 mean 1.095 | bfac median 98.5
+confidently wrong      n  13294 | angle median  2.30 mean  2.76 p90   4.07 >10 0.002 >30 0.002 | shift median 0.32 p90 0.66 | snrq median 1.048 mean 1.110 | bfac median 98.4
+  conf. misassigned    n    435 | angle median  2.97 mean 11.91 p90   6.31 >10 0.064 >30 0.057 | shift median 0.39 p90 0.91 | snrq median 1.044 mean 1.113 | bfac median 100.5
+unconfident (<.99)     n   8665 | angle median  2.71 mean  3.89 p90   5.00 >10 0.009 >30 0.007 | shift median 0.37 p90 0.76 | snrq median 0.827 mean 0.873 | bfac median 107.1
+junk: max posterior mean 0.783, >= .99 0.125

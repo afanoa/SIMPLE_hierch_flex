@@ -1,0 +1,42 @@
+90a91
+>     logical :: l_rstb = .false., l_rpost = .false.
+308c309
+<             &trim(route) == 'choose')
+---
+>             &trim(route) == 'choose' .or. trim(route) == 'stageb' .or. trim(route) == 'spost')
+311a313,315
+>         ! stageb: the stage-B states are the K* groups whole; spost: one cross-half full-band E-step from them
+>         self%l_rstb  = ist == 0 .and. trim(route) == 'stageb'
+>         self%l_rpost = ist == 0 .and. trim(route) == 'spost'
+1004c1008,1024
+<             if( self%l_rcho )then
+---
+>             if( k0 == k1 .and. .not. l_two .and. (self%l_rstb .or. self%l_rpost .or. self%l_rcho) )then
+>                 smap  = [(ss, ss=1,k0)]
+>                 l_two = .true.
+>             endif
+>             if( self%l_rstb .or. self%l_rpost )then
+>                 nchg   = 0
+>                 l_win2 = l_two
+>                 if( l_two )then
+>                     a2 = smap(cand(ja))
+>                     b2 = smap(cand(jb))
+>                     if( self%l_rpost ) call self%cross_em(ja, jb, smap(cand(ja)), smap(cand(jb)), k1, eps, neq, a2, b2, &
+>                         &l_full=.true., ll=ll2, kcut=self%kt, llband=lb2, niter=1)
+>                     nchg      = count(child(ja) /= a2) + count(child(jb) /= b2)
+>                     child(ja) = a2
+>                     child(jb) = b2
+>                 endif
+>             else if( self%l_rcho )then
+1069c1089,1097
+<             if( self%l_rcho )then
+---
+>             if( (self%l_rstb .or. self%l_rpost) .and. .not. l_two )then
+>                 write(logfhandle,'(A)') 'membership from the stage-B states: they do not cover the '//int2str(k1)//&
+>                     &' groups; the EM groups stand'
+>             else if( self%l_rpost )then
+>                 write(logfhandle,'(A)') 'membership from the stage-B states, one cross-half E-step over shells 2..'//&
+>                     &int2str(self%khi)//'; '//int2str(nchg)//' particles change group'
+>             else if( self%l_rstb )then
+>                 write(logfhandle,'(A)') 'membership from the stage-B states, whole; '//int2str(nchg)//' particles change group'
+>             else if( self%l_rcho )then

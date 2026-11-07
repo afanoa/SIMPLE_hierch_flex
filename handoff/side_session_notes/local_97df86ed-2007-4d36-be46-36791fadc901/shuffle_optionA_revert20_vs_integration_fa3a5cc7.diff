@@ -1,0 +1,39 @@
+diff --git a/doc/algorithms/heterogeneity_analysis/README.md b/doc/algorithms/heterogeneity_analysis/README.md
+index 5e1da0c..a378e94 100644
+--- a/doc/algorithms/heterogeneity_analysis/README.md
++++ b/doc/algorithms/heterogeneity_analysis/README.md
+@@ -20,7 +20,7 @@ particle poses:
+   ranking, two refinement stages and a cross-half split test, and its children
+   are the groups the test keeps. The test's re-test beyond the EM band is
+   Bonferroni-corrected over the tree's 2 N_root / minpop - 1 possible splits
+-  (alpha 1/21, z against the mean and sd of a 50-shuffle null); the board test
++  (alpha 1/21, z against the mean and sd of a 20-shuffle null); the board test
+   and the merge-up of the leaves keep the max of 20 shuffles. It has no
+   algorithm chapter yet; its distribution options are below.
+   - A node's split starts from a site's seed states (`site_seeds.txt`). When
+diff --git a/src/main/strategies/search/simple_state_mergeup.f90 b/src/main/strategies/search/simple_state_mergeup.f90
+index 7e170d7..d5c404b 100644
+--- a/src/main/strategies/search/simple_state_mergeup.f90
++++ b/src/main/strategies/search/simple_state_mergeup.f90
+@@ -24,7 +24,7 @@ public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_z
+ private
+ #include "simple_local_flags.inc"
+ 
+-integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
++integer, parameter :: NSHUF = 20, NSHUF_BONF = 20, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+ real(dp), parameter :: ALPHA_SPLIT = 1._dp / 21._dp
+ integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
+ real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
+diff --git a/src/main/ui/simple/simple_ui_heterogeneity.f90 b/src/main/ui/simple/simple_ui_heterogeneity.f90
+index 8b433f2..f1b0555 100644
+--- a/src/main/ui/simple/simple_ui_heterogeneity.f90
++++ b/src/main/ui/simple/simple_ui_heterogeneity.f90
+@@ -562,7 +562,7 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
+         &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+         call state_split%add_input(UI_PARM, 'split_ntests', 'num', 'Split tests corrected for', &
+         &'The re-test beyond the EM band is Bonferroni-corrected at alpha 1/21 over this many split tests, its z taken &
+-        &against the mean and sd of a 50-shuffle null; hetero_tree passes 2 x root particles / minpop - 1{1}', 'tests{1}', &
++        &against the mean and sd of a 20-shuffle null; hetero_tree passes 2 x root particles / minpop - 1{1}', 'tests{1}', &
+         &.false., 1., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+         call state_split%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
+         &'States whose high-resolution signal per particle falls under the screen''s threshold are set aside as junk; no &

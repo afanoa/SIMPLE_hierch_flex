@@ -1,0 +1,40 @@
+## base_r131_s1
+>>> HETERO_TREE node r: split group 1 (22359 particles; stage-B states 1:22359) -> node r1
+>>> HETERO_TREE node r: split group 2 (21975 particles; stage-B states 2:21975) -> node r2
+>>> HETERO_TREE node r1: states 2 (11981 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (10378 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r2: states 2 (11305 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (10670 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r: site 3 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 3.644, site 3 5.144), its seeds seed the refinement
+## sub_r131_s1
+>>> HETERO_TREE node r: split group 1 (23319 particles; stage-B states 1:23319) -> node r1
+>>> HETERO_TREE node r: split group 2 (21015 particles; stage-B states 2:21015) -> node r2
+>>> HETERO_TREE node r1: states 1 2 (23319 particles) -> leaf      r1_g1_2
+>>> HETERO_TREE node r2: states 1 (11601 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r2: states 2 (9414 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 5.017, site 3 4.474), its seeds seed the refinement
+== base_s1 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   22359 rows | ref  1472 (recall 0.48, purity 0.0658) | stage-B states 1:22359
+    group 2   21975 rows | ref  1603 (recall 0.52, purity 0.0729) | stage-B states 2:21975
+    stage-B maps: s01 0.85/0.62  s02 0.89/0.53
+r1        d1   22359 rows | ref  1472 (share 0.0658) | 
+    group 1   11981 rows | ref   897 (recall 0.61, purity 0.0749) | stage-B states 
+    group 2   10378 rows | ref   575 (recall 0.39, purity 0.0554) | stage-B states 
+    stage-B maps: s01 0.90/0.63  s02 0.81/0.61
+r2        d1   21975 rows | ref  1603 (share 0.0729) | 
+    group 1   11305 rows | ref   758 (recall 0.47, purity 0.0670) | stage-B states 
+    group 2   10670 rows | ref   845 (recall 0.53, purity 0.0792) | stage-B states 
+    stage-B maps: s01 0.97/0.54  s02 0.81/0.50
+== sub_s1 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   23319 rows | ref  1577 (recall 0.51, purity 0.0676) | stage-B states 1:23319
+    group 2   21015 rows | ref  1498 (recall 0.49, purity 0.0713) | stage-B states 2:21015
+    stage-B maps: s01 0.86/0.61  s02 0.88/0.52
+r1        d1   23319 rows | ref  1577 (share 0.0676) | 
+    group 1   23319 rows | ref  1577 (recall 1.00, purity 0.0676) | stage-B states 
+    stage-B maps: s01 0.93/0.63  s02 0.79/0.60
+r2        d1   21015 rows | ref  1498 (share 0.0713) | 
+    group 1   11601 rows | ref  1013 (recall 0.68, purity 0.0873) | stage-B states 
+    group 2    9414 rows | ref   485 (recall 0.32, purity 0.0515) | stage-B states 
+    stage-B maps: s01 0.97/0.51  s02 0.77/0.53

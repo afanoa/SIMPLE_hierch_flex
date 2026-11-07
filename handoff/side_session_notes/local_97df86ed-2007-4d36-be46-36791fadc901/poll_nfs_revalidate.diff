@@ -1,0 +1,74 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index c7f2cbe..04043e4 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -7,7 +7,7 @@ use simple_string,          only: string
+ use simple_string_utils,    only: int2str
+ use simple_fileio,          only: fopen, fclose, fileiochk, nlines, read_exit_code, simple_copy_file
+ use simple_syslib,          only: file_exists, dir_exists, simple_mkdir, simple_chdir, simple_getcwd, simple_rename, simple_abspath, del_file, &
+-                                & exec_cmdline, simple_list_files_regexp
++                                & exec_cmdline, simple_list_files_regexp, simple_sync_dir
+ use simple_imghead,         only: find_ldim_nptcls, find_img_smpd
+ use simple_rnd,             only: seed_rnd_fixed, ran3
+ use simple_linalg,          only: eigh, jacobi
+@@ -2865,6 +2865,8 @@ contains
+         class(hetero_tree), intent(in) :: self
+         character(len=*),   intent(in) :: sd
+         logical :: err
++        integer :: ios
++        call simple_sync_dir(sd, status=ios)
+         if( file_exists(string(sd//'/'//STEP_EXIT)) )then
+             call read_exit_code(string(sd//'/'//STEP_EXIT), dir_status, err)
+             if( err ) dir_status = -1
+@@ -3236,6 +3238,7 @@ contains
+         integer,            intent(in) :: i, istep
+         character(len=:), allocatable :: f, sdir
+         logical :: err
++        integer :: ios
+         if( istep == S_MBATCH )then
+             step_status = self%batch_status(self%ndir(i)//'/motion/batch.txt')
+             return
+@@ -3248,6 +3251,8 @@ contains
+         endif
+         sdir = self%step_dir(i, istep)
+         f = sdir//'/'//STEP_EXIT
++        ! opening the step directory revalidates NFS's cached "absent" answer, so a finished step is seen at once
++        call simple_sync_dir(sdir, status=ios)
+         if( file_exists(string(f)) )then
+             call read_exit_code(string(f), step_status, err)
+             if( err ) step_status = -1
+diff --git a/src/utils/qsys/simple_qsys_ctrl.f90 b/src/utils/qsys/simple_qsys_ctrl.f90
+index 8f65e67..ad3be43 100644
+--- a/src/utils/qsys/simple_qsys_ctrl.f90
++++ b/src/utils/qsys/simple_qsys_ctrl.f90
+@@ -9,7 +9,7 @@ use simple_qsys_persistent_worker,   only: qsys_persistent_worker
+ use simple_qsys_coarray,             only: qsys_coarray
+ use simple_cmdline,                  only: cmdline
+ use simple_parameters,               only: parameters
+-use simple_syslib,                   only: simple_rmfile
++use simple_syslib,                   only: simple_rmfile, simple_sync_dir
+ use simple_qsys_job_record,          only: check_job_lost, cancel_queued_job, JOB_LOST_EXIT_CODE
+ use simple_persistent_worker_message_task, only: qsys_persistent_worker_message_task 
+ use simple_persistent_worker_server,       only: persistent_worker
+@@ -894,7 +894,7 @@ contains
+     !! code file; in batch mode the done sentinel file is sufficient.
+     subroutine update_queue( self )
+         class(qsys_ctrl), intent(inout) :: self
+-        integer :: ipart, njobs_in_queue, exit_code
++        integer :: ipart, njobs_in_queue, exit_code, ios
+         logical :: err, l_lost
+         select type( pmyqsys => self%myqsys )
+             class is(qsys_coarray)
+@@ -927,6 +927,12 @@ contains
+             self%ncomputing_units_avail = min(count(self%jobs_done), self%ncomputing_units)
+             self%n_stream_updates = self%n_stream_updates + 1
+         else
++            ! the parts' done files sit in the cwd: opening it revalidates NFS's cached "absent" answers
++            select type( pmyqsys => self%myqsys )
++                class is(qsys_local)
++                class default
++                    call simple_sync_dir(trim(CWD_GLOB), status=ios)
++            end select
+             do ipart = self%fromto_part(1), self%fromto_part(2)
+                 ! Sentinel file present → job finished.
+                 if( .not. self%jobs_done(ipart) ) self%jobs_done(ipart) = file_exists(self%jobs_done_fnames(ipart))

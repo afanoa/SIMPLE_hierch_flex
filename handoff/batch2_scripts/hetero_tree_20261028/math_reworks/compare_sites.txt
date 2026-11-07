@@ -1,0 +1,162 @@
+## olenull_nsite_r_s2  [same]  old 382.29 s 28 EM + 13 scoring | new 118.66 s 4 EM + 2 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 0.999 z -999.000/-999.000 rejected; p2 share 0.001 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : p1 share 0.999 z -999.000/-999.000 rejected; p2 share 0.001 z 1.407/17.359 rejected
+## olenull_nsite_r_s3  [same]  old 296.20 s 28 EM + 7 scoring | new 87.29 s 4 EM + 1 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : -
+## olenull_nsite_r_s4  [same]  old 294.48 s 28 EM + 7 scoring | new 88.18 s 4 EM + 1 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : -
+## olenull_nsite_r_s5  [same]  old 295.37 s 28 EM + 7 scoring | new 82.70 s 4 EM + 1 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : -
+## olenull_nsite_r_s6  [same]  old 291.96 s 28 EM + 7 scoring | new 90.32 s 4 EM + 1 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : -
+## olenull_site  [same]  old 344.68 s 28 EM + 13 scoring | new 86.44 s 4 EM + 1 scoring
+   old poles: 1 80599 rest
+   old rule : p1 share 0.984 z -999.000/-999.000 rejected; p2 share 0.016 z -999.000/-999.000 rejected
+   new poles: 1 80599 rest
+   new rule : -
+## qtoy2_nsite_r_s2  [same]  old 110.48 s 28 EM + 14 scoring | new 43.87 s 4 EM + 2 scoring
+   old poles: 1 9707 z1lo ; 2 50293 rest
+   old rule : p1 share 0.162 z 77.861/137.054 kept; p2 share 0.776 z -999.000/-999.000 rejected
+   new poles: 1 9707 z1lo ; 2 50293 rest
+   new rule : p1 share 0.162 z 14.954/14.954 kept; p2 share 0.776 z -999.000/-999.000 rejected
+## qtoy2_nsite_r_s3  [DIFF]  old 86.83 s 28 EM + 7 scoring | new 32.87 s 4 EM + 3 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.707 z -999.000/-999.000 rejected
+   new poles: 1 35124 z1lo ; 2 24846 z3hi ; 3 30 rest
+   new rule : p1 share 0.375 z 10.964/10.964 kept; p2 share 0.604 z -999.000/-999.000 rejected; p3 share 0.021 z 4.332/11.744 kept
+## qtoy2_nsite_r_s4  [DIFF]  old 71.84 s 28 EM + 7 scoring | new 26.49 s 4 EM + 3 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.956 z -999.000/-999.000 rejected
+   new poles: 1 41697 z1hi ; 2 9028 z3lo ; 3 9275 rest
+   new rule : p1 share 0.629 z -999.000/-999.000 rejected; p2 share 0.268 z 10.805/10.805 kept; p3 share 0.084 z 5.786/5.786 kept; p4 share 0.019 z 2.821/10.072 rejected
+## qtoy2_nsite_r_s5  [DIFF]  old 66.66 s 28 EM + 14 scoring | new 25.41 s 4 EM + 2 scoring
+   old poles: 1 49693 z1hi z3lo ; 2 10307 rest
+   old rule : p1 share 0.515 z -999.000/-999.000 rejected; p2 share 0.476 z 55.185/52.057 kept; p3 share 0.009 z .458/-999.000 rejected
+   new poles: 1 49693 z1hi z3lo ; 2 10219 z3hi ; 3 88 rest
+   new rule : p1 share 0.515 z -999.000/-999.000 rejected; p2 share 0.476 z 13.183/13.183 kept; p3 share 0.009 z 3.267/10.325 kept
+## qtoy2_nsite_r_s6  [DIFF]  old 63.69 s 28 EM + 14 scoring | new 24.27 s 4 EM + 2 scoring
+   old poles: 1 52315 z3lo ; 2 7685 rest
+   old rule : p1 share 0.552 z -999.000/-999.000 rejected; p2 share 0.442 z 76.086/59.842 kept; p3 share 0.006 z -999.000/-999.000 rejected
+   new poles: 1 52364 z1hi z3lo ; 2 7636 rest
+   new rule : p1 share 0.550 z -999.000/-999.000 rejected; p2 share 0.444 z 12.567/12.567 kept; p3 share 0.006 z 1.249/11.361 rejected
+## qtoy2_site  [same]  old 49.10 s 28 EM + 14 scoring | new 20.74 s 4 EM + 2 scoring
+   old poles: 1 17987 z1lo ; 2 42013 rest
+   old rule : p1 share 0.300 z 99.399/95.440 kept; p2 share 0.696 z -999.000/-999.000 rejected
+   new poles: 1 17987 z1lo ; 2 42013 rest
+   new rule : p1 share 0.300 z 21.399/21.399 kept; p2 share 0.696 z -999.000/-999.000 rejected
+## qtoynull_nsite_r_s10  [same]  old 42.95 s 28 EM + 0 scoring | new 19.48 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s11  [DIFF]  old 44.47 s 28 EM + 7 scoring | new 20.08 s 4 EM + 0 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s12  [same]  old 47.47 s 28 EM + 13 scoring | new 21.59 s 4 EM + 1 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.955 z -999.000/-999.000 rejected; p2 share 0.045 z 1.018/-999.000 rejected
+   new poles: 1 60000 rest
+   new rule : -
+## qtoynull_nsite_r_s13  [same]  old 40.03 s 28 EM + 0 scoring | new 18.77 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s14  [DIFF]  old 47.64 s 28 EM + 7 scoring | new 18.79 s 4 EM + 0 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s15  [same]  old 42.47 s 28 EM + 0 scoring | new 18.78 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s16  [same]  old 43.30 s 28 EM + 0 scoring | new 18.94 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s17  [same]  old 46.80 s 28 EM + 7 scoring | new 19.43 s 4 EM + 1 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: 1 60000 rest
+   new rule : -
+## qtoynull_nsite_r_s18  [same]  old 40.61 s 28 EM + 0 scoring | new 17.92 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s19  [same]  old 41.07 s 28 EM + 0 scoring | new 19.30 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s2  [same]  old 53.89 s 28 EM + 13 scoring | new 22.94 s 4 EM + 1 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.001 z .135/.350 rejected; p2 share 0.999 z -999.000/-999.000 rejected
+   new poles: 1 60000 rest
+   new rule : p1 share 0.995 z -999.000/-999.000 rejected
+## qtoynull_nsite_r_s20  [same]  old 41.19 s 28 EM + 0 scoring | new 21.58 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s3  [same]  old 56.43 s 28 EM + 13 scoring | new 21.73 s 4 EM + 1 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.001 z .339/-999.000 rejected; p2 share 0.999 z -999.000/-999.000 rejected
+   new poles: 1 60000 rest
+   new rule : p1 share 0.996 z -999.000/-999.000 rejected
+## qtoynull_nsite_r_s4  [DIFF]  old 42.53 s 28 EM + 7 scoring | new 18.72 s 4 EM + 0 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s5  [same]  old 42.17 s 28 EM + 0 scoring | new 18.93 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s6  [same]  old 42.73 s 28 EM + 0 scoring | new 19.17 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s7  [same]  old 47.90 s 28 EM + 0 scoring | new 18.33 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s8  [DIFF]  old 42.97 s 28 EM + 7 scoring | new 18.23 s 4 EM + 0 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 1.000 z -999.000/-999.000 rejected
+   new poles: (empty)
+   new rule : -
+## qtoynull_nsite_r_s9  [same]  old 41.35 s 28 EM + 0 scoring | new 21.98 s 4 EM + 0 scoring
+   old poles: (empty)
+   old rule : -
+   new poles: (empty)
+   new rule : -
+## qtoynull_site  [same]  old 49.80 s 28 EM + 7 scoring | new 23.99 s 4 EM + 1 scoring
+   old poles: 1 60000 rest
+   old rule : p1 share 0.998 z -999.000/-999.000 rejected
+   new poles: 1 60000 rest
+   new rule : p1 share 0.998 z -999.000/-999.000 rejected
+
+24 of 32 sites give the same site_poles.txt

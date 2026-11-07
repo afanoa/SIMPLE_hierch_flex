@@ -1,0 +1,5 @@
+fast_qtoy2_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoy2/1_hetero_tree/node_r none fs3 B --maxn 15000 --seed 3
+fast_r131_r1 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 none fs3 B --maxn 15000 --seed 3
+fast_qtoynull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoynull/1_hetero_tree/node_r none fs3 B --maxn 15000 --seed 3
+fast_olenull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_olenull/1_hetero_tree/node_r none fs3 B --maxn 15000 --seed 3
+fast_r131_r1 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 none ffull B --maxn 0

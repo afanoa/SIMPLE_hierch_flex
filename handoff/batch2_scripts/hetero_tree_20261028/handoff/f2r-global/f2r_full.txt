@@ -1,0 +1,4 @@
+fast_qtoy2_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoy2/1_hetero_tree/node_r qtoy:/mnt/beegfs/elmlund/afan/routes/toy55/simqtoy2/truth_qtoy.txt full B --maxn 0 --nit 4
+fast_r131_r1 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 closed:/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/fixture_rows.txt:/mnt/beegfs/elmlund/afan/hetero_tree_regression_20261026/runs/real_root_split_contrast_m8c52_s1/closed_reference_rows.txt full B --maxn 0 --nit 4
+fast_qtoynull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_qtoynull/1_hetero_tree/node_r qtoy:/mnt/beegfs/elmlund/afan/routes/toy55/simqtoynull/truth_qtoy.txt full B --maxn 0 --nit 4
+fast_olenull_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_olenull/1_hetero_tree/node_r none full B --maxn 0 --nit 4

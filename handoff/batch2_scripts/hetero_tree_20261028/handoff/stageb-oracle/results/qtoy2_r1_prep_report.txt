@@ -1,0 +1,24 @@
+node /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoy2/1_hetero_tree/node_r1: 21951 rows, 21951 active, stage-B states [1, 2]; true shifts |x|,|y| max 0.000 px
+global rotation (left): |G| 0.073 deg, median residual angle 2.469 deg (raw 2.467)
+global rotation (right): |G| 1.122 deg, median residual angle 2.194 deg (raw 2.467)
+frame shift (R): t = [-0.290 1.514 0.963] px, rms shift error 1.616 -> 0.370 px
+frame shift (RT): t = [-0.462 1.152 0.094] px, rms shift error 1.616 -> 1.238 px
+true poses in the stage-B frame: rotation right (1.122 deg), translation model R |t| 1.817 px
+stage-B pose error against the truth (in the stage-B frame):
+  all        n  21951  angle median  2.26 mean  3.92 p90  4.78  >5 0.088 >10 0.024 >30 0.011 | shift median 0.29 p90 0.64 px
+  non-junk   n  20895  angle median  2.19 mean  2.57 p90  4.31  >5 0.054 >10 0.002 >30 0.001 | shift median 0.28 p90 0.57 px
+  junk       n   1056  angle median  9.31 mean 30.58 p90 118.48  >5 0.769 >10 0.472 >30 0.219 | shift median 1.83 p90 5.87 px
+  class   0  n   1056  angle median  9.31 mean 30.58 p90 118.48  >5 0.769 >10 0.472 >30 0.219 | shift median 1.83 p90 5.87 px
+  class   1  n  11697  angle median  2.18 mean  2.48 p90  4.26  >5 0.050 >10 0.001 >30 0.000 | shift median 0.28 p90 0.56 px
+  class   2  n   7951  angle median  2.15 mean  2.46 p90  4.21  >5 0.049 >10 0.001 >30 0.000 | shift median 0.27 p90 0.54 px
+  class  18  n      4  angle median  3.29 mean  2.89 p90  3.94  >5 0.000 >10 0.000 >30 0.000 | shift median 0.59 p90 0.67 px
+  class  22  n   1038  angle median  2.64 mean  2.89 p90  4.58  >5 0.069 >10 0.002 >30 0.001 | shift median 0.41 p90 0.76 px
+  class  28  n     12  angle median  4.85 mean 32.58 p90 149.90  >5 0.417 >10 0.167 >30 0.167 | shift median 0.63 p90 4.65 px
+  class  43  n     60  angle median  4.56 mean  8.92 p90  8.42  >5 0.433 >10 0.083 >30 0.033 | shift median 0.70 p90 1.71 px
+  class  49  n    123  angle median  3.69 mean  7.27 p90  6.52  >5 0.276 >10 0.041 >30 0.024 | shift median 0.43 p90 1.06 px
+  class 101  n     10  angle median  8.28 mean 30.98 p90 89.25  >5 0.700 >10 0.300 >30 0.200 | shift median 0.71 p90 6.29 px
+classes below 439 particles, referenced with junk as one other class: {18: 4, 28: 12, 43: 60, 49: 123, 101: 10}
+truth classes [0, 1, 2, 22] -> labels 1..4; coarse: {0: 1, 1: 2, 2: 1, 22: 2} (2 groups)
+labels stageB  K 2 sizes [9915, 12036]
+labels truth   K 4 sizes [1265, 11697, 7951, 1038]
+labels coarse  K 2 sizes [9216, 12735]

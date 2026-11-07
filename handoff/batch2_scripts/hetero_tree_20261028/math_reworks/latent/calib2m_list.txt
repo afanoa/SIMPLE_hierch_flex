@@ -1,0 +1,2 @@
+fast_qflex_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoyflex/1_hetero_tree/node_r qtoy:/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/latent/truth_qtoyflex_kind.txt --maxn 15000 --nit 4 --states stageB --poses stageB --basis sites
+fast_qflex_r /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoyflex/1_hetero_tree/node_r qtoy:/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/latent/truth_qtoyflex_kind.txt --maxn 15000 --nit 4 --states stageB --poses stageB --basis flex

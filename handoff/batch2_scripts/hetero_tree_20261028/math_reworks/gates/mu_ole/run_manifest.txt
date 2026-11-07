@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/ole_12707/5_refine3D_auto/ole_12707.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/build_mu/install
+simple_exec_sha256=a21decc211386e5e06f2b42f2485d8ab14124ef156afba6e01348ac426e20ba5
+seed=1
+keys=nthr=8 nodepar=4 maxdepth=1 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=5 pgrp=c2 mskdiam=240 minpop=3000 site_layer=yes site_states=yes  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54866125
+started=2026-11-02T14:07:57-05:00
+finished=2026-11-02T16:11:31-05:00

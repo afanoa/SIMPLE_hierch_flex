@@ -1,0 +1,40 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index ff098af..5419562 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -1792,27 +1792,20 @@ contains
+ 
+     logical function final( self )
+         class(hetero_tree), intent(inout) :: self
+-        logical :: l_fac
++        logical :: l_fac, l_pl
+         final = .false.
+-        if( .not. self%plain() ) return
++        ! the merge-up reads only stage-B maps and projects, so it starts first; plain, landscape and the site layer run beside it
++        if( len(self%subroot) == 0 .and. .not. self%l_mudone ) self%l_mudone = self%mergeup()
++        l_pl = self%plain()
++        if( .not. self%l_lsdone ) self%l_lsdone = self%landscape()
+         if( len(self%subroot) > 0 )then
+-            if( .not. self%l_lsdone )then
+-                if( .not. self%landscape() ) return
+-                self%l_lsdone = .true.
+-            endif
+-            final = .true.
++            final = l_pl .and. self%l_lsdone
+             return
+         endif
+         l_fac = self%factorial()
+-        if( .not. self%l_lsdone )then
+-            if( .not. self%landscape() ) return
+-            self%l_lsdone = .true.
+-        endif
+-        ! the merge-up job goes first and the final maps are made while it runs (neither reads the other's files)
+-        if( .not. self%l_mudone ) self%l_mudone = self%mergeup()
++        if( .not. l_pl ) return
+         if( .not. file_exists(string(self%root//'/final_maps/choice.txt')) ) call final_maps(self)
+-        if( .not. self%l_mudone ) return
+-        final = l_fac
++        final = l_fac .and. self%l_lsdone .and. self%l_mudone
+     end function final
+ 
+     ! the landscape between the accepted poles of every finished node (landscape_sample in node_<id>/landscape)

@@ -1,0 +1,20 @@
+diff --git a/src/main/strategies/search/simple_state_mergeup.f90 b/src/main/strategies/search/simple_state_mergeup.f90
+index 5e5d336..6b10454 100644
+--- a/src/main/strategies/search/simple_state_mergeup.f90
++++ b/src/main/strategies/search/simple_state_mergeup.f90
+@@ -4036,7 +4036,6 @@ contains
+         quantr = w(lo+1) + (pos - real(lo)) * (w(min(lo+2,size(w))) - w(lo+1))
+     end function quantr
+ 
+-    ! the split re-test's Bonferroni threshold over m split tests: the one-sided normal quantile at ALPHA_SPLIT / m
+     subroutine null_thr( nl, mu, sd, thr )
+         type(shuffle_null), intent(in)  :: nl
+         real,               intent(out) :: mu, sd, thr
+@@ -4057,6 +4056,7 @@ contains
+             &(2. * real(nmax - 1)**2 * real(max(1, n - 1))))
+     end function null_spread
+ 
++    ! the split re-test's Bonferroni threshold over m split tests: the one-sided normal quantile at ALPHA_SPLIT / m
+     real function split_zcrit( m )
+         integer, intent(in) :: m
+         real(dp) :: a, lo, hi, mid

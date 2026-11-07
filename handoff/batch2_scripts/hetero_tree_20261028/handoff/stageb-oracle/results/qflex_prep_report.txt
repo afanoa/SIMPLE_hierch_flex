@@ -1,0 +1,18 @@
+node /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoyflex/1_hetero_tree/node_r: 59982 rows, 59982 active, stage-B states [1, 2, 3]; true shifts |x|,|y| max 0.000 px
+global rotation (left): |G| 0.037 deg, median residual angle 4.153 deg (raw 4.151)
+global rotation (right): |G| 0.209 deg, median residual angle 4.152 deg (raw 4.151)
+frame shift (R): t = [-0.366 1.567 0.941] px, rms shift error 1.822 -> 0.838 px
+frame shift (RT): t = [-0.501 1.192 0.098] px, rms shift error 1.822 -> 1.467 px
+true poses in the stage-B frame: rotation right (0.209 deg), translation model R |t| 1.864 px
+stage-B pose error against the truth (in the stage-B frame):
+  all        n  59982  angle median  4.71 mean 16.74 p90 28.82  >5 0.464 >10 0.178 >30 0.099 | shift median 0.69 p90 3.08 px
+  non-junk   n  53982  angle median  4.34 mean 10.07 p90 10.41  >5 0.411 >10 0.107 >30 0.045 | shift median 0.64 p90 1.54 px
+  junk       n   6000  angle median 62.55 mean 76.73 p90 168.01  >5 0.944 >10 0.819 >30 0.588 | shift median 4.19 p90 10.98 px
+  class   0  n   6000  angle median 62.55 mean 76.73 p90 168.01  >5 0.944 >10 0.819 >30 0.588 | shift median 4.19 p90 10.98 px
+  class   1  n  44366  angle median  4.29 mean  9.83 p90 10.26  >5 0.403 >10 0.105 >30 0.043 | shift median 0.63 p90 1.52 px
+  class  18  n   3600  angle median  4.36 mean 10.16 p90 10.33  >5 0.419 >10 0.106 >30 0.043 | shift median 0.70 p90 1.61 px
+  class 101  n   6016  angle median  4.77 mean 11.79 p90 11.74  >5 0.461 >10 0.127 >30 0.059 | shift median 0.63 p90 1.60 px
+truth classes [0, 1, 18, 101] -> labels 1..4; coarse: {0: 2, 1: 2, 18: 2, 101: 3} (2 groups)
+labels stageB  K 3 sizes [21183, 27380, 11419]
+labels truth   K 4 sizes [6000, 44366, 3600, 6016]
+labels coarse  K 2 sizes [53966, 6016]

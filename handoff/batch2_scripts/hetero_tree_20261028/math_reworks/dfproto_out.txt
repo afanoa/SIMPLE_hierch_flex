@@ -1,0 +1,27 @@
+node gates/base_r131/1_hetero_tree/node_r1: box 88 -> 48, 2 states, per-half counts A [6103, 6712] B [5966, 6620], band 16..23, common n 1923, old one-draw T 0.154 (z 4.31)
+  pair 1-2: draw-free T at n=1923: 0.350 | full-N actual cross-half FSC peak: 0.671 | T at n = 480 961 1923 3846: 0.121 0.215 0.350 0.513
+     curve at n (shells 16..23): 0.450 0.347 0.251 0.202 0.151 0.103 0.071 0.042
+node gates/base_r131_s1/1_hetero_tree/node_r1: box 88 -> 48, 2 states, per-half counts A [5231, 5931] B [5147, 6050], band 16..23, common n 2878, old one-draw T 0.210 (z 6.07)
+  pair 1-2: draw-free T at n=2878: 0.534 | full-N actual cross-half FSC peak: 0.718 | T at n = 719 1439 2878 5756: 0.234 0.372 0.534 0.689
+     curve at n (shells 16..23): 0.677 0.525 0.399 0.346 0.282 0.240 0.186 0.132
+node gates/sub4_r131_s1/1_hetero_tree/node_r1: box 88 -> 48, 2 states, per-half counts A [5533, 6148] B [5497, 6141], band 16..23, common n 2718, old one-draw T 0.116 (z 1.93)
+  pair 1-2: draw-free T at n=2718: 0.551 | full-N actual cross-half FSC peak: 0.761 | T at n = 679 1359 2718 5436: 0.244 0.387 0.551 0.705
+     curve at n (shells 16..23): 0.673 0.557 0.423 0.355 0.290 0.220 0.147 0.077
+node gates/sub4_r131/1_hetero_tree/node_r2: box 88 -> 48, 2 states, per-half counts A [4528, 4884] B [4587, 4934], band 16..23, common n 1810, old one-draw T 0.125 (z 3.43)
+  pair 1-2: draw-free T at n=1810: 0.325 | full-N actual cross-half FSC peak: 0.601 | T at n = 452 905 1810 3620: 0.110 0.196 0.325 0.486
+     curve at n (shells 16..23): 0.416 0.320 0.239 0.198 0.169 0.113 0.064 0.038
+node gates/sub4_qtoy2_s1/1_hetero_tree/node_r3: box 88 -> 48, 2 states, per-half counts A [2434, 2885] B [2358, 2845], band 16..23, common n 1967, old one-draw T 0.165 (z 3.25)
+  pair 1-2: draw-free T at n=1967: 0.434 | full-N actual cross-half FSC peak: 0.515 | T at n = 491 983 1967 3934: 0.164 0.280 0.434 0.602
+     curve at n (shells 16..23): 0.523 0.430 0.349 0.274 0.214 0.150 0.109 0.086
+node gates/sub4_qtoy2_s1/1_hetero_tree/node_r5: box 88 -> 48, 2 states, per-half counts A [1671, 1703] B [1588, 1655], band 16..23, common n 1268, old one-draw T 0.113 (z 2.85)
+  pair 1-2: draw-free T at n=1268: 0.281 | full-N actual cross-half FSC peak: 0.382 | T at n = 317 634 1268 2536: 0.089 0.164 0.281 0.439
+     curve at n (shells 16..23): 0.283 0.301 0.260 0.260 0.233 0.192 0.179 0.149
+node gates/base_qtoynull/1_hetero_tree/node_r: box 88 -> 48, 2 states, per-half counts A [15643, 14357] B [15496, 14504], band 16..23, common n 6828, old one-draw T 0.089 (z 5.45)
+  pair 1-2: draw-free T at n=6828: 0.252 | full-N actual cross-half FSC peak: 0.420 | T at n = 1707 3414 6828 13656: 0.079 0.146 0.252 0.398
+     curve at n (shells 16..23): 0.340 0.231 0.185 0.152 0.139 0.148 0.129 0.055
+node gates/base_olenull/1_hetero_tree/node_r: box 88 -> 70, 2 states, per-half counts A [16544, 23756] B [16524, 23775], band 21..34, common n 7992, old one-draw T 0.088 (z 4.89)
+  pair 1-2: draw-free T at n=7992: 0.512 | full-N actual cross-half FSC peak: 0.722 | T at n = 1998 3996 7992 15984: 0.215 0.350 0.512 0.672
+     curve at n (shells 21..34): 0.624 0.523 0.388 0.251 0.223 0.236 0.262 0.294 0.290 0.284 0.286 0.267 0.238 0.143
+node gates/base_micnull/1_hetero_tree/node_r: box 88 -> 64, 2 states, per-half counts A [12139, 16265] B [12184, 16220], band 20..31, common n 12580, old one-draw T 0.801 (z 46.77)
+  pair 1-2: draw-free T at n=12580: 0.878 | full-N actual cross-half FSC peak: 0.888 | T at n = 3145 6290 12580 25160: 0.655 0.786 0.878 0.934
+     curve at n (shells 20..31): 0.928 0.903 0.801 0.643 0.555 0.515 0.511 0.552 0.549 0.537 0.462 0.299

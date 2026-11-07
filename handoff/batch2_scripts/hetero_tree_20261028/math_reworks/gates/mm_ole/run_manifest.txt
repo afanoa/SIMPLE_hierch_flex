@@ -1,0 +1,10 @@
+input=/mnt/beegfs/elmlund/afan/ole_12707/5_refine3D_auto/ole_12707.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/merge_master/install
+simple_exec_sha256=221b7d7ce2a4acf5d233c640fa17a3ec8f26f45aa190a10ed7de1bb634835a02
+seed=1
+keys=nthr=8 nodepar=4 maxdepth=1 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=5 pgrp=c2 mskdiam=240 minpop=3000 site_layer=yes site_states=yes  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54999358
+started=2026-11-06T14:34:26-05:00

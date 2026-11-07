@@ -1,0 +1,1 @@
+ee26d9bbf flex_pca: the embed-stats readers find the last particle again (pind_row on locate_int, which returns n - 1 for the last element; master's exact-match check alone rejects it)

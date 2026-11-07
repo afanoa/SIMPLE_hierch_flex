@@ -1,0 +1,168 @@
+--- a/src/main/strategies/search/simple_state_mergeup.f90	2026-10-28 02:32:49
++++ b/src/main/strategies/search/simple_state_mergeup.f90	2026-10-28 03:06:32
+@@ -66,7 +66,7 @@
+     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
+     logical :: l_exists = .false.
+     real, allocatable :: qv(:), cq(:), cqc(:), msph(:,:,:)
+-    logical :: l_qnull = .false., l_qcore = .false.
++    logical :: l_qnull = .false., l_qcore = .false., l_qpair = .false.
+     logical :: l_qstrata = .false.
+     integer :: nemnull = 0, emseed = 0, khp = 0
+     logical :: l_ortho = .false.
+@@ -201,6 +201,9 @@
+         call get_environment_variable('SIMPLE_SPLIT_QNULL', qs, status=iqs)
+         self%l_qnull = iqs == 0 .and. (trim(qs) == 'yes' .or. trim(qs) == 'core')
+         self%l_qcore = iqs == 0 .and. trim(qs) == 'core'
++        ! test switch SIMPLE_SPLIT_GUARD=pairs: above two EM groups the floor and the quality null act per nearest-group pair
++        call get_environment_variable('SIMPLE_SPLIT_GUARD', qs, status=iqs)
++        self%l_qpair = iqs == 0 .and. trim(qs) == 'pairs'
+         call get_environment_variable('SIMPLE_SPLIT_RHOMIN', qs, status=iqs)
+         if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%rhomin
+         ! test switch SIMPLE_SPLIT_ORTHO=yes: pair statistics on group differences orthogonal, per shell, to the group mean
+@@ -890,13 +893,17 @@
+                     &exa, exb, kstar, rst)
+             endif
+             if( self%nemnull > 0 ) call em_null(kem, rst)
+-            if( self%l_qnull .and. kem == 2 .and. .not. self%l_equiv ) call quality_null
+-            ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
+-            if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
+-                if( rel_effect(rst) < self%rhomin )then
+-                    write(logfhandle,'(A)') 'relative effect below SIMPLE_SPLIT_RHOMIN '//fmtr(real(self%rhomin,dp),4)//' -> K* 1'
+-                    gof   = 1
+-                    kstar = 1
++            if( self%l_qpair .and. kem >= 3 .and. kstar >= 2 .and. .not. self%l_equiv )then
++                call pair_guards
++            else
++                if( self%l_qnull .and. kem == 2 .and. .not. self%l_equiv ) call quality_null
++                ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
++                if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
++                    if( rel_effect(rst) < self%rhomin )then
++                        write(logfhandle,'(A)') 'relative effect below SIMPLE_SPLIT_RHOMIN '//fmtr(real(self%rhomin,dp),4)//' -> K* 1'
++                        gof   = 1
++                        kstar = 1
++                    endif
+                 endif
+             endif
+         endif
+@@ -1167,6 +1174,96 @@
+             endif
+         end subroutine quality_null
+ 
++        subroutine pair_guards
++            integer, allocatable :: fa(:), fb(:), xa(:), xb(:), sa(:), sb(:), qa(:), qb(:), pl(:), gf(:), ea(:), eb(:), hn(:)
++            integer, allocatable :: pl2(:), gf2(:), ea2(:), eb2(:)
++            integer, allocatable :: cp(:,:)
++            real,    allocatable :: rm(:,:), ct(:)
++            real    :: m2, s2, fc, sc, tk, tr, tq, y, rr, zq
++            integer :: k, g, h, kk, mm, nc, nn, ic, iq
++            logical :: l_fail, l_floor, l_qual
++            if( size(nl%nul2) < 2 ) return
++            m2 = medianr(nl%nul2)
++            s2 = sqrt(sum((nl%nul2 - sum(nl%nul2) / real(size(nl%nul2)))**2) / real(size(nl%nul2) - 1))
++            fc = min(max(self%shell_corr(cons(:,:,:,1), cons(:,:,:,2), self%kt, self%khi), 1.e-6), 0.999999)
++            sc = fc / ((1. - fc) * 0.5 * real(size(ia) + size(ib)))
++            iq = merge(3, 2, self%l_qcore)
++            if( self%l_qnull .and. self%l_qcore .and. .not. allocated(self%cqc) ) call core_scores
++            k = kstar
++            do while( k >= 2 )
++                allocate(fa(size(ia)), fb(size(ib)), source=0)
++                do mm = 1, size(plist)
++                    where( la == plist(mm) ) fa = gof(mm)
++                    where( lb == plist(mm) ) fb = gof(mm)
++                end do
++                call self%decide(ia, ib, fa, fb, k, eps, neq, cons, self%kt, -huge(tk), 'guard: final groups', pl, gf, ea, eb, &
++                    &kk, tk, rm=rm)
++                nn = minval([(min(count(fa == pl(g)), count(fb == pl(g))), g=1,size(pl))])
++                allocate(hn(size(pl)), cp(2,0), ct(0))
++                do g = 1, size(pl)
++                    hn(g) = 0
++                    tr    = huge(tr)
++                    do h = 1, size(pl)
++                        if( h == g ) cycle
++                        if( rm(min(g,h),max(g,h)) < tr )then
++                            tr    = rm(min(g,h),max(g,h))
++                            hn(g) = h
++                        endif
++                    end do
++                    if( hn(g) == 0 ) cycle
++                    if( any(cp(1,:) == min(g,hn(g)) .and. cp(2,:) == max(g,hn(g))) ) cycle
++                    cp = reshape([cp, min(g,hn(g)), max(g,hn(g))], [2, size(ct) + 1])
++                    ct = [ct, tr]
++                end do
++                l_fail = .false.
++                nc     = size(ct)
++                do ic = 1, nc
++                    mm = minloc(ct, 1)
++                    tr = ct(mm)
++                    ct(mm) = huge(tr)
++                    g  = pl(cp(1,mm))
++                    h  = pl(cp(2,mm))
++                    y  = min(max((tr - m2) / max(1. - m2, 1.e-6), 0.), 0.999)
++                    rr = 2. * y / ((1. - y) * real(max(nn, 1))) / sc
++                    l_floor = self%rhomin > 0. .and. rr < self%rhomin
++                    zq      = huge(zq)
++                    if( self%l_qnull .and. .not. l_floor )then
++                        xa = pack([(kk, kk=1,size(ia))], fa == g .or. fa == h)
++                        xb = pack([(kk, kk=1,size(ib))], fb == g .or. fb == h)
++                        sa = merge(1, 2, fa(xa) == g)
++                        sb = merge(1, 2, fb(xb) == g)
++                        call self%decide(ia(xa), ib(xb), sa, sb, 2, eps, neq, cons, self%kt, -huge(tk), 'guard: pair', pl2, gf2, &
++                            &ea2, eb2, kk, tk)
++                        qa = qsplit(ia(xa), sa, sta(xa), iq)
++                        qb = qsplit(ib(xb), sb, stb(xb), iq)
++                        call self%decide(ia(xa), ib(xb), qa, qb, 2, eps, neq, cons, self%kt, -huge(tq), 'guard: quality '//&
++                            &'pseudo-split', pl2, gf2, ea2, eb2, kk, tq)
++                        zq = (tk - tq) / max(sqrt(2.) * s2, 1.e-12)
++                        write(logfhandle,'(A)') 'PAIR GUARD QUALITY: groups '//int2str(g)//' '//int2str(h)//' pair re-test '//&
++                            &fmtr(real(tk,dp),4)//' vs '//trim(qname(iq))//' pseudo-split '//fmtr(real(tq,dp),4)//' -> z '//&
++                            &fmtr(real(zq,dp),2)
++                    endif
++                    l_qual = zq < split_zcrit(1)
++                    write(logfhandle,'(A)') 'PAIR GUARD: groups '//int2str(g)//' '//int2str(h)//' (sizes '//&
++                        &int2str(count(fa == g) + count(fb == g))//' '//int2str(count(fa == h) + count(fb == h))//') re-test '//&
++                        &fmtr(real(tr,dp),4)//' rho '//fmtr(real(rr,dp),5)//' -> '//trim(merge('MERGE (floor)  ', &
++                        &merge('MERGE (quality)', 'keep           ', l_qual), l_floor))
++                    if( l_floor .or. l_qual )then
++                        where( gof == h ) gof = g
++                        where( gof > h ) gof = gof - 1
++                        k      = k - 1
++                        l_fail = .true.
++                        exit
++                    endif
++                end do
++                deallocate(fa, fb, hn, cp, ct)
++                if( .not. l_fail ) exit
++            end do
++            write(logfhandle,'(A)') 'PAIR GUARDS: K* '//int2str(kstar)//' -> '//int2str(k)
++            kstar = k
++            if( kstar == 1 ) gof = 1
++        end subroutine pair_guards
++
+         function qname( iq ) result( nm )
+             integer, intent(in) :: iq
+             character(len=:), allocatable :: nm
+@@ -1508,7 +1605,7 @@
+ 
+     end subroutine screen
+ 
+-    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin, nl )
++    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin, nl, rm )
+         class(state_mergeup), intent(inout) :: self
+         integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), kmax, neq, kl
+         real,                 intent(in)    :: eps(0:), thr
+@@ -1518,6 +1615,7 @@
+         integer,              intent(out)   :: kout
+         real,    optional,    intent(out)   :: rmin
+         type(shuffle_null), optional, intent(inout) :: nl
++        real, allocatable,  optional, intent(out)   :: rm(:,:)
+         complex, allocatable :: allm(:,:,:,:)
+         integer, allocatable :: presa(:), presb(:), jidx(:), joff(:), mapa(:), mapb(:), groupof(:), pp(:), qq(:)
+         real,    allocatable :: jscale(:), rmat(:,:), merged(:), lowc(:), vals(:)
+@@ -1578,6 +1676,7 @@
+             deallocate(vals)
+         endif
+         write(logfhandle,'(A)') 'pair statistics at the start (sorted): '//sorted_upper(rmat, npair)
++        if( present(rm) ) rm = rmat
+         allocate(l_alive(npair), source=.true.)
+         allocate(merged(0))
+         do

@@ -1,0 +1,126 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index a37a56983..5420c0109 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -596,7 +596,7 @@ contains
+         integer,      allocatable :: hrow(:)
+         real    :: fl
+         integer :: s, k, j, ks
+-        logical :: l_tp, l_fl, l_wait
++        logical :: l_tp, l_fl, l_wait, l_ih
+         s = self%nodes(i)%step
+         if( present(done_step) ) s = done_step
+         d        = self%ndir(i)
+@@ -794,14 +794,22 @@ contains
+                         call rest_batch(j)
+                         return
+                     endif
+-                    ch = two_groups(d)
++                    ch = [integer ::]
++                    if( inherit_axis() .and. self%nodes(i)%depth > 0 ) ch = parent_halves(d, parent_dir(self%nodes(i)%pproj), self%nrows)
++                    l_ih = size(ch) > 0
++                    if( .not. l_ih ) ch = two_groups(d)
+                     jk = junk_rows(d)
+                     if( size(jk) > 0 .and. size(ch) > 0 ) ch(jk) = 0
+                     if( count(ch == 1) > PROB_MULTISTATE_MIN_POP .and. count(ch == 2) > PROB_MULTISTATE_MIN_POP )then
+                         seeds = ch
+                         ks    = 2
+-                        write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the two '//&
+-                            &'groups of its fflex states seed the refinement'
++                        if( l_ih )then
++                            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the '//&
++                                &'median halves of its parent''s leading stage-B evidence contrast seed the refinement'
++                        else
++                            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': no site gives a split, the two '//&
++                                &'groups of its fflex states seed the refinement'
++                        endif
+                     endif
+                 endif
+                 if( self%nodes(i)%depth > self%p%kway_maxdepth .and. ks > 2 ) call binary_seeds
+@@ -3792,6 +3800,13 @@ contains
+         keep_maps = ios == 0 .and. ev == 'yes'
+     end function keep_maps
+ 
++    logical function inherit_axis()
++        character(len=8) :: ev
++        integer :: ios
++        call get_environment_variable('SIMPLE_TREE_INHERIT', ev, status=ios)
++        inherit_axis = ios == 0 .and. ev == 'yes'
++    end function inherit_axis
++
+     ! a step's partials, neighbour tables, reprojection models, embedding and sigma2 state (but stage B's) are read only inside it
+     subroutine prune_step( dir )
+         character(len=*), intent(in) :: dir
+@@ -4008,6 +4023,72 @@ contains
+         lab = two_groups_in(nd//'/fflex')
+     end function two_groups
+ 
++    ! SIMPLE_TREE_INHERIT=yes: a node without a pole splits at the median of its rows' leading parent stage-B evidence contrast
++    function parent_halves( nd, pd, nrows ) result( lab )
++        character(len=*), intent(in) :: nd, pd
++        integer,          intent(in) :: nrows
++        integer,  allocatable :: lab(:), nr(:), prows(:), ix(:), rows(:), at(:), inds(:)
++        real,     allocatable :: ev(:,:), cov(:,:), evec(:,:), w(:), y(:)
++        logical,  allocatable :: mem(:)
++        character(len=8192) :: line
++        integer :: fu, io, n, q, k, ip, s, r, m
++        real    :: tk
++        allocate(lab(0))
++        if( .not. file_exists(string(pd//'/stageB/prob_state_evidence.txt')) ) return
++        rows = read_ints(nd//'/rows.txt')
++        allocate(mem(nrows), source=.false.)
++        mem(rows) = .true.
++        ix = node_index(nrows, nd)
++        if( file_exists(string(pd//'/stageB/'//NR_ROWS)) ) nr = read_ints(pd//'/stageB/'//NR_ROWS)
++        if( local_rows(pd) ) prows = read_ints(pd//'/rows.txt')
++        call fopen(fu, string(pd//'/stageB/prob_state_evidence.txt'), status='old', action='read', iostat=io)
++        if( io /= 0 ) return
++        n = 0
++        q = 0
++        do
++            read(fu,'(A)',iostat=io) line
++            if( io /= 0 ) exit
++            if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
++            n = n + 1
++            if( q == 0 ) q = nwords(line) - 3
++        end do
++        rewind(fu)
++        allocate(ev(size(rows),max(q,1)), source=0.)
++        allocate(at(size(rows)), source=0)
++        m = 0
++        k = 0
++        do while( k < n )
++            read(fu,'(A)') line
++            if( line(1:1) == '#' .or. len_trim(line) == 0 ) cycle
++            k = k + 1
++            read(line,*) ip, s, tk
++            r = ip
++            if( allocated(nr) ) r = nr(1 + ip)
++            if( allocated(prows) ) r = prows(r)
++            if( .not. mem(r) ) cycle
++            m = m + 1
++            at(m) = ix(r)
++            read(line,*) ip, s, tk, ev(m,1:q)
++            ev(m,1:q) = max(ev(m,1:q), maxval(ev(m,1:q)) - 30.)
++        end do
++        call fclose(fu)
++        if( q < 2 .or. m /= size(rows) ) return
++        do k = 1, q
++            ev(:,k) = ev(:,k) - sum(ev(:,k)) / real(m)
++        end do
++        cov = matmul(transpose(ev), ev) / real(max(m - 1, 1))
++        allocate(evec(q,1), w(1))
++        call eigh(q, cov, 1, w, evec)
++        y    = matmul(ev, evec(:,1))
++        inds = [(k, k=1,m)]
++        call hpsort(y, inds)
++        deallocate(lab)
++        allocate(lab(size(project_states(nd//'/'//NODE_PROJ))), source=0)
++        do k = 1, m
++            lab(at(inds(k))) = merge(1, 2, 2 * k <= m)
++        end do
++    end function parent_halves
++
+     function two_groups_in( fd ) result( lab )
+         character(len=*), intent(in) :: fd
+         integer, allocatable :: lab(:), st(:), pres(:), grp(:)

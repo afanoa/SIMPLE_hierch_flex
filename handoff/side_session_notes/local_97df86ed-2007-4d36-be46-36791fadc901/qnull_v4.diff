@@ -1,0 +1,232 @@
+--- a/src/main/strategies/search/simple_state_mergeup.f90	2026-10-28 01:38:51
++++ b/src/main/strategies/search/simple_state_mergeup.f90	2026-10-28 02:33:23
+@@ -65,7 +65,8 @@
+     integer, allocatable :: fsh(:,:,:)
+     integer :: n = 0, nslots = 1, box = 0, nh = 0, nyq = 0, klo = 0, khi = 0, kb = 0, kt = 0, nem = 0, nshem = 0
+     logical :: l_exists = .false.
+-    real, allocatable :: qv(:)
++    real, allocatable :: qv(:), cq(:), cqc(:), msph(:,:,:)
++    logical :: l_qnull = .false., l_qcore = .false.
+     logical :: l_qstrata = .false.
+     integer :: nemnull = 0, emseed = 0, khp = 0
+     logical :: l_ortho = .false.
+@@ -160,7 +161,14 @@
+         !$ call omp_set_max_active_levels(1)
+         self%nslots = max(2, nthr_glob)
+         !$ self%nslots = max(self%nslots, omp_get_max_threads())
+-        call seed_rnd_fixed(RND_SEED)
++        ! test switch SIMPLE_SPLIT_SEED=s: the split test's random draws (subsets, shuffles) from seed s
++        call get_environment_variable('SIMPLE_SPLIT_SEED', qs, status=iqs)
++        if( iqs == 0 .and. len_trim(qs) > 0 )then
++            read(qs,*) i
++            call seed_rnd_fixed(i)
++        else
++            call seed_rnd_fixed(RND_SEED)
++        endif
+         nrows = build%spproj_field%get_noris()
+         self%rows = pack([(i, i=1,nrows)], [(build%spproj_field%get_state(i) > 0 .and. &
+             &(build%spproj_field%get_eo(i) == 0 .or. build%spproj_field%get_eo(i) == 1), i=1,nrows)])
+@@ -189,6 +197,10 @@
+         if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%ktgap
+         ! test switch SIMPLE_SPLIT_RHOMIN=x: a split whose relative effect (rel_effect in test) is below x is refused
+         self%rhomin = 0.
++        ! test switch SIMPLE_SPLIT_QNULL=yes: a split must beat quality-matched pseudo-splits of the same particles (test)
++        call get_environment_variable('SIMPLE_SPLIT_QNULL', qs, status=iqs)
++        self%l_qnull = iqs == 0 .and. (trim(qs) == 'yes' .or. trim(qs) == 'core')
++        self%l_qcore = iqs == 0 .and. trim(qs) == 'core'
+         call get_environment_variable('SIMPLE_SPLIT_RHOMIN', qs, status=iqs)
+         if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%rhomin
+         ! test switch SIMPLE_SPLIT_ORTHO=yes: pair statistics on group differences orthogonal, per shell, to the group mean
+@@ -218,6 +230,10 @@
+             self%eul(:,i) = build%spproj_field%get_euler(ip)
+             self%dfm(i)   = 0.5 * (build%spproj_field%get_dfx(ip) + build%spproj_field%get_dfy(ip))
+             self%qv(i)    = build%spproj_field%get(ip, 'corr')
++            if( self%l_qnull .and. build%spproj_field%isthere(ip, 'contrast') )then
++                if( .not. allocated(self%cq) ) allocate(self%cq(self%n), source=-huge(1.))
++                self%cq(i) = build%spproj_field%get(ip, 'contrast')
++            endif
+             e1 = self%eul(1,i) * PI / 180.
+             e2 = self%eul(2,i) * PI / 180.
+             v  = [sin(e2)*cos(e1), sin(e2)*sin(e1), cos(e2)]
+@@ -384,6 +400,7 @@
+         call vol%read_and_crop(fname, self%p%smpd, self%box, self%p%smpd_crop)
+         fm = min(max(vol%get_rmat(), 0.), 1.)
+         if( any(shape(fm) /= shape(self%msk3)) ) THROW_HARD('focus mask box does not match the particles; focus')
++        self%msph = self%msk3
+         self%msk3 = self%msk3 * fm
+         self%kt   = min(self%kb + self%ktgap, self%khi - 2)
+         write(logfhandle,'(A)') '>>> STATE_MERGEUP focus mask '//fname%to_char()//': '//&
+@@ -873,6 +890,7 @@
+                     &exa, exb, kstar, rst)
+             endif
+             if( self%nemnull > 0 ) call em_null(kem, rst)
++            if( self%l_qnull .and. kem == 2 .and. .not. self%l_equiv ) call quality_null
+             ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
+             if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
+                 if( rel_effect(rst) < self%rhomin )then
+@@ -1107,6 +1125,155 @@
+                 &', z '//fmtr(real((treal - mue) / max(sde, 1.e-12),dp),2)//' | EM null values '//joinedr(tn)
+             mue = rel_effect(treal)
+         end subroutine em_null
++
++        ! test switch: pseudo-splits of the same particles by a per-particle quality score (the contrast field, then corr), group
++        ! sizes per half as the real split, assigned by the score's rank within each nuisance stratum; the real split stands only if
++        ! its re-test beats the largest pseudo-split's by the uncorrected split level, z = dT / (sqrt(2) x the re-test null's sd)
++        subroutine quality_null
++            integer, allocatable :: pa(:), pb(:), pl(:), gf(:), ea(:), eb(:)
++            character(len=:), allocatable :: line
++            real    :: tq, rr, sr, rq, sq, tqmax, zq, zuse, fc, sc, m2, s2
++            integer :: iq, kk
++            logical :: l_keep
++            if( size(nl%nul2) < 2 ) return
++            m2 = medianr(nl%nul2)
++            s2 = sqrt(sum((nl%nul2 - sum(nl%nul2) / real(size(nl%nul2)))**2) / real(size(nl%nul2) - 1))
++            fc = min(max(self%shell_corr(cons(:,:,:,1), cons(:,:,:,2), self%kt, self%khi), 1.e-6), 0.999999)
++            sc = fc / ((1. - fc) * 0.5 * real(size(ia) + size(ib)))
++            call rho_se(rst, la, lb, m2, s2, sc, rr, sr)
++            line  = 'QUALITY NULL: real re-test '//fmtr(real(rst,dp),4)//' rho '//fmtr(real(rr,dp),5)
++            tqmax = -huge(tqmax)
++            if( self%l_qcore .and. .not. allocated(self%cqc) ) call core_scores
++            do iq = 1, 3
++                if( iq == 1 .and. .not. allocated(self%cq) ) cycle
++                if( iq == 3 .and. .not. self%l_qcore ) cycle
++                pa = qsplit(ia, la, sta, iq)
++                pb = qsplit(ib, lb, stb, iq)
++                call self%decide(ia, ib, pa, pb, 2, eps, neq, cons, self%kt, -huge(tq), 'quality pseudo-split', pl, gf, ea, eb, kk, tq)
++                call rho_se(tq, pa, pb, m2, s2, sc, rq, sq)
++                line  = line//' | by '//trim(qname(iq))//': re-test '//fmtr(real(tq,dp),4)//' rho '//fmtr(real(rq,dp),5)
++                ! in core mode only the score blind to the focus region decides; contrast and corr are logged
++                if( .not. self%l_qcore .or. iq == 3 ) tqmax = max(tqmax, tq)
++            end do
++            if( tqmax == -huge(tqmax) ) return
++            zuse   = split_zcrit(1)
++            zq     = (rst - tqmax) / max(sqrt(2.) * s2, 1.e-12)
++            l_keep = zq >= zuse
++            write(logfhandle,'(A)') line//' | z (real - max pseudo re-test) '//fmtr(real(zq,dp),2)//' vs '//fmtr(real(zuse,dp),2)//&
++                &' (the uncorrected split level) -> '//merge('KEEP  ', 'REFUSE', l_keep)
++            if( .not. l_keep .and. kstar >= 2 )then
++                gof   = 1
++                kstar = 1
++            endif
++        end subroutine quality_null
++
++        function qname( iq ) result( nm )
++            integer, intent(in) :: iq
++            character(len=:), allocatable :: nm
++            select case( iq )
++                case( 1 )
++                    nm = 'contrast'
++                case( 2 )
++                    nm = 'corr'
++                case default
++                    nm = 'core corr'
++            end select
++        end function qname
++
++        ! per-particle quality blind to the focus region: the particle's correlation with the other half's consensus (an unmasked
++        ! Wiener map in the junk band) masked to the sphere outside the focus mask, CTF-weighted, over the junk band
++        subroutine core_scores
++            type(ivec) :: hx(2)
++            complex,  allocatable :: mp(:,:,:,:)
++            real,     allocatable :: rot(:,:,:,:), core(:,:,:)
++            real(dp), allocatable :: epsv(:)
++            real(dp) :: a(self%kj,1), b(self%kj,1)
++            real, pointer :: rmat(:,:,:)
++            integer :: e, i
++            rot = self%sym_rots()
++            do e = 1, 2
++                hx(e)%v = pack([(i, i=1,self%n)], self%eo == e - 1)
++            end do
++            epsv = 0.5_dp * (self%band_density(rot, hx(1)%v) + self%band_density(rot, hx(2)%v))
++            allocate(mp(self%nh,self%box,self%box,2))
++            if( allocated(self%msph) )then
++                core = self%msph - self%msk3
++            else
++                core = self%msk3
++            endif
++            if( maxval(core) < 0.5 ) core = self%msk3
++            do e = 1, 2
++                call self%band_wiener(rot, hx(e)%v, epsv, mp(:,:,:,e))
++                call self%wimgs(1)%set_cmat(mp(:,:,:,e))
++                call self%wimgs(1)%ifft
++                call self%wimgs(1)%get_rmat_ptr(rmat)
++                rmat = rmat * core
++                call self%wimgs(1)%fft
++                mp(:,:,:,e) = self%wimgs(1)%get_cmat()
++            end do
++            allocate(self%cqc(self%n), source=0.)
++            !$omp parallel do default(shared) private(i,a,b) schedule(static) proc_bind(close)
++            do i = 1, self%n
++                call self%band_terms(rot, i, mp(:,:,:,2-self%eo(i):2-self%eo(i)), a, b)
++                self%cqc(i) = real(sum(a) / sqrt(max(sum(b) * real(sum(self%f2j(:,i)),dp), 1.e-30_dp)))
++            end do
++            !$omp end parallel do
++            write(logfhandle,'(A)') 'core quality score (sphere outside the focus mask, junk band): median '//&
++                &fmtr(real(medianr(self%cqc),dp),4)//', 5 / 95 % '//fmtr(real(quantr(self%cqc,0.05),dp),4)//' / '//&
++                &fmtr(real(quantr(self%cqc,0.95),dp),4)
++        end subroutine core_scores
++
++        ! relative effect of a two-group labelling from its re-test T (null median m, sd s; consensus SNR sc) and its se from s
++        subroutine rho_se( t, lab_a, lab_b, m, s, sc, rho, se )
++            real,    intent(in)  :: t, m, s, sc
++            integer, intent(in)  :: lab_a(:), lab_b(:)
++            real,    intent(out) :: rho, se
++            real    :: y, dy
++            integer :: nn
++            nn  = max(1, min(count(lab_a == 1), count(lab_a == 2), count(lab_b == 1), count(lab_b == 2)))
++            y   = min(max((t - m) / max(1. - m, 1.e-6), 0.), 0.999)
++            dy  = s / max(1. - m, 1.e-6)
++            rho = 2. * y / ((1. - y) * real(nn)) / sc
++            se  = 2. * dy / ((1. - y)**2 * real(nn)) / sc
++        end subroutine rho_se
++
++        ! group sizes per half as the real labels; group 1 = the highest-scoring particles by their score's rank within the stratum
++        function qsplit( idx, lab, st, iq ) result( out )
++            use simple_srch_sort_loc, only: hpsort
++            integer, intent(in)  :: idx(:), lab(:), st(:), iq
++            integer, allocatable :: out(:), ord(:), mem(:)
++            real,    allocatable :: sco(:), key(:), sub(:)
++            integer :: i, j, s0, n1
++            allocate(sco(size(idx)), key(size(idx)), out(size(idx)))
++            do i = 1, size(idx)
++                select case( iq )
++                    case( 1 )
++                        sco(i) = self%cq(idx(i))
++                    case( 2 )
++                        sco(i) = self%qv(idx(i))
++                    case default
++                        sco(i) = self%cqc(idx(i))
++                end select
++            end do
++            key = 0.5
++            do s0 = minval(st), maxval(st)
++                mem = pack([(i, i=1,size(st))], st == s0)
++                if( size(mem) < 2 ) cycle
++                sub = sco(mem)
++                ord = [(j, j=1,size(mem))]
++                call hpsort(sub, ord)
++                do j = 1, size(mem)
++                    key(mem(ord(j))) = (real(j) - 0.5) / real(size(mem))
++                end do
++            end do
++            ord = [(i, i=1,size(idx))]
++            call hpsort(key, ord)
++            n1  = count(lab == 1)
++            out = 2
++            do j = size(idx), max(1, size(idx) - n1 + 1), -1
++                out(ord(j)) = 1
++            end do
++        end function qsplit
+ 
+         ! test switch: the re-test pair's per-particle difference SNR over the consensus's per-particle SNR in the re-test band
+         real function rel_effect( treal )
+@@ -4125,6 +4292,9 @@
+         endif
+         if( allocated(self%rows) ) deallocate(self%rows, self%eo, self%vbin, self%eul, self%dfm)
+         if( allocated(self%qv)   ) deallocate(self%qv)
++        if( allocated(self%cq)   ) deallocate(self%cq)
++        if( allocated(self%cqc)  ) deallocate(self%cqc)
++        if( allocated(self%msph) ) deallocate(self%msph)
+         if( allocated(self%emhk) ) deallocate(self%emhk, self%emsh, self%emw, self%f2s, self%cw)
+         if( allocated(self%jhk) ) deallocate(self%jhk, self%jsh, self%jw, self%f2j)
+         if( allocated(self%fbhk) ) deallocate(self%fbhk, self%fbsh, self%fbw, self%f2b, self%cwb)

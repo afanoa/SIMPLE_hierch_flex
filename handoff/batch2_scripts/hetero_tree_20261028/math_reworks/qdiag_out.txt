@@ -1,0 +1,17 @@
+== qtoynull root | groups [31139, 28861]
+   snrq  group means 1.0742 1.0499 | d +0.03 -0.03 (within sd 0.3769)
+   bfac  group means 100.4086 98.9266 | d +0.01 -0.01 (within sd 57.7050)
+   junk  group means 0.0003 0.0005 | d -0.00 +0.00 (within sd 0.0201)
+   corr(snrq, stage-B corr) 0.658  corr(snrq, log noise var) -0.000  corr(snrq, contrast) 0.553  corr(bfac, stage-B corr) -0.077
+   s1 group means -0.980 -0.980
+== qtoy2 root | groups [22813, 17574, 12893, 6720]
+   snrq  group means 1.0691 1.0622 1.0538 1.0573 | d +0.02 -0.00 -0.02 -0.01 (within sd 0.3765)
+   bfac  group means 99.5594 100.0893 99.7809 99.3538 | d -0.00 +0.01 +0.00 -0.01 (within sd 57.7181)
+   junk  group means 0.0501 0.0901 0.2042 0.0954 | d -0.16 -0.03 +0.34 -0.01 (within sd 0.3076)
+   corr(snrq, stage-B corr) 0.699  corr(snrq, log noise var) 0.000  corr(snrq, contrast) 0.220  corr(bfac, stage-B corr) -0.084
+   s1 group means nan nan nan nan
+Traceback (most recent call last):
+  File "/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/qdiag.py", line 7, in <module>
+    ch = np.loadtxt(d + '/split_children_pre.txt', dtype=int)[rows - 1]
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+IndexError: index 22813 is out of bounds for axis 0 with size 22813

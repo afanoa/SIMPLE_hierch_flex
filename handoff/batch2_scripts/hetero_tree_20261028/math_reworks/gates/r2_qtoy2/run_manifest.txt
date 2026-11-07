@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/routes/toy55/simqtoy2/src.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/build_r2/install
+simple_exec_sha256=9206031dff5563f3555412db391571f47ddc59e8a62e13dc969f5a63fba949c6
+seed=1
+keys=nthr=8 nodepar=4 maxdepth=1 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=4 mskdiam=232 minpop=900 site_layer=yes site_states=yes kway_maxdepth=2  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54798710
+started=2026-11-01T21:00:57-05:00
+finished=2026-11-01T21:45:18-05:00

@@ -1,0 +1,20 @@
+## ports_r131_s1
+>>> HETERO_TREE node r: split group 1 (22789 particles; stage-B states 2:22789) -> node r1
+>>> HETERO_TREE node r: split group 2 (21545 particles; stage-B states 1:21545) -> node r2
+>>> HETERO_TREE node r1: states 2 (12484 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (10305 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r2: states 2 (11376 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (10169 particles) -> leaf      r2_s1
+== ports_s1 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   22789 rows | ref  1719 (recall 0.56, purity 0.0754) | stage-B states 2:22789
+    group 2   21545 rows | ref  1356 (recall 0.44, purity 0.0629) | stage-B states 1:21545
+    stage-B maps: s01 0.84/0.60  s02 0.89/0.55
+r1        d1   22789 rows | ref  1719 (share 0.0754) | SEPARATES(map)
+    group 1   12484 rows | ref   967 (recall 0.56, purity 0.0775) | stage-B states 
+    group 2   10305 rows | ref   752 (recall 0.44, purity 0.0730) | stage-B states 
+    stage-B maps: s01 1.00/0.53  s02 0.79/0.54
+r2        d1   21545 rows | ref  1356 (share 0.0629) | 
+    group 1   11376 rows | ref   600 (recall 0.44, purity 0.0527) | stage-B states 
+    group 2   10169 rows | ref   756 (recall 0.56, purity 0.0743) | stage-B states 
+    stage-B maps: s01 0.83/0.64  s02 0.85/0.56

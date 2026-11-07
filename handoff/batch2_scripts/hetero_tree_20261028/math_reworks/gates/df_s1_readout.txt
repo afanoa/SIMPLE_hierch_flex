@@ -1,0 +1,21 @@
+## df_r131_s1
+>>> HETERO_TREE node r: split group 1 (23319 particles; stage-B states 1:23319) -> node r1
+>>> HETERO_TREE node r: split group 2 (21015 particles; stage-B states 2:21015) -> node r2
+>>> HETERO_TREE node r1: states 2 (12289 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (11030 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r2: states 1 (11601 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r2: states 2 (9414 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 5.134, site 3 3.782), its seeds seed the refinement
+== df_s1 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   23319 rows | ref  1577 (recall 0.51, purity 0.0676) | stage-B states 1:23319
+    group 2   21015 rows | ref  1498 (recall 0.49, purity 0.0713) | stage-B states 2:21015
+    stage-B maps: s01 0.86/0.61  s02 0.88/0.52
+r1        d1   23319 rows | ref  1577 (share 0.0676) | 
+    group 1   12289 rows | ref   937 (recall 0.59, purity 0.0762) | stage-B states 
+    group 2   11030 rows | ref   640 (recall 0.41, purity 0.0580) | stage-B states 
+    stage-B maps: s01 0.93/0.63  s02 0.79/0.60
+r2        d1   21015 rows | ref  1498 (share 0.0713) | 
+    group 1   11601 rows | ref  1013 (recall 0.68, purity 0.0873) | stage-B states 
+    group 2    9414 rows | ref   485 (recall 0.32, purity 0.0515) | stage-B states 
+    stage-B maps: s01 0.97/0.51  s02 0.77/0.53

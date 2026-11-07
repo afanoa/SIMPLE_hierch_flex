@@ -1,0 +1,93 @@
+## sub2_r131 (finished=2026-11-01T22:20:47-05:00)
+>>> HETERO_TREE node r: split group 1 (25401 particles; stage-B states 2:25401) -> node r1
+>>> HETERO_TREE node r: split group 2 (18933 particles; stage-B states 1:18933) -> node r2
+>>> HETERO_TREE node r1: states 2 (13332 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (12069 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r2: states 1 2 (18933 particles) -> leaf      r2_g1_2
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 5.733, site 3 4.128), its seeds seed the refinement
+## sub2_r131_s1 (finished=2026-11-01T22:17:50-05:00)
+>>> HETERO_TREE node r: split group 1 (23319 particles; stage-B states 1:23319) -> node r1
+>>> HETERO_TREE node r: split group 2 (21015 particles; stage-B states 2:21015) -> node r2
+>>> HETERO_TREE node r1: states 1 2 (23319 particles) -> leaf      r1_g1_2
+>>> HETERO_TREE node r2: states 1 (11601 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r2: states 2 (9414 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 5.134, site 3 3.782), its seeds seed the refinement
+## sub2_qtoy2_s1 (finished=2026-11-01T22:09:55-05:00)
+>>> HETERO_TREE node r: split group 1 (22101 particles; stage-B states 2:22101) -> node r1
+>>> HETERO_TREE node r: split group 2 (11471 particles; stage-B states 4:11471) -> node r2
+>>> HETERO_TREE node r: split group 3 (10522 particles; stage-B states 1:10522) -> node r3
+>>> HETERO_TREE node r: split group 4 (9289 particles; stage-B states 5:9289) -> node r4
+>>> HETERO_TREE node r: split group 5 (6617 particles; stage-B states 3:6617) -> node r5
+>>> HETERO_TREE node r4: states 2 (4955 particles) -> leaf      r4_s2
+>>> HETERO_TREE node r4: states 1 (4334 particles) -> leaf      r4_s1
+>>> HETERO_TREE node r3: states 1 2 (10522 particles) -> leaf      r3_g1_2
+>>> HETERO_TREE node r2: states 2 (7150 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (4321 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r1: states 2 (12700 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (9401 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r5: states 1 2 (6617 particles) -> leaf      r5_g1_2
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 22.098, site 2 14.954, site 3 13.308, site 4 11.496, site 5 12.990, site 6 12.686), its seeds
+>>> HETERO_TREE node r2: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 8.558), its seeds seed the refinement
+>>> HETERO_TREE node r4: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 7.974, site 2 5.368), its seeds seed the refinement
+>>> HETERO_TREE node r1: site 7 has the strongest kept pole (smaller pole-rule margin per kept site: site 7 3.917), its seeds seed the refinement
+## sub2_qtoy2 (finished=2026-11-01T22:04:27-05:00)
+>>> HETERO_TREE node r: split group 1 (30082 particles; stage-B states 1:30082) -> node r1
+>>> HETERO_TREE node r: split group 2 (16264 particles; stage-B states 2:16264) -> node r2
+>>> HETERO_TREE node r: split group 3 (13654 particles; stage-B states 3:13654) -> node r3
+>>> HETERO_TREE node r3: states 2 (8434 particles) -> leaf      r3_s2
+>>> HETERO_TREE node r3: states 1 (5220 particles) -> leaf      r3_s1
+>>> HETERO_TREE node r2: states 2 (10013 particles) -> leaf      r2_s2
+>>> HETERO_TREE node r2: states 1 (6251 particles) -> leaf      r2_s1
+>>> HETERO_TREE node r1: states 2 (22590 particles) -> leaf      r1_s2
+>>> HETERO_TREE node r1: states 1 (7492 particles) -> leaf      r1_s1
+>>> HETERO_TREE node r: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 22.041, site 2 15.017, site 3 13.224, site 4 11.353, site 5 10.641, site 6 12.369), its seeds
+>>> HETERO_TREE node r2: site 1 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 15.728, site 2 4.894, site 3 8.092), its seeds seed the refinement
+>>> HETERO_TREE node r1: site 4 has the strongest kept pole (smaller pole-rule margin per kept site: site 1 8.913, site 3 4.074, site 4 9.070), its seeds seed the refinement
+== sub2_s1: 8 leaves over 60000 particles; NMI(leaves, structure combo) 0.764, NMI(leaves, quality quintile) 0.001 (genuine)
+ leaf    rows   junk  closed   A_dom  B_blob   holo    snrq  top combos (share)
+    6   12700  0.013   0.000   0.000   0.000  0.000   1.085  1 (0.71) 2 (0.22) 22 (0.05)
+    3   10522  0.077   0.000   0.001   0.000  0.001   1.051  28 (0.90) 0 (0.08) 49 (0.02)
+    7    9401  0.096   0.000   0.001   0.000  0.001   1.052  2 (0.56) 1 (0.29) 0 (0.10)
+    4    7150  0.187   0.001   0.001   0.000  0.001   1.072  49 (0.76) 0 (0.19) 1 (0.02)
+    8    6617  0.084   0.000   0.901   0.000  0.901   1.055  101 (0.90) 0 (0.08) 2 (0.01)
+    1    4955  0.192   0.008   0.001   0.000  0.001   1.054  22 (0.71) 0 (0.19) 2 (0.05)
+    2    4334  0.144   0.817   0.000   0.000  0.000   1.058  18 (0.82) 0 (0.14) 22 (0.01)
+    5    4321  0.151   0.000   0.000   0.000  0.000   1.057  43 (0.78) 0 (0.15) 49 (0.05)
+best-leaf F1 per combo: 1:0.73(l6) 2:0.59(l7) 18:0.89(l2) 22:0.72(l1) 28:0.94(l3) 43:0.85(l5) 49:0.83(l4) 101:0.94(l8)
+== sub2_s2: 6 leaves over 60000 particles; NMI(leaves, structure combo) 0.710, NMI(leaves, quality quintile) 0.000 (genuine)
+ leaf    rows   junk  closed   A_dom  B_blob   holo    snrq  top combos (share)
+    5   22590  0.051   0.000   0.011   0.000  0.011   1.070  1 (0.52) 2 (0.35) 22 (0.06)
+    3   10013  0.070   0.007   0.002   0.000  0.002   1.055  28 (0.90) 0 (0.07) 49 (0.02)
+    1    8434  0.242   0.014   0.002   0.000  0.002   1.067  49 (0.65) 0 (0.24) 28 (0.06)
+    6    7492  0.111   0.375   0.009   0.000  0.009   1.060  22 (0.43) 18 (0.38) 0 (0.11)
+    4    6251  0.070   0.008   0.903   0.000  0.903   1.060  101 (0.90) 0 (0.07) 18 (0.01)
+    2    5220  0.158   0.104   0.001   0.000  0.001   1.042  43 (0.66) 0 (0.16) 18 (0.10)
+best-leaf F1 per combo: 1:0.67(l5) 2:0.51(l5) 18:0.51(l6) 22:0.52(l6) 28:0.92(l3) 43:0.78(l2) 49:0.76(l1) 101:0.92(l4)
+== sub2_s2 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   25401 rows | ref  1804 (recall 0.59, purity 0.0710) | stage-B states 2:25401
+    group 2   18933 rows | ref  1271 (recall 0.41, purity 0.0671) | stage-B states 1:18933
+    stage-B maps: s01 0.86/0.61  s02 0.88/0.54
+r1        d1   25401 rows | ref  1804 (share 0.0710) | SEPARATES(map)
+    group 1   13332 rows | ref  1214 (recall 0.67, purity 0.0911) | stage-B states 
+    group 2   12069 rows | ref   590 (recall 0.33, purity 0.0489) | stage-B states 
+    stage-B maps: s01 0.74/0.57  s02 0.99/0.51
+r2        d1   18933 rows | ref  1271 (share 0.0671) | 
+    group 1   18933 rows | ref  1271 (recall 1.00, purity 0.0671) | stage-B states 
+    stage-B maps: s01 0.77/0.64  s02 0.93/0.58
+== sub2_s1 (reference closed rows: 8,720; readout closed-arm / open-arm; closed corner >= 0.95 / <= 0.6)
+r         d0   44334 rows | ref  3075 (share 0.0694) | 
+    group 1   23319 rows | ref  1577 (recall 0.51, purity 0.0676) | stage-B states 1:23319
+    group 2   21015 rows | ref  1498 (recall 0.49, purity 0.0713) | stage-B states 2:21015
+    stage-B maps: s01 0.86/0.61  s02 0.88/0.52
+r1        d1   23319 rows | ref  1577 (share 0.0676) | 
+    group 1   23319 rows | ref  1577 (recall 1.00, purity 0.0676) | stage-B states 
+    stage-B maps: s01 0.93/0.63  s02 0.79/0.60
+r2        d1   21015 rows | ref  1498 (share 0.0713) | 
+    group 1   11601 rows | ref  1013 (recall 0.68, purity 0.0873) | stage-B states 
+    group 2    9414 rows | ref   485 (recall 0.32, purity 0.0515) | stage-B states 
+    stage-B maps: s01 0.97/0.51  s02 0.77/0.53
+   sub2_qtoy2 19.5 core-h
+   sub2_r131 17.4 core-h
+   sub2_qtoy2_s1 24.0 core-h
+   sub2_r131_s1 16.2 core-h

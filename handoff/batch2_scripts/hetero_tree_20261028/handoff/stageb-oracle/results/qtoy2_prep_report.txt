@@ -1,0 +1,23 @@
+node /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/mm2_qtoy2/1_hetero_tree/node_r: 60000 rows, 60000 active, stage-B states [1, 2, 3, 4, 5]; true shifts |x|,|y| max 0.000 px
+global rotation (left): |G| 0.021 deg, median residual angle 2.631 deg (raw 2.631)
+global rotation (right): |G| 0.144 deg, median residual angle 2.638 deg (raw 2.631)
+frame shift (R): t = [-0.397 1.565 0.941] px, rms shift error 1.675 -> 0.428 px
+frame shift (RT): t = [-0.526 1.176 0.096] px, rms shift error 1.675 -> 1.283 px
+true poses in the stage-B frame: rotation left (0.021 deg), translation model R |t| 1.869 px
+stage-B pose error against the truth (in the stage-B frame):
+  all        n  60000  angle median  2.80 mean  6.30 p90  6.40  >5 0.164 >10 0.058 >30 0.026 | shift median 0.36 p90 0.93 px
+  non-junk   n  54000  angle median  2.63 mean  3.13 p90  4.91  >5 0.093 >10 0.004 >30 0.002 | shift median 0.33 p90 0.66 px
+  junk       n   6000  angle median 11.09 mean 34.80 p90 134.91  >5 0.810 >10 0.544 >30 0.242 | shift median 2.13 p90 6.24 px
+  class   0  n   6000  angle median 11.09 mean 34.80 p90 134.91  >5 0.810 >10 0.544 >30 0.242 | shift median 2.13 p90 6.24 px
+  class   1  n  12000  angle median  2.37 mean  2.86 p90  4.35  >5 0.060 >10 0.003 >30 0.002 | shift median 0.33 p90 0.64 px
+  class   2  n   8400  angle median  2.42 mean  2.79 p90  4.44  >5 0.063 >10 0.002 >30 0.001 | shift median 0.27 p90 0.54 px
+  class  18  n   3600  angle median  2.55 mean  2.88 p90  4.58  >5 0.069 >10 0.003 >30 0.001 | shift median 0.40 p90 0.75 px
+  class  22  n   4800  angle median  2.66 mean  2.97 p90  4.71  >5 0.081 >10 0.002 >30 0.001 | shift median 0.42 p90 0.76 px
+  class  28  n   9600  angle median  2.80 mean  3.38 p90  5.16  >5 0.115 >10 0.005 >30 0.002 | shift median 0.30 p90 0.61 px
+  class  43  n   3600  angle median  2.83 mean  3.57 p90  5.65  >5 0.140 >10 0.010 >30 0.003 | shift median 0.44 p90 0.85 px
+  class  49  n   6000  angle median  2.46 mean  2.99 p90  4.69  >5 0.079 >10 0.004 >30 0.002 | shift median 0.33 p90 0.64 px
+  class 101  n   6000  angle median  3.48 mean  3.91 p90  5.70  >5 0.175 >10 0.004 >30 0.002 | shift median 0.32 p90 0.62 px
+truth classes [0, 1, 2, 18, 22, 28, 43, 49, 101] -> labels 1..9; coarse: {0: 5, 1: 2, 2: 2, 18: 4, 22: 4, 28: 1, 43: 5, 49: 5, 101: 3} (5 groups)
+labels stageB  K 5 sizes [10537, 21951, 6648, 9413, 11451]
+labels truth   K 9 sizes [6000, 12000, 8400, 3600, 4800, 9600, 3600, 6000, 6000]
+labels coarse  K 5 sizes [9600, 20400, 6000, 8400, 15600]

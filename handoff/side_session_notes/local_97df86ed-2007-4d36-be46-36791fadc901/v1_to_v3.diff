@@ -1,0 +1,49 @@
+--- a/src/main/strategies/search/simple_state_mergeup.f90	2026-10-29 00:59:42
++++ b/src/main/strategies/search/simple_state_mergeup.f90	2026-10-29 02:47:15
+@@ -1098,8 +1098,8 @@
+             integer  :: r, npt, c0, c1, crate
+             call system_clock(c0, crate)
+             zh = merge(zc, split_zcrit(1), nl%l_z)
+-            call self%holdout_gain(ia, ib, starta, k, eps, neq, cons(:,:,:,2), gab)
+-            call self%holdout_gain(ib, ia, startb, k, eps, neq, cons(:,:,:,1), gba)
++            call self%holdout_gain(ia, ib, starta, k, eps, neq, gab)
++            call self%holdout_gain(ib, ia, startb, k, eps, neq, gba)
+             npt  = size(gab) + size(gba)
+             tobs = (sum(gab) + sum(gba)) / real(npt,dp)
+             gs   = sqrt((sum((gab - tobs)**2) + sum((gba - tobs)**2)) / real(max(npt - 1, 1),dp))
+@@ -1108,8 +1108,8 @@
+             do r = 1, self%nhold
+                 sa = sshuf(starta, sta)
+                 sb = sshuf(startb, stb)
+-                call self%holdout_gain(ia, ib, sa, k, eps, neq, cons(:,:,:,2), gab)
+-                call self%holdout_gain(ib, ia, sb, k, eps, neq, cons(:,:,:,1), gba)
++                call self%holdout_gain(ia, ib, sa, k, eps, neq, gab)
++                call self%holdout_gain(ib, ia, sb, k, eps, neq, gba)
+                 tn(r) = (sum(gab) + sum(gba)) / real(npt,dp)
+             end do
+             mu = sum(tn) / real(self%nhold,dp)
+@@ -1901,11 +1901,10 @@
+         if( present(audit_tag) ) call self%write_em_audit(audit_tag, idx, w, eps, jscale, l_full, m, coverage)
+     end subroutine em_maps
+ 
+-    subroutine holdout_gain( self, ifit, iscore, start, k, eps, neq, cother, gain )
++    subroutine holdout_gain( self, ifit, iscore, start, k, eps, neq, gain )
+         class(state_mergeup), intent(inout) :: self
+         integer,              intent(in)    :: ifit(:), iscore(:), start(:), k, neq
+         real,                 intent(in)    :: eps(0:)
+-        complex,              intent(in)    :: cother(:,:,:)
+         real(dp), allocatable, intent(out)  :: gain(:)
+         complex,             allocatable :: m(:,:,:,:)
+         type(reconstructor), allocatable :: refs(:)
+@@ -1926,10 +1925,9 @@
+         end do
+         do it = 0, self%nhit
+             call self%em_maps(ifit, w, eps, neq, .false., m)
+-            ! the fit sees its own half only; the other half's consensus registers the final maps for scoring
++            ! the fit sees its own half only; no docking: each map stays in its particles' frame, which the scored half shares
+             !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
+             do g = 1, k+1
+-                if( it == self%nhit ) call self%dock(m(:,:,:,g), cother, 2, self%kb)
+                 call refs(g)%set_ft(.true.)
+                 call refs(g)%set_cmat(m(:,:,:,g))
+                 call refs(g)%expand_exp

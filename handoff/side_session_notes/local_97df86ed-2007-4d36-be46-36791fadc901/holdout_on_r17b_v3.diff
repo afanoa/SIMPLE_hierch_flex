@@ -1,0 +1,170 @@
+--- a/src/main/strategies/search/simple_state_mergeup.f90	2026-10-29 00:46:41
++++ b/src/main/strategies/search/simple_state_mergeup.f90	2026-10-29 02:47:15
+@@ -71,6 +71,7 @@
+     logical :: l_ortho = .false.
+     integer :: ktgap = RB_MARGIN_FOCUS
+     real    :: rhomin = 0.
++    integer :: nhold = 0, nhit = NEM_ITERS
+     ! merge-up rule (default; SIMPLE_MERGE_RULE=off restores the old one): a pair merges only when shown equivalent at margin
+     ! mdelta, never across cnl
+     logical, allocatable :: cnl(:,:)
+@@ -109,6 +110,7 @@
+     procedure, private :: eqn_stats
+     procedure, private :: cross_em
+     procedure, private :: em_maps
++    procedure, private :: holdout_gain
+     procedure, private :: write_em_audit
+     procedure, private :: estep
+     procedure, private :: maps
+@@ -192,6 +194,13 @@
+         self%rhomin = 0.
+         call get_environment_variable('SIMPLE_SPLIT_RHOMIN', qs, status=iqs)
+         if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%rhomin
++        ! test switch SIMPLE_SPLIT_HOLDOUT=R (_ITERS=n): fit on one half, score the other's gain in klo..kb; R shuffled refits decide
++        self%nhold = 0
++        call get_environment_variable('SIMPLE_SPLIT_HOLDOUT', qs, status=iqs)
++        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%nhold
++        self%nhit = NEM_ITERS
++        call get_environment_variable('SIMPLE_SPLIT_HOLDOUT_ITERS', qs, status=iqs)
++        if( iqs == 0 .and. len_trim(qs) > 0 ) read(qs,*) self%nhit
+         ! test switch SIMPLE_SPLIT_ORTHO=yes: pair statistics on group differences orthogonal, per shell, to the group mean
+         call get_environment_variable('SIMPLE_SPLIT_ORTHO', qs, status=iqs)
+         self%l_ortho = iqs == 0 .and. trim(qs) == 'yes'
+@@ -777,7 +786,7 @@
+         integer, allocatable :: plist(:), gof(:), exa(:), exb(:), starta(:), startb(:), sizes(:), order(:), rank(:)
+         real,    allocatable :: eps(:)
+         type(shuffle_null) :: nl
+-        real    :: thr, thr2, mu2, sd2, zc, rst
++        real    :: thr, thr2, mu2, sd2, zc, rst, tem
+         integer :: neq, s, g, m, npair, ii, jj, kem, ng, nsh, nsj, nthr
+         nsh = merge(NSHUF_BONF, NSHUF, present(ntests))
+         ia = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 0)
+@@ -847,7 +856,10 @@
+                 where( lb == plist(m) ) startb = gof(m)
+             end do
+             kem = kstar
++            call system_clock(ii, jj)
+             call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
++            call system_clock(m)
++            tem = real(m - ii) / real(jj)
+             write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
+                 &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
+             if( size(nl%nul2) > 0 ) call stash(nl%nul2, thr2)
+@@ -876,6 +888,7 @@
+                 call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
+                     &exa, exb, kstar, rst)
+             endif
++            if( self%nhold > 0 ) call holdout(kem)
+             if( self%nemnull > 0 ) call em_null(kem, rst)
+             ! the equivalence merge-up decides merges itself; the floor would merge pairs it keeps
+             if( kstar >= 2 .and. self%rhomin > 0. .and. .not. self%l_equiv )then
+@@ -1076,6 +1089,49 @@
+             endif
+         end subroutine route_members
+ 
++        subroutine holdout( k )
++            integer, intent(in) :: k
++            real(dp), allocatable :: gab(:), gba(:), tn(:)
++            integer,  allocatable :: sa(:), sb(:)
++            real(dp) :: tobs, mu, sd, z, gs, zpp
++            real     :: zh, rh
++            integer  :: r, npt, c0, c1, crate
++            call system_clock(c0, crate)
++            zh = merge(zc, split_zcrit(1), nl%l_z)
++            call self%holdout_gain(ia, ib, starta, k, eps, neq, gab)
++            call self%holdout_gain(ib, ia, startb, k, eps, neq, gba)
++            npt  = size(gab) + size(gba)
++            tobs = (sum(gab) + sum(gba)) / real(npt,dp)
++            gs   = sqrt((sum((gab - tobs)**2) + sum((gba - tobs)**2)) / real(max(npt - 1, 1),dp))
++            zpp  = tobs / max(gs / sqrt(real(npt,dp)), 1.e-30_dp)
++            allocate(tn(self%nhold))
++            do r = 1, self%nhold
++                sa = sshuf(starta, sta)
++                sb = sshuf(startb, stb)
++                call self%holdout_gain(ia, ib, sa, k, eps, neq, gab)
++                call self%holdout_gain(ib, ia, sb, k, eps, neq, gba)
++                tn(r) = (sum(gab) + sum(gba)) / real(npt,dp)
++            end do
++            mu = sum(tn) / real(self%nhold,dp)
++            sd = sqrt(sum((tn - mu)**2) / real(max(self%nhold - 1, 1),dp))
++            z  = (tobs - mu) / max(sd, 1.e-30_dp)
++            call system_clock(c1)
++            rh = rel_effect(rst)
++            write(logfhandle,'(A)') 'HOLDOUT: '//int2str(k)//' groups, '//int2str(self%nhit)//' within-half EM iterations, '//&
++                &'score shells '//int2str(self%klo)//'..'//int2str(self%kb)//'; held-out gain / particle '//fmtr(tobs,5)//&
++                &' (per-particle z '//fmtr(zpp,2)//') | shuffled refits ('//int2str(self%nhold)//') mean / sd '//fmtr(mu,5)//&
++                &' / '//fmtr(sd,5)//', z '//fmtr(z,2)//' vs z_crit '//fmtr(real(zh,dp),2)//' -> '//&
++                &trim(merge('PASS', 'FAIL', z >= real(zh,dp) .and. size(plist) >= 2))//' | wall '//&
++                &fmtr(real(c1 - c0,dp)/real(crate,dp),1)//' s, cross-half EM '//fmtr(real(tem,dp),1)//' s | null '//joinedr(real(tn))
++            if( z >= real(zh,dp) .and. size(plist) >= 2 )then
++                gof   = [(r, r=1,size(plist))]
++                kstar = size(plist)
++            else
++                gof   = 1
++                kstar = 1
++            endif
++        end subroutine holdout
++
+         ! test switch: the real EM start labels shuffled within the nuisance strata, each through the same cross_em fit and
+         ! re-test; also the start labels re-tested without the EM. Log only: the decision above is unchanged
+         subroutine em_null( k0em, treal )
+@@ -1845,6 +1901,59 @@
+         if( present(audit_tag) ) call self%write_em_audit(audit_tag, idx, w, eps, jscale, l_full, m, coverage)
+     end subroutine em_maps
+ 
++    subroutine holdout_gain( self, ifit, iscore, start, k, eps, neq, gain )
++        class(state_mergeup), intent(inout) :: self
++        integer,              intent(in)    :: ifit(:), iscore(:), start(:), k, neq
++        real,                 intent(in)    :: eps(0:)
++        real(dp), allocatable, intent(out)  :: gain(:)
++        complex,             allocatable :: m(:,:,:,:)
++        type(reconstructor), allocatable :: refs(:)
++        real,     allocatable :: w(:,:), wn(:,:), wp(:,:), w1(:,:)
++        real(dp), allocatable :: lpk(:), lp0(:)
++        integer,  allocatable :: mp(:)
++        logical,  allocatable :: l_alive(:)
++        real(dp) :: llb(2)
++        integer  :: it, g, i
++        allocate(w(size(ifit),k), source=0.)
++        do i = 1, size(ifit)
++            if( start(i) > 0 ) w(i,start(i)) = 1.
++        end do
++        allocate(l_alive(k), source=.true.)
++        allocate(m(self%nh,self%box,self%box,k+1), refs(k+1))
++        do g = 1, k+1
++            call refs(g)%new_accumulator(self%p, self%b%spproj, expand=.true., wthreads=.false.)
++        end do
++        do it = 0, self%nhit
++            call self%em_maps(ifit, w, eps, neq, .false., m)
++            ! the fit sees its own half only; no docking: each map stays in its particles' frame, which the scored half shares
++            !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
++            do g = 1, k+1
++                call refs(g)%set_ft(.true.)
++                call refs(g)%set_cmat(m(:,:,:,g))
++                call refs(g)%expand_exp
++            end do
++            !$omp end parallel do
++            if( it == self%nhit ) exit
++            call self%estep(ifit, w, refs(1:k), l_alive, wn)
++            w  = wn
++            mp = maxloc(w, dim=2)
++            do g = 1, k
++                if( l_alive(g) .and. count(mp == g) == 0 .and. count(l_alive) > 1 ) l_alive(g) = .false.
++            end do
++        end do
++        allocate(wp(size(iscore),k), w1(size(iscore),1), source=1.)
++        do g = 1, k
++            wp(:,g) = merge(sum(w(:,g)) / real(size(ifit)), 0., l_alive(g))
++        end do
++        call self%estep(iscore, wp, refs(1:k), l_alive, wn, kcut=self%klo, llband=llb, lpp=lpk)
++        call self%estep(iscore, w1, refs(k+1:k+1), [.true.], wn, kcut=self%klo, llband=llb, lpp=lp0)
++        gain = lpk - lp0
++        do g = 1, k+1
++            call refs(g)%kill
++        end do
++        deallocate(m, refs, w, wn, wp, w1, l_alive)
++    end subroutine holdout_gain
++
+     ! Diagnostic replay of the production weight-to-map wrapper; source project is read-only.
+     subroutine audit_em_wrapper( self )
+         use, intrinsic :: ieee_arithmetic, only: ieee_is_finite

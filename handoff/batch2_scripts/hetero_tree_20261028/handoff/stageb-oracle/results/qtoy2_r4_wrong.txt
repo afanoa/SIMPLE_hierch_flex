@@ -1,0 +1,31 @@
+# prep: non-junk 7843; stage-B wrong 0.088 (merged 0.061, misassigned 0.027); state owners {1: 18, 2: 22}
+# classes whose majority state another class owns: [1, 2, 28, 43, 49, 101]
+right (non-junk)       n   7151 | angle median  2.15 mean  2.48 p90   4.34 >10 0.002 >30 0.000 | shift median 0.27 p90 0.54 | snrq median 1.010 mean 1.072 | bfac median 98.4
+wrong: merged          n    479 | angle median  3.30 mean  6.16 p90   6.13 >10 0.027 >30 0.017 | shift median 0.44 p90 0.90 | snrq median 0.836 mean 0.882 | bfac median 110.2
+wrong: misassigned     n    213 | angle median  3.63 mean  9.44 p90   7.07 >10 0.047 >30 0.038 | shift median 0.50 p90 0.97 | snrq median 0.774 mean 0.816 | bfac median 115.3
+junk                   n   1570 | angle median  9.07 mean 31.61 p90 126.75 >10 0.468 >30 0.215 | shift median 1.76 p90 5.77 | snrq median 1.013 mean 1.078 | bfac median 100.5
+AUROC for misassigned vs right: angle error 0.730, shift error 0.748, low snrq 0.714, B-factor 0.572
+
+# wrong share of non-junk by stage-B pose error (deg): n, merged, misassigned
+  [  0,  1) n    728  merged 0.027  misassigned 0.008
+  [  1,  2) n   2625  merged 0.026  misassigned 0.013
+  [  2,  3) n   2056  merged 0.055  misassigned 0.019
+  [  3,  5) n   1897  merged 0.095  misassigned 0.045
+  [  5, 10) n    502  merged 0.165  misassigned 0.078
+  [ 10, 30) n     19  merged 0.263  misassigned 0.105
+  [ 30,181) n     16  merged 0.500  misassigned 0.500
+# wrong share of non-junk by snrq quintile
+  snrq [0.400,0.737] n   1569  merged 0.106  misassigned 0.062  angle median 2.76
+  snrq [0.737,0.908] n   1568  merged 0.078  misassigned 0.033  angle median 2.43
+  snrq [0.908,1.083] n   1571  merged 0.052  misassigned 0.019  angle median 2.19
+  snrq [1.083,1.327] n   1569  merged 0.048  misassigned 0.015  angle median 2.05
+  snrq [1.327,2.500] n   1569  merged 0.021  misassigned 0.006  angle median 1.93
+# per class: n, right, merged, misassigned; angle median right / misassigned
+  class   1 n    134 right 0.000 merged 0.806 misassigned 0.194 | angle nan / 3.28
+  class   2 n    328 right 0.000 merged 0.884 misassigned 0.116 | angle nan / 3.59
+  class  18 n   3582 right 0.989 merged 0.000 misassigned 0.011 | angle 2.12 / 3.25
+  class  22 n   3686 right 0.979 merged 0.000 misassigned 0.021 | angle 2.18 / 3.55
+  class  28 n     14 right 0.000 merged 0.500 misassigned 0.500 | angle nan / 4.76
+  class  43 n     67 right 0.000 merged 0.701 misassigned 0.299 | angle nan / 5.06
+  class  49 n     25 right 0.000 merged 0.840 misassigned 0.160 | angle nan / 88.27
+  class 101 n      7 right 0.000 merged 0.857 misassigned 0.143 | angle nan / 168.82

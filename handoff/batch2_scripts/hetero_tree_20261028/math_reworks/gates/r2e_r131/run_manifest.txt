@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/ancestral/fixtures/r131
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/build_r2e/install
+simple_exec_sha256=9941b658baec88904302d2834d433392db37eea28242eedec43e2cff12506f38
+seed=2
+keys=nthr=8 nodepar=1 maxdepth=1 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=12 mskdiam=232 minpop=3000 site_layer=yes site_states=yes kway_maxdepth=-1 split_ntests=460  infile=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/ancestral/fixtures/r131/fixture_selection.txt
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54808965
+started=2026-11-01T22:03:43-05:00
+finished=2026-11-01T22:58:36-05:00

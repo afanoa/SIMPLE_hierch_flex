@@ -1,0 +1,4 @@
+inode_f50 /mnt/beegfs/elmlund/afan/paper_inode/trees/f50/1_hetero_tree/node_r none full B --maxn 0 --nit 4
+inode_cont /mnt/beegfs/elmlund/afan/paper_inode/trees/cont/1_hetero_tree/node_r none full B --maxn 0 --nit 4
+inode_null /mnt/beegfs/elmlund/afan/paper_inode/trees/null/1_hetero_tree/node_r none full B --maxn 0 --nit 4
+inode_f15 /mnt/beegfs/elmlund/afan/paper_inode/trees/f15/1_hetero_tree/node_r none full B --maxn 0 --nit 4

@@ -1,0 +1,1 @@
+smoke_r131 /mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/1_hetero_tree/node_r1 closed:/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/gates/bc_r131/fixture_rows.txt:/mnt/beegfs/elmlund/afan/hetero_tree_regression_20261026/runs/real_root_split_contrast_m8c52_s1/closed_reference_rows.txt --maxn 4000 --kmax 3 --restarts 2

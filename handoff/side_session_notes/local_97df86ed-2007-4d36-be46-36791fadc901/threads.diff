@@ -1,0 +1,61 @@
+diff --git a/src/main/strategies/search/simple_hetero_tree.f90 b/src/main/strategies/search/simple_hetero_tree.f90
+index 5419562..970a2d1 100644
+--- a/src/main/strategies/search/simple_hetero_tree.f90
++++ b/src/main/strategies/search/simple_hetero_tree.f90
+@@ -35,7 +35,7 @@ real,     parameter :: DMINSHARE = 0.05, DFACT_COS = 0.8, DFACT_SHARE = 0.1, DDI
+ integer,  parameter :: ITA0 = 1, ITA = 1, ITB = 1, BOXA = 64, BOXB = 88, NSPA = 2500, NSPB = 5000, NPROBE = 2
+ integer,  parameter :: NPARTS_MIN = 4, PTCLS_PER_PART = 20000, SITE_NTHR = 32
+ ! the merge-up job: a thread per 10k particles, up to a 48-core node (32 -> 48 threads cut a 692k merge-up by about 20 %)
+-integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000
++integer,  parameter :: MERGEUP_NTHR = 48, MERGEUP_PTCLS = 10000, SPLIT_PTCLS = 2500
+ real,     parameter :: LPF = 15., LPA = 15., LPB = 10., MLP = 15., MFRAC = 0.2, MSIG = 1.5, MDIL = 3., MFALL = 6., MSUP = 0.1
+ real,     parameter :: ATHR = 0.01, LPD = 10.
+ integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
+@@ -853,7 +853,7 @@ contains
+                 call cl%set('junk_screen', trim(self%p%junk_screen))
+                 if( self%p%merge_geom_reuse == 'yes' ) call cl%set('merge_geom_reuse', 'yes')
+                 if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
+-                call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
++                call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(SPLIT_PTCLS)))))
+                 call self%submit(i, S_SPLIT, cl, count(st > 0))
+             case(S_SPLIT)
+                 call self%decide(i)
+@@ -1709,13 +1709,19 @@ contains
+         subroutine queue_in( q )
+             use simple_persistent_worker_server, only: persistent_worker
+             type(qsys_env), intent(inout) :: q
+-            type(string) :: mem0, memclaim, prg
+-            integer :: task_mem, task_nthr, fu, io
++            type(string) :: mem0, memclaim, prg, cpu0
++            integer :: task_mem, task_nthr, fu, io, ncpu
+             logical :: l_pool
+             if( present(nmem) )then
+                 mem0 = q%qdescr%get('job_memory_per_task')
+                 call q%qdescr%set('job_memory_per_task', int2str(8000 + nint(0.025 * real(nmem))))
+             endif
++            ncpu = 0
++            if( cl%defined('nthr') ) ncpu = cl%get_iarg('nthr')
++            if( ncpu > 0 )then
++                cpu0 = q%qdescr%get('job_cpus_per_task')
++                call q%qdescr%set('job_cpus_per_task', int2str(ncpu))
++            endif
+             l_pool = .false.
+             if( self%p%node_worker_pool == 'yes' )then
+                 call cl%set('qsys_name', self%qenv%get_qsys())
+@@ -1767,6 +1773,7 @@ contains
+                     &exit_code_fname=string(STEP_EXIT))
+             endif
+             if( present(nmem) ) call q%qdescr%set('job_memory_per_task', mem0)
++            if( ncpu > 0 ) call q%qdescr%set('job_cpus_per_task', cpu0)
+         end subroutine queue_in
+ 
+     end subroutine submit_in
+@@ -1966,7 +1973,7 @@ contains
+         call cl%set('junk_screen', trim(self%p%junk_screen))
+         if( self%p%merge_geom_reuse == 'yes' ) call cl%set('merge_geom_reuse', 'yes')
+         if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
+-        call cl%set('nthr',     max(self%p%nthr, min(MERGEUP_NTHR, ceiling(real(np) / real(MERGEUP_PTCLS)))))
++        call cl%set('nthr',     max(self%p%nthr, SITE_NTHR, min(MERGEUP_NTHR, ceiling(real(np) / real(MERGEUP_PTCLS)))))
+         call self%submit_in(md, cl, np)
+         write(logfhandle,'(A)') '>>> HETERO_TREE merge-up of the '//int2str(nn)//' leaves submitted'
+     end function mergeup

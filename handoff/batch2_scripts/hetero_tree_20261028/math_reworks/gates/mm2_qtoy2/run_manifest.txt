@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/routes/toy55/simqtoy2/src.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/merge_master2/install
+simple_exec_sha256=822c1ca2ce7af3e4c941a5c6dcb6ce55c4d5a509e4892e96d57227ec2d46acf8
+seed=1
+keys=nthr=8 nodepar=4 maxdepth=1 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=4 mskdiam=232 minpop=900 site_layer=yes site_states=yes kway_maxdepth=2  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54999499
+started=2026-11-06T14:44:04-05:00
+finished=2026-11-06T15:25:05-05:00

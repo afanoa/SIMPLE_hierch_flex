@@ -1,0 +1,11 @@
+input=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/fixtures/pfcrt_micelle/micnull/src_in_fp.simple
+build=/mnt/beegfs/elmlund/afan/hetero_tree_20261028/math_reworks/build_head/install
+simple_exec_sha256=9bcd69d34f02b1ad63bfb5a87b52b72a58f0fa01c19183a595056d2ad82d2105
+seed=1
+keys=nthr=8 nodepar=4 maxdepth=0 oneflex=yes sta0_npeaks=2 junk_screen=no nparts=5 pgrp=c1 mskdiam=200 minpop=3000 site_layer=yes site_states=yes kway_maxdepth=2  
+split_env=SIMPLE_SPLIT_CONTRAST=maps 
+tree_env=SIMPLE_TREE_KEEPMAPS=yes 
+rho_floor=unset (off)
+job=54854833
+started=2026-11-02T11:27:31-05:00
+finished=2026-11-02T12:00:43-05:00

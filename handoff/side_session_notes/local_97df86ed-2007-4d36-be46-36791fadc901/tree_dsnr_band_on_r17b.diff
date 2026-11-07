@@ -1,0 +1,188 @@
+--- simple_hetero_tree.f90.orig	2026-10-29 00:37:57
++++ simple_hetero_tree.f90	2026-10-29 00:38:27
+@@ -594,8 +594,8 @@
+         character(len=:), allocatable :: d, mask, sitemask, sd, tmsg
+         type(string), allocatable :: bdirs(:)
+         integer,      allocatable :: hrow(:)
+-        real    :: fl
+-        integer :: s, k, j, ks
++        real    :: fl, lb
++        integer :: s, k, j, ks, bb
+         logical :: l_tp, l_fl, l_wait
+         s = self%nodes(i)%step
+         if( present(done_step) ) s = done_step
+@@ -848,7 +848,13 @@
+                 do j = 1, ks
+                     call cl%set('vol'//int2str(j), d//'/recB/recvol_state'//pad2(j)//'.mrc')
+                 end do
+-                call refine_keys(self, cl, LPB, ITB, NSPB, BOXB, mask)
++                if( dsnr_band() )then
++                    call dsnr_lp(self, d, ks, lb, bb, tmsg)
++                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': SIMPLE_TREE_LP=dsnr: '//tmsg
++                    call refine_keys(self, cl, lb, ITB, NSPB, bb, mask)
++                else
++                    call refine_keys(self, cl, LPB, ITB, NSPB, BOXB, mask)
++                endif
+                 call self%submit(i, S_STAGEB, cl)
+             case(S_STAGEB)
+                 st   = project_states(d//'/stageB/b.simple')
+@@ -3756,7 +3762,159 @@
+         end do
+         call fclose(funit)
+     end subroutine leaf_lines
++
++    logical function dsnr_band()
++        character(len=8) :: ev
++        integer :: ios
++        call get_environment_variable('SIMPLE_TREE_LP', ev, status=ios)
++        dsnr_band = ios == 0 .and. ev == 'dsnr'
++    end function dsnr_band
++
++    ! SIMPLE_TREE_LP=dsnr: stage B's lp is the finest shell where a pair of recB states' envelope-matched difference keeps a cross-half
++    ! SNR >= 1 (3-shell window; map_merge.py's sums), never finer than the states' consensus FSC=0.143; box_crop by refine3D's rule
++    subroutine dsnr_lp( self, d, ks, lb, bb, msg )
++        use simple_defs,        only: LP2SMPDFAC
++        use simple_imghead,     only: get_mrcfile_info
++        use simple_magic_boxes, only: autoscale
++        class(hetero_tree),            intent(in)  :: self
++        character(len=*),              intent(in)  :: d
++        integer,                       intent(in)  :: ks
++        real,                          intent(out) :: lb
++        integer,                       intent(out) :: bb
++        character(len=:), allocatable, intent(out) :: msg
++        real, parameter :: EDGE = 6.
++        type(image) :: img
++        complex,  allocatable :: ce(:,:,:,:), co(:,:,:,:), cm(:,:,:), me(:,:,:), mo(:,:,:)
++        real(dp), allocatable :: peo(:,:), pee(:,:), poo(:,:), pn(:,:), sab(:), sd(:), nd(:), g(:)
++        real,     allocatable :: m(:,:,:)
++        integer,  allocatable :: sl(:), kc(:)
++        real(dp) :: wsum
++        real(dp), allocatable :: w(:)
++        real    :: smpd, rad, dd, smpdc, scale
++        integer :: ldim(3), n, nsh, a, b, i, j, k, ns, kcons, kd, best, ba, bbs, ia, kk
++        lb  = LPB
++        bb  = BOXB
++        msg = 'fewer than two recB half-map pairs, fixed lp'
++        sl  = pack([(a, a=1,ks)], [(file_exists(string(d//'/recB/'//hv(a, 'even'))) .and. &
++            &file_exists(string(d//'/recB/'//hv(a, 'odd'))), a=1,ks)])
++        ns  = size(sl)
++        if( ns < 2 ) return
++        call get_mrcfile_info(string(d//'/recB/'//hv(sl(1), 'even')), ldim, 'M', smpd, .false.)
++        n   = ldim(1)
++        nsh = n / 2
++        rad = 0.5 * self%p%mskdiam / smpd
++        allocate(m(ldim(1),ldim(2),ldim(3)))
++        do k = 1, ldim(3)
++            do j = 1, ldim(2)
++                do i = 1, ldim(1)
++                    dd = sqrt(real((i - ldim(1)/2 - 1)**2 + (j - ldim(2)/2 - 1)**2 + (k - ldim(3)/2 - 1)**2))
++                    m(i,j,k) = 0.
++                    if( dd <= rad + EDGE ) m(i,j,k) = 0.5 * (1. + cos(PI * min(max(dd - rad, 0.), EDGE) / EDGE))
++                end do
++            end do
++        end do
++        do ia = 1, ns
++            do j = 1, 2
++                call img%new(ldim, smpd)
++                if( j == 1 )then
++                    call img%read(string(d//'/recB/'//hv(sl(ia), 'even')))
++                else
++                    call img%read(string(d//'/recB/'//hv(sl(ia), 'odd')))
++                endif
++                call img%set_rmat(img%get_rmat() * m, .false.)
++                call img%fft()
++                cm = img%get_cmat()
++                if( .not. allocated(ce) ) allocate(ce(size(cm,1),size(cm,2),size(cm,3),ns), co(size(cm,1),size(cm,2),size(cm,3),ns))
++                if( j == 1 )then
++                    ce(:,:,:,ia) = cm
++                else
++                    co(:,:,:,ia) = cm
++                endif
++                call img%kill
++            end do
++        end do
++        allocate(peo(0:nsh-1,ns), pee(0:nsh-1,ns), poo(0:nsh-1,ns), pn(0:nsh-1,ns), kc(ns), w(ns))
++        allocate(sab(0:nsh-1), g(0:nsh-1), sd(0:nsh-1), nd(0:nsh-1))
++        do ia = 1, ns
++            peo(:,ia) = ps(ce(:,:,:,ia), co(:,:,:,ia))
++            pee(:,ia) = ps(ce(:,:,:,ia), ce(:,:,:,ia))
++            poo(:,ia) = ps(co(:,:,:,ia), co(:,:,:,ia))
++            pn(:,ia)  = 0.25_dp * (pee(:,ia) + poo(:,ia) - 2._dp * peo(:,ia))
++            kc(ia)    = last_fsc(peo(:,ia) / sqrt(max(pee(:,ia) * poo(:,ia), 1.e-30_dp)))
++            w(ia)     = 1._dp / max(sum(pn(int(0.75 * nsh):nsh-1,ia)), 1.e-30_dp)
++        end do
++        wsum = sum(w)
++        allocate(me(size(ce,1),size(ce,2),size(ce,3)), mo(size(ce,1),size(ce,2),size(ce,3)), source=cmplx(0.,0.))
++        do ia = 1, ns
++            me = me + real(w(ia) / wsum) * ce(:,:,:,ia)
++            mo = mo + real(w(ia) / wsum) * co(:,:,:,ia)
++        end do
++        kcons = last_fsc(ps(me, mo) / sqrt(max(ps(me, me) * ps(mo, mo), 1.e-30_dp)))
++        best  = 0
++        ba    = 0
++        bbs   = 0
++        do a = 1, ns - 1
++            do b = a + 1, ns
++                sab = 0.5_dp * (ps(ce(:,:,:,a), co(:,:,:,b)) + ps(co(:,:,:,a), ce(:,:,:,b)))
++                g   = merge(sab / max(peo(:,b), 1.e-30_dp), 0._dp, peo(:,b) > 0._dp)
++                sd  = max(peo(:,a) - merge(sab**2 / max(peo(:,b), 1.e-30_dp), 0._dp, peo(:,b) > 0._dp), 0._dp)
++                nd  = pn(:,a) + g**2 * pn(:,b)
++                kd  = 0
++                do kk = 1, max(min(kc(a), kc(b)), 1)
++                    i = max(1, kk - 1)
++                    j = min(max(min(kc(a), kc(b)), 1), kk + 1)
++                    if( sum(sd(i:j)) < sum(nd(i:j)) ) exit
++                    kd = kk
++                end do
++                if( kd > best )then
++                    best = kd
++                    ba   = sl(a)
++                    bbs  = sl(b)
++                endif
++            end do
++        end do
++        if( best < 1 .or. kcons < 1 )then
++            msg = 'no recB pair difference above its noise, fixed lp'
++            return
++        endif
++        lb = real(n) * smpd / real(min(best, kcons))
++        call autoscale(self%box, self%smpd, lb * LP2SMPDFAC, bb, smpdc, scale)
++        msg = 'recB states '//int2str(ba)//' / '//int2str(bbs)//' difference SNR >= 1 to '//rstr(real(n) * smpd / real(best))//&
++            &' A, consensus FSC=0.143 '//rstr(real(n) * smpd / real(kcons))//' A -> stage B lp '//rstr(lb)//' A, box_crop '//int2str(bb)
++
++    contains
++
++        function ps( x, y ) result( r )
++            complex, intent(in) :: x(:,:,:), y(:,:,:)
++            real(dp) :: r(0:nsh-1)
++            integer  :: h, kq, l, ky, lz, sh
++            r = 0._dp
++            do l = 1, size(x,3)
++                lz = l - 1 - merge(n, 0, l > nsh)
++                do kq = 1, size(x,2)
++                    ky = kq - 1 - merge(n, 0, kq > nsh)
++                    do h = 1, size(x,1)
++                        sh = nint(sqrt(real((h-1)**2 + ky*ky + lz*lz)))
++                        if( sh >= nsh ) cycle
++                        r(sh) = r(sh) + merge(1._dp, 2._dp, h == 1 .or. h == nsh + 1) * real(real(x(h,kq,l) * conjg(y(h,kq,l))), dp)
++                    end do
++                end do
++            end do
++        end function ps
+ 
++        integer function last_fsc( f )
++            real(dp), intent(in) :: f(0:)
++            integer :: q
++            q = 1
++            do while( q <= ubound(f,1) )
++                if( f(q) < 0.143_dp ) exit
++                q = q + 1
++            end do
++            last_fsc = q - 1
++        end function last_fsc
++
++    end subroutine dsnr_lp
++
+     logical function keep_maps()
+         character(len=8) :: ev
+         integer :: ios

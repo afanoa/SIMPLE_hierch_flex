@@ -1,0 +1,363 @@
+diff --git a/doc/algorithms/heterogeneity_analysis/README.md b/doc/algorithms/heterogeneity_analysis/README.md
+index a378e94..84c75a4 100644
+--- a/doc/algorithms/heterogeneity_analysis/README.md
++++ b/doc/algorithms/heterogeneity_analysis/README.md
+@@ -20,7 +20,9 @@ particle poses:
+   ranking, two refinement stages and a cross-half split test, and its children
+   are the groups the test keeps. The test's re-test beyond the EM band is
+   Bonferroni-corrected over the tree's 2 N_root / minpop - 1 possible splits
+-  (alpha 1/21, z against the mean and sd of a 20-shuffle null); the board test
++  (alpha 1/21, z against the mean and sd of a shuffle null of 20 shuffles,
++  extended in steps of 10 up to 50 while a merge decision is within the
++  null's Monte-Carlo uncertainty); the board test
+   and the merge-up of the leaves keep the max of 20 shuffles. It has no
+   algorithm chapter yet; its distribution options are below.
+   - A node's split starts from a site's seed states (`site_seeds.txt`). When
+diff --git a/src/main/strategies/search/simple_state_mergeup.f90 b/src/main/strategies/search/simple_state_mergeup.f90
+index d5c404b..5e5d336 100644
+--- a/src/main/strategies/search/simple_state_mergeup.f90
++++ b/src/main/strategies/search/simple_state_mergeup.f90
+@@ -24,8 +24,10 @@ public :: HALVES_KSIG, halves_floor, halves_cand, mask_neff, seed_poles, split_z
+ private
+ #include "simple_local_flags.inc"
+ 
+-integer, parameter :: NSHUF = 20, NSHUF_BONF = 20, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
++integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MINSEL_JUNK = 50, MAXJOBS = 1000, RND_SEED = 0
+ real(dp), parameter :: ALPHA_SPLIT = 1._dp / 21._dp
++integer,  parameter :: NSHUF_STEP = 10
++real,     parameter :: NSHUF_KSIG = 4.
+ integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
+ real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
+ integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
+@@ -39,6 +41,14 @@ type :: ivec
+     integer, allocatable :: v(:)
+ end type ivec
+ 
++type :: shuffle_null
++    integer, allocatable :: sjidx(:)
++    real,    allocatable :: nul(:), nul2(:)
++    integer :: ng = 0, neq = 0, nsh = 0, ndone = 0, nstep = 0
++    real    :: zc = 0.
++    logical :: l_z = .false.
++end type shuffle_null
++
+ type :: state_mergeup
+     private
+     class(parameters), pointer :: p => null()
+@@ -82,6 +92,8 @@ type :: state_mergeup
+     procedure, private :: consensus
+     procedure, private :: screen
+     procedure, private :: decide
++    procedure, private :: null_upto
++    procedure, private :: null_resolve
+     procedure, private :: eqn_stats
+     procedure, private :: cross_em
+     procedure, private :: em_maps
+@@ -632,12 +644,13 @@ contains
+         integer, allocatable, intent(out)   :: child(:), junk(:)
+         integer,              intent(out)   :: kstar
+         integer, optional,    intent(in)    :: ntests
+-        complex, allocatable :: cons(:,:,:,:), nm(:,:,:,:)
+-        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), jidx(:), joff(:), gcom(:)
++        complex, allocatable :: cons(:,:,:,:)
++        integer, allocatable :: ia(:), ib(:), la(:), lb(:), sta(:), stb(:), pa(:), pb(:), gcom(:)
+         integer, allocatable :: plist(:), gof(:), exa(:), exb(:), starta(:), startb(:), sizes(:), order(:), rank(:)
+-        real,    allocatable :: eps(:), nul(:), nul2(:), jscale(:), vals(:), vals2(:)
++        real,    allocatable :: eps(:)
++        type(shuffle_null) :: nl
+         real    :: thr, thr2, mu2, sd2, zc, rst
+-        integer :: neq, s, s1, s2, nbatch, g, q, m, npair, ii, jj, nb, npr, ipr, kem, ng, nsh
++        integer :: neq, s, g, m, npair, ii, jj, kem, ng, nsh, nsj, nthr
+         nsh = merge(NSHUF_BONF, NSHUF, present(ntests))
+         ia = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 0)
+         ib = pack([(ii, ii=1,self%n)], cand > 0 .and. self%eo == 1)
+@@ -655,73 +668,42 @@ contains
+             &', re-test band '//int2str(self%kt)//'..'//int2str(self%khi)//'; '//int2str(nsh)//&
+             &' shuffles; stratified null: '//int2str(nuniq(sta))//' / '//int2str(nuniq(stb))//&
+             &' nuisance strata (view x defocus)'
+-        allocate(nul(0), nul2(0))
++        nl%ng  = ng
++        nl%neq = neq
++        nl%nsh = nsh
++        nl%l_z = present(ntests)
++        if( nl%l_z ) nl%zc = split_zcrit(ntests)
++        nthr = 1
++        !$ nthr = omp_get_max_threads()
++        nl%nstep = max(NSHUF_STEP, ceiling(real(nthr) / real(max(1, 2*ng))))
++        allocate(nl%nul(0), nl%nul2(0))
+         if( ng >= 2 )then
+-            nbatch = max(1, min(nsh, MAXJOBS / max(1, 2*ng)))
+-            npr    = ng * (ng - 1) / 2
+-            do s1 = 1, nsh, nbatch
+-                s2 = min(nsh, s1 + nbatch - 1)
+-                nb = s2 - s1 + 1
+-                allocate(jidx(0), joff(1), jscale(0))
+-                joff(1) = 1
+-                do s = s1, s2
+-                    pa = sshuf(la, sta)
+-                    pb = sshuf(lb, stb)
+-                    call add_subset_jobs(ia, pa)
+-                    call add_subset_jobs(ib, pb)
+-                end do
+-                allocate(nm(self%nh,self%box,self%box,2*ng*nb))
+-                call self%maps(jidx, joff, jscale, eps, .true., .false., nm)
+-                !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
+-                do m = 1, 2*ng*nb
+-                    call self%dock(nm(:,:,:,m), cons(:,:,:,2-mod((m-1)/ng,2)), self%kt, self%khi)
+-                end do
+-                !$omp end parallel do
+-                allocate(vals(npr*nb), vals2(npr*nb))
+-                !$omp parallel do default(shared) private(ipr,s,g,q,ii) schedule(dynamic) proc_bind(close)
+-                do ipr = 1, npr*nb
+-                    s  = (ipr - 1) / npr
+-                    ii = ipr - s * npr
+-                    call pair_index(ii, ng, g, q)
+-                    vals(ipr)  = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
+-                        &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%klo)
+-                    vals2(ipr) = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
+-                        &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%kt)
+-                end do
+-                !$omp end parallel do
+-                nul  = [nul, vals]
+-                nul2 = [nul2, vals2]
+-                deallocate(nm, jidx, joff, jscale, vals, vals2)
++            ! all shuffles' subsets are drawn here, in the original order; maps past NSHUF only when the re-test needs them
++            allocate(nl%sjidx(2*ng*neq*nsh))
++            nsj = 0
++            do s = 1, nsh
++                pa = sshuf(la, sta)
++                pb = sshuf(lb, stb)
++                call add_subset_jobs(ia, pa)
++                call add_subset_jobs(ib, pb)
+             end do
++            call self%null_upto(nl, NSHUF, eps, cons)
+         endif
+         thr  = huge(thr)
+         thr2 = huge(thr2)
+         mu2  = 0.
+         sd2  = 0.
+-        zc   = 0.
+-        if( size(nul) > 0 )then
+-            thr  = maxval(nul(:(size(nul) / nsh) * NSHUF))
+-            thr2 = maxval(nul2)
+-            mu2  = sum(nul2) / real(size(nul2))
+-            sd2  = sqrt(sum((nul2 - mu2)**2) / real(max(1, size(nul2) - 1)))
+-            write(logfhandle,'(A)') 'shuffle null ('//int2str(size(nul))//' pair statistics): median '//&
+-                &fmtr(real(medianr(nul),dp),3)//', 95 % '//fmtr(real(quantr(nul,0.95),dp),3)//', max '//&
+-                &fmtr(real(maxval(nul),dp),3)//' -> threshold '//fmtr(real(thr,dp),3)//' (the max of its first '//&
++        zc   = nl%zc
++        if( size(nl%nul) > 0 )then
++            thr = maxval(nl%nul)
++            call null_thr(nl, mu2, sd2, thr2)
++            write(logfhandle,'(A)') 'shuffle null ('//int2str(size(nl%nul))//' pair statistics): median '//&
++                &fmtr(real(medianr(nl%nul),dp),3)//', 95 % '//fmtr(real(quantr(nl%nul,0.95),dp),3)//', max '//&
++                &fmtr(real(thr,dp),3)//' -> threshold '//fmtr(real(thr,dp),3)//' (the max of its first '//&
+                 &int2str(NSHUF)//' shuffles)'
+-            if( present(ntests) )then
+-                zc   = split_zcrit(ntests)
+-                thr2 = mu2 + zc * sd2
+-                write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
+-                    &fmtr(real(medianr(nul2),dp),3)//', max '//fmtr(real(maxval(nul2),dp),3)//', mean / sd '//&
+-                    &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)//'; z_crit '//fmtr(real(zc,dp),2)//&
+-                    &' (alpha 1/21 over '//int2str(ntests)//' split tests) -> threshold '//fmtr(real(thr2,dp),3)
+-            else
+-                write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
+-                    &fmtr(real(medianr(nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//' -> threshold '//fmtr(real(thr2,dp),3)
+-            endif
+-            write(logfhandle,'(A)') 'shuffle null mean / sd: board '//fmtr(real(sum(nul)/size(nul),dp),4)//' / '//&
+-                &fmtr(real(sqrt(sum((nul - sum(nul)/size(nul))**2) / max(1, size(nul)-1)),dp),4)//', beyond-EM '//&
+-                &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)
++            if( .not. nl%l_z ) write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//&
++                &': shuffle null median '//fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(thr2,dp),3)//&
++                &' -> threshold '//fmtr(real(thr2,dp),3)
+         endif
+         call self%decide(ia, ib, la, lb, k0, eps, neq, cons, self%klo, thr, 'board groups', plist, gof, exa, exb, kstar)
+         if( kstar >= 2 )then
+@@ -734,11 +716,22 @@ contains
+             call self%cross_em(ia, ib, starta, startb, kem, eps, neq, la, lb)
+             write(logfhandle,'(A)') 'cross-half EM half A: MAP changed vs start '//fmtr(real(count(la /= starta),dp)/&
+                 &real(size(la),dp),3)//'; half B '//fmtr(real(count(lb /= startb),dp)/real(size(lb),dp),3)
+-            call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
+-                &exa, exb, kstar, rst)
+-            if( present(ntests) ) write(logfhandle,'(A)') 're-test: weakest pair '//fmtr(real(rst,dp),3)//' at z '//&
+-                &fmtr(real((rst - mu2) / max(sd2, 1.e-12),dp),2)//' vs z_crit '//fmtr(real(zc,dp),2)//' (m '//&
+-                &int2str(ntests)//') -> '//merge('PASS', 'FAIL', kstar >= 2)//', K* '//int2str(kstar)
++            if( nl%l_z .and. ng >= 2 )then
++                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
++                    &exa, exb, kstar, rst, nl)
++                call null_thr(nl, mu2, sd2, thr2)
++                write(logfhandle,'(A)') 'beyond-EM band '//int2str(self%kt)//'..'//int2str(self%khi)//': shuffle null median '//&
++                    &fmtr(real(medianr(nl%nul2),dp),3)//', max '//fmtr(real(maxval(nl%nul2),dp),3)//', mean / sd '//&
++                    &fmtr(real(mu2,dp),4)//' / '//fmtr(real(sd2,dp),4)//'; z_crit '//fmtr(real(zc,dp),2)//&
++                    &' (alpha 1/21 over '//int2str(ntests)//' split tests) -> threshold '//fmtr(real(thr2,dp),3)//&
++                    &' from '//int2str(nl%ndone)//' of '//int2str(nsh)//' shuffles'
++                write(logfhandle,'(A)') 're-test: weakest pair '//fmtr(real(rst,dp),3)//' at z '//&
++                    &fmtr(real((rst - mu2) / max(sd2, 1.e-12),dp),2)//' vs z_crit '//fmtr(real(zc,dp),2)//' (m '//&
++                    &int2str(ntests)//') -> '//merge('PASS', 'FAIL', kstar >= 2)//', K* '//int2str(kstar)
++            else
++                call self%decide(ia, ib, la, lb, kem, eps, neq, cons, self%kt, thr2, 'cross-half EM groups', plist, gof, &
++                    &exa, exb, kstar, rst)
++            endif
+         endif
+         npair = size(plist)
+         allocate(sizes(kstar), order(kstar), rank(kstar), source=0)
+@@ -908,9 +901,8 @@ contains
+                 sel = pack(idx, lab == gcom(gg))
+                 if( size(sel) < neq ) THROW_HARD('a shuffled group is smaller than the equal N')
+                 call rnd_subset(sel, neq)
+-                jidx   = [jidx, sel(1:neq)]
+-                joff   = [joff, size(jidx) + 1]
+-                jscale = [jscale, 1.]
++                nl%sjidx(nsj+1:nsj+neq) = sel(1:neq)
++                nsj = nsj + neq
+             end do
+         end subroutine add_subset_jobs
+ 
+@@ -1111,7 +1103,7 @@ contains
+ 
+     end subroutine screen
+ 
+-    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin )
++    subroutine decide( self, ia, ib, la, lb, kmax, eps, neq, cons, kl, thr, tag, plist, gof, exa, exb, kout, rmin, nl )
+         class(state_mergeup), intent(inout) :: self
+         integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), kmax, neq, kl
+         real,                 intent(in)    :: eps(0:), thr
+@@ -1120,11 +1112,13 @@ contains
+         integer, allocatable, intent(out)   :: plist(:), gof(:), exa(:), exb(:)
+         integer,              intent(out)   :: kout
+         real,    optional,    intent(out)   :: rmin
++        type(shuffle_null), optional, intent(inout) :: nl
+         complex, allocatable :: allm(:,:,:,:)
+         integer, allocatable :: presa(:), presb(:), jidx(:), joff(:), mapa(:), mapb(:), groupof(:), pp(:), qq(:)
+         real,    allocatable :: jscale(:), rmat(:,:), merged(:), lowc(:), vals(:)
+         logical, allocatable :: l_alive(:)
+         real    :: best
++        logical :: l_merge
+         integer :: neq_, g, npair, p, q, bp, bq, mm
+         presa = pack([(g, g=1,kmax)], [(count(la == g) > 0, g=1,kmax)])
+         presb = pack([(g, g=1,kmax)], [(count(lb == g) > 0, g=1,kmax)])
+@@ -1196,7 +1190,13 @@ contains
+                     endif
+                 end do
+             end do
+-            if( bp == 0 .or. best >= thr ) exit
++            if( bp == 0 ) exit
++            if( present(nl) )then
++                call self%null_resolve(nl, best, eps, cons, l_merge)
++                if( .not. l_merge ) exit
++            else if( best >= thr )then
++                exit
++            endif
+             merged = [merged, best]
+             l_alive(bq) = .false.
+             where( groupof == bq ) groupof = bp
+@@ -1257,6 +1257,68 @@ contains
+ 
+     end subroutine decide
+ 
++    subroutine null_upto( self, nl, n, eps, cons )
++        class(state_mergeup), intent(inout) :: self
++        type(shuffle_null),   intent(inout) :: nl
++        integer,              intent(in)    :: n
++        real,                 intent(in)    :: eps(0:)
++        complex,              intent(in)    :: cons(:,:,:,:)
++        complex, allocatable :: nm(:,:,:,:)
++        integer, allocatable :: joff(:)
++        real,    allocatable :: jscale(:), vals(:), vals2(:)
++        integer :: nbatch, s1, s2, nb, nj, npr, m, ipr, s, ii, g, q, j, ng
++        ng     = nl%ng
++        npr    = ng * (ng - 1) / 2
++        nbatch = max(1, min(nl%nsh, MAXJOBS / max(1, 2*ng)))
++        do s1 = nl%ndone + 1, n, nbatch
++            s2     = min(n, s1 + nbatch - 1)
++            nb     = s2 - s1 + 1
++            nj     = 2 * ng * nb
++            joff   = [(1 + j*nl%neq, j=0,nj)]
++            jscale = [(1., j=1,nj)]
++            allocate(nm(self%nh,self%box,self%box,nj))
++            call self%maps(nl%sjidx((s1-1)*2*ng*nl%neq+1:s2*2*ng*nl%neq), joff, jscale, eps, .true., .false., nm)
++            !$omp parallel do default(shared) private(m) schedule(dynamic) proc_bind(close)
++            do m = 1, nj
++                call self%dock(nm(:,:,:,m), cons(:,:,:,2-mod((m-1)/ng,2)), self%kt, self%khi)
++            end do
++            !$omp end parallel do
++            allocate(vals(npr*nb), vals2(npr*nb))
++            !$omp parallel do default(shared) private(ipr,s,g,q,ii) schedule(dynamic) proc_bind(close)
++            do ipr = 1, npr*nb
++                s  = (ipr - 1) / npr
++                ii = ipr - s * npr
++                call pair_index(ii, ng, g, q)
++                vals(ipr)  = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
++                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%klo)
++                vals2(ipr) = self%pair_stat(nm(:,:,:,s*2*ng+g), nm(:,:,:,s*2*ng+q), &
++                    &nm(:,:,:,s*2*ng+ng+g), nm(:,:,:,s*2*ng+ng+q), self%kt)
++            end do
++            !$omp end parallel do
++            nl%nul  = [nl%nul, vals]
++            nl%nul2 = [nl%nul2, vals2]
++            deallocate(nm, vals, vals2)
++        end do
++        nl%ndone = max(nl%ndone, n)
++    end subroutine null_upto
++
++    ! more shuffles only while r lies within NSHUF_KSIG spreads of the threshold the full nsh shuffles could still reach
++    subroutine null_resolve( self, nl, r, eps, cons, l_merge )
++        class(state_mergeup), intent(inout) :: self
++        type(shuffle_null),   intent(inout) :: nl
++        real,                 intent(in)    :: r, eps(0:)
++        complex,              intent(in)    :: cons(:,:,:,:)
++        logical,              intent(out)   :: l_merge
++        real :: mu, sd, thr
++        do
++            call null_thr(nl, mu, sd, thr)
++            if( nl%ndone >= nl%nsh ) exit
++            if( abs(r - thr) > NSHUF_KSIG * sd * null_spread(nl%ndone, nl%nsh, nl%zc) ) exit
++            call self%null_upto(nl, min(nl%nsh, nl%ndone + nl%nstep), eps, cons)
++        end do
++        l_merge = r < thr
++    end subroutine null_resolve
++
+     subroutine eqn_stats( self, ia, ib, la, lb, plist, groupof, pp, qq, eps, neq, cons, kl, vals )
+         class(state_mergeup), intent(inout) :: self
+         integer,              intent(in)    :: ia(:), ib(:), la(:), lb(:), plist(:), groupof(:), pp(:), qq(:), neq, kl
+@@ -3975,6 +4037,26 @@ contains
+     end function quantr
+ 
+     ! the split re-test's Bonferroni threshold over m split tests: the one-sided normal quantile at ALPHA_SPLIT / m
++    subroutine null_thr( nl, mu, sd, thr )
++        type(shuffle_null), intent(in)  :: nl
++        real,               intent(out) :: mu, sd, thr
++        mu  = sum(nl%nul2) / real(size(nl%nul2))
++        sd  = sqrt(sum((nl%nul2 - mu)**2) / real(max(1, size(nl%nul2) - 1)))
++        thr = maxval(nl%nul2)
++        if( nl%l_z ) thr = mu + nl%zc * sd
++    end subroutine null_thr
++
++    real function null_spread( n, nmax, zc )
++        integer, intent(in) :: n, nmax
++        real,    intent(in) :: zc
++        real :: m
++        null_spread = 0.
++        if( n >= nmax ) return
++        m = real(nmax - n)
++        null_spread = sqrt(m / real(nmax * n) + zc * zc * (m - 1.) * real(nmax - 2) / &
++            &(2. * real(nmax - 1)**2 * real(max(1, n - 1))))
++    end function null_spread
++
+     real function split_zcrit( m )
+         integer, intent(in) :: m
+         real(dp) :: a, lo, hi, mid
+diff --git a/src/main/ui/simple/simple_ui_heterogeneity.f90 b/src/main/ui/simple/simple_ui_heterogeneity.f90
+index f1b0555..f00947f 100644
+--- a/src/main/ui/simple/simple_ui_heterogeneity.f90
++++ b/src/main/ui/simple/simple_ui_heterogeneity.f90
+@@ -562,7 +562,8 @@ call flex_pca%add_input(UI_FILT, 'heldout', 'binary', &
+         &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+         call state_split%add_input(UI_PARM, 'split_ntests', 'num', 'Split tests corrected for', &
+         &'The re-test beyond the EM band is Bonferroni-corrected at alpha 1/21 over this many split tests, its z taken &
+-        &against the mean and sd of a 20-shuffle null; hetero_tree passes 2 x root particles / minpop - 1{1}', 'tests{1}', &
++        &against the mean and sd of a shuffle null of 20 shuffles, extended to 50 while a merge is within its uncertainty; &
++        &hetero_tree passes 2 x root particles / minpop - 1{1}', 'tests{1}', &
+         &.false., 1., visibility=UI_VIS_ADVANCED, preserve_default=.true.)
+         call state_split%add_input(UI_PARM, 'junk_screen', 'binary', 'Junk screen', &
+         &'States whose high-resolution signal per particle falls under the screen''s threshold are set aside as junk; no &
