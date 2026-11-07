@@ -1,6 +1,6 @@
 ---
 name: pose-tangent-deflation-verdict-2026-11-07
-description: "VERDICT lever 5: deflating the mean's rigid tangents from the flex basis: plain metric does nothing, information metric costs qtoy2 signal; only per-particle E-step profiling removes pose cleanly, but it changes nothing on the IgM failure (port held)"
+description: "VERDICT lever 5: deflating the mean's rigid tangents from the flex basis: plain metric does nothing, information metric costs qtoy2 signal; only per-particle E-step profiling removes pose cleanly; PORTED the same day into flex embedding, gates pass (uncommitted patch)"
 metadata:
   node_type: memory
   type: project
@@ -25,10 +25,18 @@ Lever 5 of guide 7.8, run 2026-11-07 (Python, `latent_states_v4` statistics, the
 - **Still no IgM gain.** The arms stay invisible. The tree's false IgM root splits do not follow pose error (AUROC .51-.54).
   The only pose-driven IgM split is the site classifier's core patch (AUROC .81).
 
-**Why:** settles lever 5. The port was held: it is hygiene, not a fix for the hard test.
+- **PORTED 2026-11-07 afternoon (user: "Port it").** The profile is in `embed_latents_with_contrast`, default on;
+  `SIMPLE_FLEX_POSE_PROFILE=no` turns it off. Patch `handoff/pose-tangent/pose_profile_f3eab71ce.patch` (on hetero-tree-wip
+  f3eab71ce); the flex-precision patch must be STACKED on it (plain git apply conflicts on adjacent imports). Not committed: the
+  coordinator commits it after the gates.
+  - Gates, same binary, on vs off (build_poseprof, fast gate 15/15): nulls 1 leaf (identical partitions); r131 corner kept on
+    both seeds (on: s01 1.01/.52 and 1.00/.54); qtoy2 NMI .780 -> .811; cost unchanged (99 vs 96 core-h).
+  - flex_pca's own IgM 5 % coordinates: shift-error R^2 .003 on vs .35 off. Off reproduces the old fflex at R^2 .998-1.000.
+
+**Why:** settles lever 5. The port is hygiene (no IgM arm gain), and it passed the gates.
 **How to apply:**
 - Never retry basis-level tangent deflation (flex2D-style or weighted).
-- If pose hygiene is wanted, port the profile into `embed_latents_with_contrast` (about 150 lines).
+- Compare like with like: A/B the profile with the env toggle in one binary.
 - For the core-patch shift splits, profile the site reference's in-plane shift derivatives inside the site classifier. Tested 2026-11-07: a flat profile works, a 1 px prior does not ([[site-shift-profile-verdict-2026-11-07]]).
 
 Related: [[igm-fixture-xval-stageb-gapw-2026-11-06]], [[igm-focused-flex-mask-is-bottleneck-2026-11-07]],
