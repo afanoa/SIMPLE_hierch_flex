@@ -3315,6 +3315,7 @@ contains
     end subroutine merge_poles_subspace
 
     subroutine estep( self, idx, w, refs, l_alive, wnew, l_full, ll, kcut, llband, lpp, l_flat )
+        use simple_srch_sort_loc, only: hpsort
         class(state_mergeup), target, intent(inout) :: self
         integer,              intent(in)    :: idx(:)
         real,                 intent(in)    :: w(:,:)
@@ -3328,7 +3329,8 @@ contains
         real(dp), allocatable, optional, intent(out) :: lpp(:)
         logical,  optional,   intent(in)    :: l_flat
         real(dp), allocatable :: lpl(:)
-        real,    allocatable :: aa(:,:,:), bb(:,:,:)
+        real,    allocatable :: aa(:,:,:), bb(:,:,:), gap(:), agap(:)
+        integer, allocatable :: gidx(:)
         complex, allocatable :: projected(:,:)
         integer, allocatable :: mp(:)
         integer, pointer :: bhk(:,:), bsh(:)
@@ -3343,6 +3345,8 @@ contains
         if( present(l_full) ) l_fb = l_full
         l_fl = .false.
         if( present(l_flat) ) l_fl = l_flat
+        l_fl = l_fl .and. size(refs) == 2
+        if( l_fl ) allocate(gap(size(idx)), source=0.)
         if( l_fb )then
             bhk => self%fbhk
             bsh => self%fbsh
@@ -3448,6 +3452,7 @@ contains
                     sbd(g,2) = band_score(g, i, ic, nsb)
                 endif
             end do
+            if( l_fl ) gap(i) = real(s(1) - s(2))
             smax = maxval(s)
             do g = 1, k
                 wnew(i,g) = 0.
@@ -3481,6 +3486,17 @@ contains
         if( present(lpp) ) call move_alloc(lpl, lpp)
         write(logfhandle,'(A)') '  cross-half E-step: model scale at shells 2 / '//int2str(kband)//' '//&
             &fmtr(scl(1),4)//' / '//fmtr(scl(nsb),4)
+        if( l_fl )then
+            ! the site path's evidence per particle, as xsbg.py reports it: the two-group score gap's P10 / median / P90 and median |gap|
+            gidx = [(i, i=1,n)]
+            agap = abs(gap)
+            call hpsort(gap, gidx)
+            gidx = [(i, i=1,n)]
+            call hpsort(agap, gidx)
+            write(logfhandle,'(A)') '  cross-half E-step: score gap P10 '//fmtr(real(gap(max(1,n/10)),dp),2)//' median '//&
+                &fmtr(real(gap((n+1)/2),dp),2)//' P90 '//fmtr(real(gap(max(1,(9*n)/10)),dp),2)//'; median |gap| '//&
+                &fmtr(real(agap((n+1)/2),dp),2)
+        endif
         deallocate(aa, bb, mp)
 
     contains

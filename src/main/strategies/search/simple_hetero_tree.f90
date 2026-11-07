@@ -2840,11 +2840,17 @@ contains
             ! a node about to be filed as one leaf above the depth cap waits for the per-site split (site_split=yes)
             if( ng == 1 .and. self%p%site_split .eq. 'yes' .and. self%nodes(i)%depth < self%p%maxdepth .and. &
                 &nlive >= 2 * self%p%minpop )then
-                if( .not. file_exists(string(d//'/xsplit/summary.txt')) )then
+                if( self%nodes(i)%step /= S_SITESPLIT .and. .not. file_exists(string(d//'/xsplit/summary.txt')) )then
                     call submit_site_split
                     return
                 endif
-                l_sited = site_children()
+                ! the worker has returned: the step goes back to the split's so the caller files the node once
+                self%nodes(i)%step = S_SPLIT
+                if( file_exists(string(d//'/xsplit/summary.txt')) )then
+                    l_sited = site_children()
+                else
+                    write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': the per-site split left no summary; filed as one leaf'
+                endif
             endif
             do g = 1, size(pop)
                 if( l_sited ) exit
@@ -2952,7 +2958,7 @@ contains
             write(logfhandle,'(A,F6.3,A,F5.1,A,F5.1,A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//trim(best)//&
                 &' discrete (GAPw ', gbest, ', z1 ', zbest, ', lobes ', lbest, ' A apart)'
             do gg = 1, 2
-                call add_child([(xl(j) == gg, j=1,size(lab))], 'site '//trim(best)//' group '//int2str(gg)//' ('//&
+                call add_child([(xl(j) == gg .and. .not. any(junk == lab(j)), j=1,size(lab))], 'site '//trim(best)//' group '//int2str(gg)//' ('//&
                     &int2str(count(xl == gg))//' particles)')
             end do
             site_children = .true.
