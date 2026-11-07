@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 6f195b76-225b-466c-a432-7fc8360148e8
-  modified: 2026-11-07T20:00:38.924Z
+  modified: 2026-11-07T20:45:05.467Z
 ---
 
 Side session sparse-ppca, 2026-11-07. Handoff: `hetero_tree_20261028/handoff/sparse-ppca/{VERDICT,STATUS}.md` + scripts/; runs in
@@ -31,6 +31,12 @@ so global latents and rotations cannot see arms; local seeds plus sparsity can.
 - All seeds at once merge into union supports. Use greedy pursuit with held-out gains vs solvent controls.
 - The rotation step needs one lambda per group, else blocks merge.
 - Keep a leave-one-block-out check, else the last block of a null survives.
+
+**Next (user, 2026-11-07):** "Port sparse PPCA first" (native opt-in flex_pca path, knob-free stop replacing the 2 % cut; given to
+the sparse-ppca2 session), then the end-to-end chain. Its sparse global coordinate goes to real data "After the port": r131 roots
+(both seeds) and the 692k root with |CTF| ([[rnasep-denoised-stacks-are-phase-flipped]]), against the seam-free .69-.72.
+Lever 3 on these supports: 10 % 2-state arms sit at the masked rounds' fixed point (~.35-.37); 5 % fix product .104 at round 1,
+above the true-mask chain's .098 at round 3.
 
 Related: [[site-dictionary-global-basis-verdict-2026-11-07]], [[igm-focused-flex-mask-is-bottleneck-2026-11-07]],
 [[site-mask-rework-direction-2026-11-07]], [[flex-pca-sparse-l1-mstep-verdict]].

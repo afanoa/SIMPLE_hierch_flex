@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-current
-description: "Topic index (38 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
+description: "Topic index (44 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
 metadata:
   node_type: memory
   type: reference
@@ -52,3 +52,9 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [tree-as-full-mppca-assessment-2026-11-06](tree-as-full-mppca-assessment-2026-11-06.md) — tree = MPPCA with rank-0 leaves + hard EM + cross-half accept; full/VB versions predicted no gain; Gaussian-latent kurtosis trap
 - [flex-refinement-integration-verdicts-2026-11-06](flex-refinement-integration-verdicts-2026-11-06.md) — VERDICTS: frozen-pose flex<->refinement both ways, nothing to build; flex prior off/overrides held-out; stage-B flex no downstream gain; site factors the only signal
 - [tree-master-merge-gates-2026-11-06](tree-master-merge-gates-2026-11-06.md) — merge @ ee26d9bbf passes gates at default prob_beta (nulls 1 leaf, closed kept, qtoy2 0.78); prob_beta=1 loses the closed corner
+- [inode-prototype-2026-11-06](inode-prototype-2026-11-06.md) — integrated-node prototype (paper_inode on batch2): fixtures, baseline trees, first toy verdicts
+- [site-split-port-traps-2026-11-07](site-split-port-traps-2026-11-07.md) — porting xsbg.py's site EM: masked-map scoring + prior collapses, per-group docking makes a dipole split, S_SITESPLIT runaway, GAPw needs the 5.11 A grid
+- [r131-root-split-flips-with-openblas-variant-2026-11-07](r131-root-split-flips-with-openblas-variant-2026-11-07.md) — TRAP: r131 gate root split flips with libopenblas vs libopenblaso (BLA_VENDOR); binaries reproduce themselves; compare like with like
+- [sparse-ppca-pursuit-verdict-2026-11-07](sparse-ppca-pursuit-verdict-2026-11-07.md) — VERDICT YES lever 6: group-sparse PPCA pursuit learns IgM arm masks + coords (10 %: 5/5 arms = true-mask readouts; nulls 0 sites); traps inside
+- [flex-embedding-precision-is-map-sampling-precision](flex-embedding-precision-is-map-sampling-precision.md) — TRAP: embedding precision = MAP sampling precision Q = A G^+ A; flex deconv reads it as A, mest_charts as G; CONFIRMED, fix (store A) unapplied in handoff/flex-precision
+- [cross-half-test-needs-band-above-assignment-2026-11-07](cross-half-test-needs-band-above-assignment-2026-11-07.md) — KEY: cross-half map test of hard-assigned groups valid only above every assignment lowpass; in-band null z 53-56; band split -> null 1 leaf, qtoy2 kept

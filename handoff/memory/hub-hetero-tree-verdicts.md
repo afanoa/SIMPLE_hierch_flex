@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-verdicts
-description: "Topic index (56 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
+description: "Topic index (71 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
 metadata:
   type: reference
 ---
@@ -66,3 +66,18 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [ppinfo-lever-verdict-2026-11-02](ppinfo-lever-verdict-2026-11-02.md) — VERDICT: no per-particle lever (band/mask/pose) the node can pull lifts the 6.5 % endpoint; pose is the lever but needs ~1-deg poses; Python site_em port validated
 - [tree-pose-conditioned-retest-no-go-2026-11-02](tree-pose-conditioned-retest-no-go-2026-11-02.md) — NO-GO: stable-subset re-test keeps the whole difference (ratio .99-1.01) on real states and pose partitions alike; r4 = diffuse population difference; selection refuses node projects, use posecond_setstates.py
 - [flexsub-within-state-deformation-no-go-2026-11-07](flexsub-within-state-deformation-no-go-2026-11-07.md) — NO-GO: subtracting within-state flex deformation before stage B moves labels 0.4-1.1 % (seed noise 3-4 %), F1/NMI/FSC unchanged; ~0.05 % of band power
+- [igm-focused-flex-mask-is-bottleneck-2026-11-07](igm-focused-flex-mask-is-bottleneck-2026-11-07.md) — VERDICT T1: true-arm-mask focused flex sees all IgM arms (R2 .19-.31), island masks fail (solvent): masks are the bottleneck
+- [igm-swept-variance-masks-verdict-2026-11-07](igm-swept-variance-masks-verdict-2026-11-07.md) — VERDICT 7.8 L1+L7: swept-variance masks = true-mask level at 10 % (islands), fail at 5 % (bin selection bias TRAP); lower lp never helps
+- [mest-formulations-verdict-2026-11-06](mest-formulations-verdict-2026-11-06.md) — why M-est adds nothing (one-hot or null-level posteriors; leaf weights = frequency-blind pooling); tree priors, predictive soft EM, Student-t: no gain, no port
+- [tree-charts-coordination-gap-verdict-2026-11-06](tree-charts-coordination-gap-verdict-2026-11-06.md) — coordinated local charts: modest gain over the root chart; XD gap criterion blind below chart d' ~2.5; annotation only
+- [flex-to-refinement-coupling-verdicts-2026-11-06](flex-to-refinement-coupling-verdicts-2026-11-06.md) — VERDICT: every flex -> refinement coupling at frozen poses loses to stage B + decision-time calibration; don't retry those forms
+- [global-chart-coordinate-verdict-2026-11-06](global-chart-coordinate-verdict-2026-11-06.md) — VERDICT: the composed global chart coordinate has seams; no minority isolation on real data, merges the 692k closed pair, reproduces worse than the root chart; nothing to port
+- [stageb-oracle-references-limit-2026-11-07](stageb-oracle-references-limit-2026-11-07.md) — VERDICT: stage B limited by references (root K, r1 80/20 split, no junk/minority ref), not poses; 32 % conf. wrong = K=5 merges
+- [depth-wiener-no-truth-map-benefit-2026-11-07](depth-wiener-no-truth-map-benefit-2026-11-07.md) — depth2 never beats emp2 against truth on qtoy2/qtoyflex (error +.01-.016 per band); only a nominal deep-tree resolution gain
+- [site-dictionary-global-basis-verdict-2026-11-07](site-dictionary-global-basis-verdict-2026-11-07.md) — VERDICT NO: localised modes of the global basis can't replace site discovery/ranking (qtoy2 single-mode .69-.74 vs span .92; r131 .59 vs site factors .65-.69)
+- [igm-arm-flex-prior-verdict-2026-11-07](igm-arm-flex-prior-verdict-2026-11-07.md) — VERDICT: focused flex prior adds no IgM arm information beyond references (+.003-.006 NMI, costs accuracy; hurts with oracle refs); purer refs are the headroom
+- [oversplit-junk-ref-merge-verdict-2026-11-07](oversplit-junk-ref-merge-verdict-2026-11-07.md) — VERDICT lever 4: junk ref works, over-split recovers states K lacked (qtoy2 root .674 -> .803) not close pairs; TRAP: map-level cross-half merge test fails the null by self-selection
+- [lever3-latent-refs-seeding-verdict-2026-11-07](lever3-latent-refs-seeding-verdict-2026-11-07.md) — VERDICT: latent-built refs + arm-masked state_eval finds IgM arms (10 % product .256 true / .251 zh1 / .338 sparse-PPCA chain vs tree .042); clean only for 2-state arms at round 1
+- [pose-tangent-deflation-verdict-2026-11-07](pose-tangent-deflation-verdict-2026-11-07.md) — VERDICT lever 5: basis tangent deflation fails; per-particle profiling clean; PORTED into flex embedding (env toggle), gates pass, patch uncommitted
+- [spectrum-stop-rule-verdict-2026-11-07](spectrum-stop-rule-verdict-2026-11-07.md) — VERDICT: latent spectrum above a BBP edge is no stop rule (nulls continue on nuisance, N sets 692k stop, closed spike <= .13); r+1 is a lower bound; n/sqrtN law = BBP
+- [site-shift-profile-verdict-2026-11-07](site-shift-profile-verdict-2026-11-07.md) — VERDICT: flat in-plane shift profile in the site classifier kills the IgM core-patch shift split, keeps a1 DISCRETE; a 1 px prior fails

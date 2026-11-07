@@ -24,6 +24,14 @@ rounds of free state_eval (maxits 1) with the arm mask, each rebuilding its maps
   - 5 %: every zh1 seed is <= .001. The rounds recover a1 like the true mask (.131 vs .137 at R3), little else; product .044 vs .098.
   - The null behaves as with true masks: 10 % product .073 -> .093; 2-state null arms <= .007 at R1.
 
+- **Part 3 (sparse-PPCA supports + their own block coordinates, fully data-only, done 15:45): the best chain.**
+  - Product at R1: 10 % .338 (seed .333; true .235, zh1 .225, tree .042); 5 % .104 (seed .050; true .075, zh1 .025).
+  - At 10 % the masked round nudges the 2-state arms toward its fixed point (a1 .394 -> .378) and lifts the 3-state ones (a5
+    .295 -> .318). At 5 % it rescues arms: a3 .012 -> .139, a4 .011 -> .117.
+  - Null: the sparse seeds already split the continuous arms (~.15 vs angle bins). Rounds add <= .007 on 2-state blocks at R1 and
+    +.012-.034 on 3-state blocks.
+  - Trick: resample the box-70 support centre-aligned to the 200^3 mask grid, core at .5, then T1's edge (dilate 3 A, Gaussian 6 A).
+
 **Why:** the coordinator's lever 3 asked whether reference-seeded, arm-masked assignment could seed tree nodes.
 **How to apply:** if it is ported, use one round, 2-state splits, plus a map-level split test (GAPw / cross-half). Do not iterate
 blindly: 3-state splits and extra rounds manufacture states from continua. Trap: the 3-D GMM seed is recipe-fragile; report the

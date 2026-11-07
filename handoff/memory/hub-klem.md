@@ -1,6 +1,6 @@
 ---
 name: hub-klem
-description: "Topic index (95 memories): klem kernel-latent EM: method findings, the f692 RNase P runs, synthetic benchmarks (IgM/PDH-like), code traps"
+description: "Topic index (96 memories): klem kernel-latent EM: method findings, the f692 RNase P runs, synthetic benchmarks (IgM/PDH-like), code traps"
 metadata:
   node_type: memory
   type: reference
@@ -108,3 +108,4 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 
 - [klem-worker-scripts-collide-in-shared-cwd](klem-worker-scripts-collide-in-shared-cwd.md) — TRAP: concurrent board…
 - [klem-worker-jobs-are-named-simple-afm-cryoem](klem-worker-jobs-are-named-simple-afm-cryoem.md) — the klem board/rec…
+- [klem-oracle-labels-vs-board-numbering-trap](klem-oracle-labels-vs-board-numbering-trap.md) — TRAP: oracle labels vs board numb…

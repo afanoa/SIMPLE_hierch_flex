@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: c6b87431-7325-4b60-ad85-a72f7e8559d4
-  modified: 2026-11-07T17:30:31.950Z
+  modified: 2026-11-07T20:38:18.157Z
 ---
 
 Found 2026-11-07 (spectrum-stop session) by reading merge_master2's source. In fit/simple_flex_pca_embed.f90 every latent solve
@@ -20,6 +20,16 @@ Misreadings:
 - mest_charts.py builds z_ML = inv(prec)(prec + Pi) z_MAP, i.e. it treats prec as G. Its "observed / deconvolved / measurement" budget
   therefore fails at low SNR (olenull 5/12/3).
 
-**How to apply:** use Q^-1 times a_comp as the measurement covariance of z_MAP, and do not un-shrink with it. If flex's deconvolution
-or noise scale ever matters for a decision, flag the A-vs-Q mismatch to the user as a possible flex fix (not done). Related:
+**Verdict 2026-11-07 (flex-precision session).** Confirmed on the qtoy2 gate root: Q rebuilt from the captured Gram equals the block
+to 4e-15.
+
+Against truth, storing A (patch in `$H/handoff/flex-precision/`, unapplied, not built):
+- strong-axis deconvolved variance: from 26-42 % low to 10-20 % high;
+- posterior-mean error: down 22 %;
+- labels: barely change (NMI from .470 to .473, ARI from .363 to .388).
+
+The weak-axis inflation (8x on z5 and z10) is NOT this bug. It comes from the half-split noise scale: .507 against .634 from truth.
+
+**How to apply:** until the patch lands, use Q^-1 times a_comp as the measurement covariance of z_MAP, and do not un-shrink with it.
+After the patch (`COV_CACHE_VERSION` 6), the block is A, and charts code must take Gt = block - P. Related:
 [[spectrum-stop-rule-verdict-2026-11-07]], [[tree-charts-coordination-gap-verdict-2026-11-06]].

@@ -278,7 +278,9 @@ Findings that frame any next idea:
 - On the IgM fixture the site layer is the bottleneck and discovery is its gate: the latent reads small moving parts only through
   arm-shaped supports (T1), data-only masks reach the true mask where the root's islands find the arm (10 % a1, a3), and
   latent-built references assigned per arm then find the arms (five-arm product .251 vs the tree's .042). Sparse PPCA learns all
-  five 10 % supports from the data (nulls pending).
+  five 10 % supports from the data with clean nulls, and its blocks + one masked round make the best chain measured, data-only
+  (product .338 at 10 %, .104 at 5 %; true masks .256 / .098; tree .042 / 0). A discreteness test must still accept each split:
+  the seeds cut the null's continuous arms in two.
 
 ## 7. Open threads and how to resume each
 
@@ -536,7 +538,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -569,6 +571,19 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     +.013-.016; 5 % null .006 -> .012.
   - Rule: one round, 2-state splits are clean; any split needs a map-level test before the tree accepts it, and that test must
     use data the labels never saw (hier-ppca and fission below). The discrete information sits in the focused seed.
+  - Part 3, on sparse PPCA's supports (FINAL; tables `results/spf10_*`, `spn10_*`, `spf5_*`; jobs 55032554-56, 8 GB workers):
+    mask = each block's support resampled to the 200^3 grid with T1's soft edge; seed = the block's own coordinates (sparse PPCA's
+    GMM recipe, reproducing its NMIs exactly). Five-arm product vs the 72 combinations at round 1: 10 % .338 (seed .333, round 3
+    .331), true masks .235 (.256 at round 3), zh1 .225 (.251), tree .042; 5 % .104 (seed .050), true masks .075 (.098), zh1
+    .025, tree 0, with a5 missed and the non-arm block included. 10 %: the round lowers the 2-state arms slightly toward the
+    refinement's fixed point (a1 .394 -> .378, a3 .365 -> .349, a4 .324 -> .318) and raises the 3-state ones (a2 .282 -> .294,
+    a5 .295 -> .318). 5 %: the round is decisive (a3 .012 -> .139, a4 .011 -> .117, a2 .028 -> .084, a1 .178 -> .192), and the
+    sparse supports beat the dilated true masks as assignment masks. Null (10 %, 8 blocks): sparse PPCA's seeds already split the
+    continuous motion (.15-.16 vs angle bins; product .180) although its own held-out test calls it continuous; the rounds add
+    0 to -.006 on 2-state high-purity blocks, +.004 / +.007 on low-purity second blocks, +.012-.034 on 3-state blocks (one a5
+    block climbs .002 -> .117 by round 3); 5 % null: 0 sites. Rule to port: sparse-PPCA blocks + one masked round as the
+    data-only seeding, and a discreteness test (sparse PPCA's held-out gain, GAPw / cross-half, or the fission test) decides
+    which splits the tree accepts.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -626,10 +641,10 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     8 blocks covering all five moving arms (purity .63-.92), continuous-angle R^2 .28-.31 as T1, BC .33.
   - Cost: 35-50 min per 100k particles on 16 cores, 31 GB; gate roots 5-7 min. The learned supports (`block%02d_support.mrc`) can
     serve as site masks now. Native port: per-block PCG supports + noise-calibrated group selection + the pursuit loop.
-  - Lever 3 on these supports (oracle session; a section in `$H/handoff/igm-refs/VERDICT.md`, running): its seeds reproduce sparse
-    PPCA's own readouts exactly, and for the 2-state arms at 10 % the masked rounds have a fixed point at NMI ~.35-.37 reached
-    from any seed (true mask, zh1, sparse): weaker seeds are pulled up, sparse PPCA's are pulled slightly down (a3 .365 -> .340 by
-    round 3). For those arms sparse PPCA's own labels already sit at lever 3's level; the 3-state arms, null and 5 % decide the rest.
+  - Lever 3 on these supports (igm-refs Part 3 above): the best chain measured, fully data-only (10 % product .338, 5 % .104).
+  - Port (user: "Port sparse PPCA first", given to the sparse-ppca2 session): a native opt-in flex_pca path with a knob-free stop,
+    reproducing the Python verdict, then (user: "After the port") the global-coordinate test at the r131 roots and the 692k root
+    with |CTF|: does a site block isolate the closed arm better than the seam-free coordinate (.69-.72)?
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
@@ -651,7 +666,10 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   axes and turns noise into apparent signal on the weak ones (2-9x). Consumers: state seeding, site_rank starts, the charts code.
   The patch touches the import line and the three `map_sampling_precision` calls in `simple_flex_pca_embed.f90`; it applies
   stacked on the pose-profile patch (`flex_precision_posterior_on_pose_profile.patch`), not in the other order with plain
-  `git apply`. The deconvolution comparison (job 55030447) was running at writing.
+  `git apply`. VERDICT: storing A instead of Q fixes the strong axes (z1-z3, 84 % of the truth variance: deconvolved variance
+  26-42 % low -> 10-20 % high) and the per-particle posterior means (error .385 -> .299 of the truth variance, -22 %), but not the
+  weak-axis inflation, which comes from the half-split noise scale (.507 vs truth .634; likely error both halves share). The fix
+  is being built on the pose profile (stacked patch) and gated against the pose-profile build; committed only on the user's word.
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
   the parent's latent and refined, a view-matched map test selects, a continuum stays one leaf with its own coordinate.
   VERDICT (`$H/handoff/hier-ppca/STATUS.md`, scripts beside it, runs `$L/hppca/<key>`):
@@ -695,7 +713,13 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   cost: qtoy2 class accuracy .751, closed F1 .904 after 6 rounds (tau 1 .695 / .803; on X .772 / .947); X2 at 39-10 A keeps all
   10 states (the holo pair at z 4.9). Finer nulls (tau 1, 480 and 1,920 view x defocus cells) keep the holo pair (z 8.4 / 8.8), so
   it is not only a coarse-strata artefact; a control job (55032828: true-holo restriction, view-cone split of true holo, non-holo
-  remainders) separates the pair's admixture from its views. VERDICT.md pending.
+  remainders) separates the pair's admixture from its views.
+  VERDICT (`$H/handoff/fission/VERDICT.md`): fission removes the self-selection. Labels from X1, maps from X2: the qtoynull root
+  merges back to one state in both bands, with either seed, at both tau; qtoy2 keeps every state of different composition
+  (z >= 6.9 at tau 1, >= 4.1 at tau 0.6) and merges a clean duplicate. Labelling cost vs the same passes on X: .08 class accuracy
+  at tau 1, .02 at tau 0.6 (.751 vs .772, closed F1 .90 vs .95). The one kept same-class pair is a purity split, not a view split:
+  its pure-holo cores are equivalent (z 2.1-2.5) while its non-holo remainders (18 % vs 10 %) differ (z 6.0), which no map-level
+  test can merge. On real data Z must be shaped by the per-group noise spectrum (the committed sigma2 groups or flex's noise model).
 - `extremes-repro` (runs `$L/extremes/`; notes to `$H/handoff/extremes/`): whether the extreme maps along a latent coordinate
   reproduce across fission copies. qtoyflex (first numbers): self-selected tail maps "reproduce" across halves (.13-.51 at
   39-10 A), but so do tails picked along a fake map no particle carries (.23-.45); honest tails (select on X1, rebuild from X2)
@@ -717,12 +741,14 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
    hard fixture (section 6). What remains is the site layer itself: arm-shaped masks from the data (T1b's `self` masks are running),
    focused coordinates beside the node's, and latent-built references assigned per site. Port only after the IgM fixture and its
    null twin, the 10 % fixture and the section-3 gates.
-6. The split test: replace `state_split`'s locality guard and effect floor by a test on unseen data (a fission copy, or a band
-   above the assignment lowpass), once fission's qtoy2 run shows it keeps real states (7.8).
+6. The split test: replace `state_split`'s locality guard and effect floor by a fission test (labels from X1, maps from X2,
+   tau 0.6; 7.8 fission VERDICT: the null passes, qtoy2 keeps its states, .02 accuracy cost). Needs a real-data noise model
+   (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
    patch stacks on it once its verdict is in.
-8. Site discovery: sparse PPCA's nulls hold (7.8). Lever 3 on its supports is running; if it matches lever 3's zh1 / true-mask
-   rows, the site layer to port is sparse PPCA's pursuit (with a knob-free stop) + lever 3 (one round, 2-state).
+8. Site layer: sparse PPCA's pursuit (knob-free stop) + one masked round, the best data-only chain (7.8 igm-refs Part 3), with a
+   discreteness test accepting each split. The native port is in progress (user: port first); then the r131 / 692k
+   global-coordinate test and the end-to-end chain.
 
 ## 9. Standing rules and traps
 

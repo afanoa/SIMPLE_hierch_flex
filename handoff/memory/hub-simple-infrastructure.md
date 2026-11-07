@@ -1,6 +1,6 @@
 ---
 name: hub-simple-infrastructure
-description: "Topic index (47 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
+description: "Topic index (50 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
 metadata:
   type: reference
 ---
@@ -57,3 +57,6 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [box600-simple-master-needs-64g](box600-simple-master-needs-64g.md) — box-600 masters need 64-96G; refine3D workers ~100 GiB at 4 A: job_memory_per_task=200000
 - [pptx-qa-quicklook-and-pymol-level-traps](pptx-qa-quicklook-and-pymol-level-traps.md) — TRAP: python-pptx notes hang Quick Look; PyMOL normalises maps (raw levels need normalize 0)
 - [dock-volpair-wrong-optimum-check-copies](dock-volpair-wrong-optimum-check-copies.md) — TRAP: dock_volpair wrong optimum (.72 vs .88); dock all copies, anchor on the best
+- [refine3d-shc-virgin-field-trap](refine3d-shc-virgin-field-trap.md) — shc greedy first pass needs a virgin ptcl3D…
+- [simple-script-keys-before-prg-trap](simple-script-keys-before-prg-trap.md) — TRAP: a key set before prg= dies 'prg= must come…
+- [refine3d-auto-ref-pose-init-only-for-foreign-vol1](refine3d-auto-ref-pose-init-only-for-foreign-vol1.md) — TRAP: ref_pose_init=cc di…
