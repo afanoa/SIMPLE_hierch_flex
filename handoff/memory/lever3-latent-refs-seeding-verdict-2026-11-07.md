@@ -33,7 +33,7 @@ rounds of free state_eval (maxits 1) with the arm mask, each rebuilding its maps
   - Trick: resample the box-70 support centre-aligned to the 200^3 mask grid, core at .5, then T1's edge (dilate 3 A, Gaussian 6 A).
 
 - **Part 4 (discreteness test, FINAL 17:20):** GAPw on the round-1 K=2 groups: 9/10 power, 0/10 false accepts (IgM arms 9/9,
-  null blocks and the non-arm block rejected); fails on qtoyflex both ways. Details: [[gapw-site-acceptance-test-verdict-2026-11-07]].
+  null blocks and the non-arm block rejected); fails on qtoyflex both ways. Details: [[per-site-discreteness-test-gapw-verdict-2026-11-07]].
 
 **Why:** the coordinator's lever 3 asked whether reference-seeded, arm-masked assignment could seed tree nodes.
 **How to apply:** if it is ported, use one round, 2-state splits, plus a map-level split test (GAPw / cross-half). Do not iterate

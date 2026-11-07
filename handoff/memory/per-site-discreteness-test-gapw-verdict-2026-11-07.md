@@ -29,6 +29,7 @@ Scripts `disc_a.py` (+ sbatch / list), `igs_run2.sbatch` (K = 2 round-1 + GAPw),
 the null twin's continuous arms).
 **How to apply:** use GAPw for IgM-like short-swing sites, with no call = one leaf. Do not trust it on large curved continua
 without a node-specific null, nor on minority states adjacent to a continuum. Do not retry per-particle mixture tests at N ~1e5
-without a correct continuum model. Related: [[discrete-vs-continuous-site-gap-2026-11-05]],
+without a correct continuum model. RNase P's closed corner resembles qtoyflex's closed state next to the arm, so the tree's
+own splits must keep carrying it ([[rnasep-closed-state-must-be-retained]]). Related: [[sparse-ppca-pursuit-verdict-2026-11-07]], [[discrete-vs-continuous-site-gap-2026-11-05]],
 [[lever3-latent-refs-seeding-verdict-2026-11-07]], [[cross-half-test-needs-band-above-assignment-2026-11-07]],
 [[data-fission-merge-test-verdict-2026-11-07]].
