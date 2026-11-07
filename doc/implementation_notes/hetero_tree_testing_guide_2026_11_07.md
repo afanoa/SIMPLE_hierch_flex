@@ -461,8 +461,10 @@ Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`
   stage B's 0.146. Purity matters more than coverage: the trimmed masks are as arm-pure as the true ones (0.77) but cover a third
   of the arm, because the arm is smeared in the node mean (73-90 % of each true arm mask lies outside that support); a looser
   threshold restores coverage, loses purity and scores worse. Trimming also removes most of the heavy tails (kurtosis 3-8).
-  Next: a mask that follows the arm's low-density swept volume, e.g. refined from the focused fit's own mode energy (the `self`
-  variant, built but not fitted: resume commands in the verdict).
+  Refining the island by its focused fit's own mode energy (`self`) adds nothing over trimming (mean R^2 0.120 vs 0.127; a1
+  0.211 / 0.138 vs 0.244 / 0.162), and `trim+self` masks cover only 20-30 % of the arm (fits running at handoff, job 55019659,
+  scoring themselves; table `t1b_masks/scripts/t1b_table.sbatch`). Trim is the best data-only mask; a mask that follows the arm's
+  low-density swept volume is still missing, and it is the next step.
 - The ranking number is not calibrated yet. With free variances heavy tails buy it (8 of 15 qtoynull sites positive, up to 0.295
   nats/particle on a near-empty site, kurtosis 48; at r131 its fitted tail is not the closed rows, AUROC 0.51). With tied variances
   it is clean on the null (all 15 sites < 0) but ranks site 3 above the closed-arm site 2 at r131 seed 2 (hard gate). The tree's

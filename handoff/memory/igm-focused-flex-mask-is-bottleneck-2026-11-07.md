@@ -23,7 +23,8 @@ null twin continuous). Files: `fixture_igm/t1_sitefocus/T1_VERDICT.md`; generic 
 
 - T1b (`fixture_igm/t1b_masks/T1B_VERDICT.md`): islands trimmed to the molecule's support (tree's 0.1 x max) double the fit (mean
   R2 .066 -> .127, LDA NMI .032 -> .070; true .231/.142; a1 .244/.162 > .146). Purity > coverage: trims are arm-pure but cover a
-  third of the smeared arm; looser thresholds score worse. Untested: masks from the focused fit's own mode energy (`self`).
+  third of the smeared arm; looser thresholds score worse. Masks refined from the focused fit's own mode energy (`self`) add
+  nothing over trim (mean R2 .120 vs .127); the missing piece is a mask that follows the arm's low-density swept volume.
 
 - Flex prior on the arms (`hetero_tree_20261028/handoff/igm-prior/VERDICT.md`): NO, +0.006 NMI at most, costs 2-8 accuracy points,
   overrides the null. But latent-built references + arm-mask state_eval give a1 NMI .168 (> .146); truth references +.03-.04 more.
