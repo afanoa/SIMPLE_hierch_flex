@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: fbba56ec-1a15-49c3-858f-0fa9e980370c
-  modified: 2026-11-07T06:34:17.119Z
+  modified: 2026-11-07T08:19:23.152Z
 ---
 
 Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read limit again).
@@ -47,7 +47,7 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [pair-maps-fsc-match-unbounded-trap-2026-11-06](pair-maps-fsc-match-unbounded-trap-2026-11-06.md) — TRAP: pair_maps g=cross/fb unbounded past resolution; re-measured: guard inert at all 69 gate nodes, no verdict change
 - [igm-fixture-xval-stageb-gapw-2026-11-06](igm-fixture-xval-stageb-gapw-2026-11-06.md) — IgM fixture: islands + xval site stage B + GAPw = a1 found, null held; null cuts real; rigid sites split by shift error
 - [igm-site-layer-gates-pass-add-only-2026-11-06](igm-site-layer-gates-pass-add-only-2026-11-06.md) — per-site layer gates: 89 runs 0 DISCRETE, closed + null PASS, inert on RNase P; keep add-only (r21/r211 factors = tree splits); root/r5 untested
-- [igm10-fixture-real-fab-proportions-2026-11-07](igm10-fixture-real-fab-proportions-2026-11-07.md) — fixture_igm10 (10 % arms): linear reuse of 5 % stacks (exact), noise recalibrated x1.1-1.4; merge_master2 stock roots + T1; handoff/igm10
+- [igm10-fixture-real-fab-proportions-2026-11-07](igm10-fixture-real-fab-proportions-2026-11-07.md) — fixture_igm10 (10 % arms): linear reuse of 5 % stacks (exact), noise recalibrated x1.1-1.4; merge_master2 10 % roots split both twins (fix a1 .072, null .505 FP); same-build 5 % pending; handoff/igm10
 - [tree-verify-components-and-soft-vs-hard-2026-11-06](tree-verify-components-and-soft-vs-hard-2026-11-06.md) — VERDICTS: soft/M-est no-go, ancestral weights dilute closed, keep refinement mask, stA0/hybrid seeding = rare-state lead, root-only
 - [tree-as-full-mppca-assessment-2026-11-06](tree-as-full-mppca-assessment-2026-11-06.md) — tree = MPPCA with rank-0 leaves + hard EM + cross-half accept; full/VB versions predicted no gain; Gaussian-latent kurtosis trap
 - [flex-refinement-integration-verdicts-2026-11-06](flex-refinement-integration-verdicts-2026-11-06.md) — VERDICTS: frozen-pose flex<->refinement both ways, nothing to build; flex prior off/overrides held-out; stage-B flex no downstream gain; site factors the only signal

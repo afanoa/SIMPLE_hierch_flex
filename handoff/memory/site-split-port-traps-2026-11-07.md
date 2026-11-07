@@ -31,7 +31,10 @@ nodes vs the Python table (handoff/ports/scripts/hetero_tree_mest/xs_gate1*.{sba
    maps and on the port's labels reconstructed with reconstruct3D both reproduce the port's numbers, so the call and the maps
    are faithful and the LABELS fall short: the port's EM locks in slowly at that site (40 % of labels still changing at
    iteration 7; xsbg.py 12-16 % at 8-10). Suspect: the per-shell global model scale vs xsbg.py's per-particle amplitude a_i.
-   Test in flight: SIMPLE_SPLIT_CONTRAST=estep (state_mergeup's l_amp) on the IgM root and two nulls (xs_gate1_v6).
+   The amplitude fit (l_amp) changed nothing at the control but removed olenull's brightness factors (z 15 -> < 1), so the site
+   path now fits it always and runs its EM to convergence (SITE_CONV .5 %, 10-30 iterations; commit 6eb27fa89). Whether the
+   converged EM reaches the Python's DISCRETE at site 6 is decided by the cluster-side chains v7 (20 fixed iterations) and v8
+   (the commit) writing to handoff/ports/IGM_RESULTS.md on batch2.
 
 **How to apply:** when a Fortran EM "finds" far more than the Python prototype, look for coupling between halves (docking,
 shared filters) before touching thresholds; run GAPw-type geometry on the prototype's grid. Related: [[hub-hetero-tree-current]].
