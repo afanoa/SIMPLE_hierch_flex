@@ -1724,15 +1724,18 @@ contains
                 endif
                 deallocate(perm)
             endif
-            !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
-            do g = 1, 2*k
-                if( g <= k )then
-                    call self%dock(ma(:,:,:,g), mb(:,:,:,k+1), 2, kband)
-                else
-                    call self%dock(mb(:,:,:,g-k), ma(:,:,:,k+1), 2, kband)
-                endif
-            end do
-            !$omp end parallel do
+            ! no docking on the site path: a shift per group map turns the two references into a consensus-gradient dipole
+            if( .not. l_st )then
+                !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
+                do g = 1, 2*k
+                    if( g <= k )then
+                        call self%dock(ma(:,:,:,g), mb(:,:,:,k+1), 2, kband)
+                    else
+                        call self%dock(mb(:,:,:,g-k), ma(:,:,:,k+1), 2, kband)
+                    endif
+                end do
+                !$omp end parallel do
+            endif
             !$omp parallel do default(shared) private(g) schedule(dynamic) proc_bind(close)
             do g = 1, k
                 call filtered_refs(g)
@@ -1804,6 +1807,7 @@ contains
             end do
             fs = min(max(fs, 0.), 1.)
             fl(:,gg) = fs
+            if( l_st ) fs = 1.
             call set_ref(refa(gg), ma(:,:,:,k+1), ma(:,:,:,gg), fs)
             call set_ref(refb(gg), mb(:,:,:,k+1), mb(:,:,:,gg), fs)
         end subroutine filtered_refs

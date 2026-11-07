@@ -30,7 +30,9 @@ consensus plus the site-masked deviation of each group from the groups' weighted
 its consensus residual against the other half's site deviations, as `xsbg.py` does; the prior is flat and the labels hard (soft
 weights at a noise-level site contrast pull every group map onto the consensus, and the standard mixing prior then drains the
 smaller group within three iterations); half B's groups are renumbered to half A's by the cross-half correlation of their
-deviations before every E-step. The two groups' unmasked half maps come from the final labels.
+deviations before every E-step; the group maps are neither docked onto the other half's consensus nor FSC-shrunk (a shift per group
+map makes the two references a consensus-gradient dipole, and the EM then converges to a translation split that both halves
+reproduce). The two groups' unmasked half maps come from the final labels.
 
 The call (`gap_call`), on the 15 A low-passed group half maps inside the site:
 - G1: the first cross-half factor of the site deviations is signal-dominated after the nuisance terms (the mean, the consensus,
