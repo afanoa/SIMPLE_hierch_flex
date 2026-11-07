@@ -527,7 +527,9 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and re
   closes ~75 % of the trim-to-true gap on 5 % fix a1 (R^2 / LDA NMI .296 / .198 vs trim .244 / .162, true .313 / .211). At 10 %
   plain trims reach 87-93 % of the true-mask R^2. Lever 7: lp 25 sits slightly below lp 15, no band gain. Caution: the 3-D GMM
   NMI is recipe-fragile (a rerun that reproduced T1's coordinates to 3 decimals scored 0.000 against .300). Masks:
-  `fixture_igm{,10}/igm_masks/masks/zh1_<twin>_a<k>.mrc`.
+  `fixture_igm{,10}/igm_masks/masks/zh1_<twin>_a<k>.mrc`. Over all five 5 % fix arms `zh` averages R^2 0.121 vs trim 0.127 (its gain is
+  a1's); at 10 % even the literal 0.2 x peak rule reaches the true mask on a1 (R^2 0.558 vs 0.556); on the 10 % null a1 the zh mask
+  reads the continuous angle better than the true mask (R^2 0.318 vs 0.259) with no added discrete structure (tied gain 0.004).
 - `igm-refs` (lever 3, the oracle session): references built from the focused coordinate's split, assigned with the arm mask,
   iterated, as a node seeding rule; per-arm and factorial scores at 10 % and 5 %, then with data-only masks.
   True-mask verdict: the five-arm product vs the 72 combinations reaches 0.235 at round 1 at 10 % (tree 0.042) and 0.075 at 5 %
@@ -568,8 +570,13 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and re
   contrast; the IgM fixture and null twin have identical spectra led by shift-error tangents, arm spikes <= 0.08), and the RNase P
   closed spike is far below any edge (0.014 at the r131 root, 0.01-0.12 down the 692k closed lineage), so the rule would fail the
   hard gate; a null-calibrated edge stops the nulls but loses qtoy2's close pairs, the qtoyflex root and r131. At 692k the stops
-  track N, not exhausted variance (79-81 % agreement with the tree). The rare-state limit follows BBP's sqrt(p/N) law only with a
-  fitted p_eff (~1,100-1,900).
+  track N, not exhausted variance (77-83 % agreement with the tree). VERDICT (`$H/handoff/spectrum-stop/VERDICT.md`, 433 nodes of
+  44 trees): NO. The global r + 1 is only a lower bound (the between-state rank is <= K-1) and fails outright where states exist at
+  r = 0 (r131; IgM, 32 combinations). The empirical rare-state limit (n/sqrt(N) >= 16-17) IS the BBP law, with p_eff 1,000-2,600
+  (c ~14-20), useful for the paper but not as a rule (the rare state is direction 2, under the nuisance direction). Site-focused
+  latents raise the arm spikes 15-140x, but the null's continuous arms spike too: second moments cannot tell states from motion.
+  Code trap: the embedding's precision block is the MAP sampling precision Q = A G^+ A, while flex's `calibrate_noise_scale` /
+  `deconvolve_latent` read it as A and `mest_charts.py` as G (unverified; memory flex-embedding-precision-is-map-sampling-precision).
 - `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
   the parent's latent (lever 4's over-split) and refined, a view-matched map test selects, and a continuum stays one leaf with its
   own coordinate; tested on discrete, continuous and mixed truth (qtoy2, qtoyflex, IgM 10 % fix and null, qtoynull).
