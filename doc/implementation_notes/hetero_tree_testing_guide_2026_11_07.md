@@ -440,7 +440,16 @@ Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`
   LDA AUROC 0.53-0.60 per site vs 0.61 for the node (both seeds; site 2 covers the closed arm); qtoy2 best site closed 0.94 / holo
   0.93 vs 0.98 / 0.995. Node + all sites is never worse (r131 0.617), and qtoyflex gains (closed 0.786 -> 0.825 with site 1, 0.845
   with all sites). On the IgM fixture, where the whole-molecule latent reads 0.000 for every arm, a fit focused on arm a1's true
-  mask reads a1 (R^2 0.31, supervised NMI 0.21; T1, partial). So focused coordinates belong beside the node's, not instead of them.
+  mask reads a1 (T1 below). So focused coordinates belong beside the node's, not instead of them.
+- T1, IgM fixture (`/mnt/beegfs/elmlund/afan/igm_cryolo/tree/fixture_igm/t1_sitefocus/T1_VERDICT.md`; generic scripts
+  `scripts/sitefocus_run.sbatch`, `sitefocus_score.py`): with the TRUE arm masks a focused fit sees every arm (R^2 0.19-0.31,
+  cross-validated LDA NMI 0.11-0.21: a1 0.211, a2-a5 0.11-0.14, against the cross-validated site stage B's a1 0.146, a2 0.047,
+  a5 0.039, a3/a4 none; best unsupervised single-axis split a1 0.144, a3 0.119, a5 0.108, a2 0.104, a4 0.006; no leakage between
+  arms), while the whole-molecule latent reads 0.000 on every arm. With the tree's own ISLAND masks it mostly fails (R^2
+  0.04-0.11, LDA NMI 0.016-0.063): each island holds only 13-17 % of its mass on its arm, the rest is solvent, and the coordinates
+  turn heavy-tailed (kurtosis 5-28) in both twins. Per-particle discreteness is unreadable at this SNR (tied-variance gain ~0 for
+  the discrete and the continuous arms alike), so the discrete-vs-continuous call stays map-level (GAPw). Verdict: the mask is
+  the bottleneck; site discovery must deliver arm-shaped masks before the latent can help.
 - The ranking number is not calibrated yet. With free variances heavy tails buy it (8 of 15 qtoynull sites positive, up to 0.295
   nats/particle on a near-empty site, kurtosis 48; at r131 its fitted tail is not the closed rows, AUROC 0.51). With tied variances
   it is clean on the null (all 15 sites < 0) but ranks site 3 above the closed-arm site 2 at r131 seed 2 (hard gate). The tree's

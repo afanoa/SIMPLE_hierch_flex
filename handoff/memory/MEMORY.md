@@ -69,6 +69,7 @@
 
 - [mac-retired-handoff-2026-11-07](mac-retired-handoff-2026-11-07.md) — Mac retired: guide + handoff/ on fork/hetero-tree-wip; other refs in a batch2 bundle, untracked files in a batch2 tarball; fork PUBLIC
 - [site-mask-rework-direction-2026-11-07](site-mask-rework-direction-2026-11-07.md) — USER: site ranking/masks weakest; prove failure on IgM fixture; flex prior / depth wiener / global coordinate judged there; plan = guide 7.7
+- [igm-focused-flex-mask-is-bottleneck-2026-11-07](igm-focused-flex-mask-is-bottleneck-2026-11-07.md) — VERDICT T1: true-arm-mask focused flex sees all IgM arms (R2 .19-.31), island masks fail (solvent): masks are the bottleneck
 
 Topic indexes (project/reference memories, one line each inside; open the hub, then the memory):
 - [hub-toys-and-pose-bias](hub-toys-and-pose-bias.md) — 16 memories: toy systems (toy2, toy3, toyJ, toyK, toyPS) and…
@@ -81,7 +82,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [hub-rnasep](hub-rnasep.md) — 39 memories: RNase P dataset: inputs, traps, 2D/3D state findings, landsc…
 - [hub-2d-to-3d-routes](hub-2d-to-3d-routes.md) — 22 memories: cls_expansion, coupled 2D-3D, expanded averages, direction b…
 - [hub-hetero-tree-verdicts](hub-hetero-tree-verdicts.md) — 56 memories: hetero_tree closed-out verdicts (rejected rules, replays…
-- [hub-hetero-tree-current](hub-hetero-tree-current.md) — 37 memories: hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)
+- [hub-hetero-tree-current](hub-hetero-tree-current.md) — 38 memories: hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)
 - [refine3d-shc-virgin-field-trap](refine3d-shc-virgin-field-trap.md) — shc greedy first pass needs a virgin ptcl3D…
 - [do-the-requested-job-not-diagnostic-sprawl](do-the-requested-job-not-diagnostic-sprawl.md) — "why are you making a…
 - [chain-steps-inside-one-job](chain-steps-inside-one-job.md) — multi-step pipelines run inside ONE sbatch script…
@@ -144,3 +145,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [flex-to-refinement-coupling-verdicts-2026-11-06](flex-to-refinement-coupling-verdicts-2026-11-06.md) — VERDICT: every flex -> refinement coupling at frozen poses loses to stage B + decision-time calibration; don't retry those forms
 - [global-chart-coordinate-verdict-2026-11-06](global-chart-coordinate-verdict-2026-11-06.md) — VERDICT: the composed global chart coordinate has seams; no minority isolation on real data, merges the 692k closed pair, reproduces worse than the root chart; nothing to port
 - [stageb-oracle-references-limit-2026-11-07](stageb-oracle-references-limit-2026-11-07.md) — VERDICT: stage B limited by references (root K, r1 80/20 split, no junk/minority ref), not poses; 32 % conf. wrong = K=5 merges
+- [depth-wiener-no-truth-map-benefit-2026-11-07](depth-wiener-no-truth-map-benefit-2026-11-07.md) — depth2 never beats emp2 against truth on qtoy2/qtoyflex (error +.01-.016 per band); only a nominal deep-tree resolution gain
+- [site-split-port-traps-2026-11-07](site-split-port-traps-2026-11-07.md) — porting xsbg.py's site EM: masked-map scoring + prior collapses, per-group docking makes a dipole split, S_SITESPLIT runaway, GAPw needs the 5.11 A grid
+- [site-dictionary-global-basis-verdict-2026-11-07](site-dictionary-global-basis-verdict-2026-11-07.md) — VERDICT NO: localised modes of the global basis can't replace site discovery/ranking (qtoy2 single-mode .69-.74 vs span .92; r131 .59 vs site factors .65-.69)
+- [r131-root-split-flips-with-openblas-variant-2026-11-07](r131-root-split-flips-with-openblas-variant-2026-11-07.md) — TRAP: r131 gate root split flips with libopenblas vs libopenblaso (BLA_VENDOR); binaries reproduce themselves; compare like with like
