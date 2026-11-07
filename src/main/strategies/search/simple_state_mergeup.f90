@@ -28,7 +28,7 @@ integer, parameter :: NSHUF = 20, NSHUF_BONF = 50, NVIEW = 40, NEM_ITERS = 3, MA
 real(dp), parameter :: ALPHA_SPLIT = 1._dp / 21._dp
 integer,  parameter :: NSHUF_STEP = 10
 real,     parameter :: NSHUF_KSIG = 4.
-integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10
+integer, parameter :: NDOCK_ITS = 8, RB_MARGIN = 2, RB_MARGIN_FOCUS = 4, SITE_ITS = 50, SITE_ITS_MIN = 10, XS_ITS = 30
 real,    parameter :: SITE_CONV = 0.005, HALVES_KSIG = 3.
 integer, parameter :: SITE_GRID(12) = [500, 1000, 1500, 2500, 4000, 6000, 10000, 15000, 25000, 40000, 60000, 90000]
 real,    parameter :: SITE_PFLOOR = 1.e-3
@@ -1657,6 +1657,7 @@ contains
         logical, allocatable :: l_alive(:)
         character(len=:), allocatable :: line
         real(dp) :: lla, llb, lba(2), lbb(2), cc(k,k), cbest
+        real     :: chga, chgb
         integer  :: it, g, i, kband, nit, h, gb
         logical  :: l_fb, l_st
         l_fb = .false.
@@ -1755,9 +1756,9 @@ contains
             endif
             mpa  = maxloc(wa, dim=2)
             mpb  = maxloc(wb, dim=2)
-            line = '  iteration '//int2str(it)//': MAP changed A '//&
-                &fmtr(real(count(maxloc(wan,dim=2) /= mpa),dp)/real(size(ia),dp),3)//' B '//&
-                &fmtr(real(count(maxloc(wbn,dim=2) /= mpb),dp)/real(size(ib),dp),3)
+            chga = real(count(maxloc(wan,dim=2) /= mpa)) / real(size(ia))
+            chgb = real(count(maxloc(wbn,dim=2) /= mpb)) / real(size(ib))
+            line = '  iteration '//int2str(it)//': MAP changed A '//fmtr(real(chga,dp),3)//' B '//fmtr(real(chgb,dp),3)
             wa  = wan
             wb  = wbn
             mpa = maxloc(wa, dim=2)
@@ -1784,6 +1785,8 @@ contains
                     &'/'//fmtr(real(fl(min(12,self%nyq),g),dp),2)
             end do
             write(logfhandle,'(A)') line
+            ! the site path runs to convergence (SITE_CONV of the assignments changing), SITE_ITS_MIN to niter iterations
+            if( l_st .and. it >= SITE_ITS_MIN .and. max(chga, chgb) < SITE_CONV ) exit
         end do
         la = maxloc(wa, dim=2, mask=spread(l_alive, 1, size(ia)))
         lb = maxloc(wb, dim=2, mask=spread(l_alive, 1, size(ib)))

@@ -23,7 +23,7 @@ public :: run_site_split, gap_call, gap_stats, hull_mask
 private
 #include "simple_local_flags.inc"
 
-integer, parameter :: KSPLIT = 2, NITER = 10, SEED0 = 1, LOBE_MIN = 4
+integer, parameter :: KSPLIT = 2, NITER = 30, SEED0 = 1, LOBE_MIN = 4
 real,    parameter :: LPG = 15., TAU = 0.5, DIL_A = 10., B_A3 = 1330., GRID_A = 5.11, LSEP_MIN = 10., ANG_MAX = 30., Z1_MIN = 3., &
     &R1_MIN = 0.5, GAP_THR = 0.28
 
@@ -87,7 +87,7 @@ contains
         call get_environment_variable('SIMPLE_SPLIT_CONTRAST', envv, status=ios)
         if( ios /= 0 ) envv = ''
         call split%new(params, build, EM_LIM, contrast=any(trim(envv) == ['yes  ', 'maps ']), &
-            &amplitude=any(trim(envv) == ['yes  ', 'estep']))
+            &amplitude=.true.)
         rows = split%get_rows()
         do j = 1, size(masks)
             write(logfhandle,'(A)') '>>> SITE_SPLIT site '//tags(j)%to_char()//': '//masks(j)%to_char()
