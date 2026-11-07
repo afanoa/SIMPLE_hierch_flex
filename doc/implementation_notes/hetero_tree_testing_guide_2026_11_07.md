@@ -300,6 +300,13 @@ The porter's `STATUS.md` there has exact commands for every step below.
   null twin (`gates/ports7_igmfix_ss`, `gates/ports7_igmnull_ss`, jobs 55015788/9), scored into `$H/handoff/ports/IGM_RESULTS.md`
   when they end. qtoyflex with the layer on (`gates/ports7_qtoyflex_ss`) finds no discrete site and equals the control's four
   leaves (closed F1 .473, holo .619).
+  Latest, not yet on `hetero-tree-wip` because its build and fast gate (job 55020398, build_ports9) were still running at handoff:
+  commit `6eb27fa89` (the site path fits a per-particle amplitude, which removes olenull's brightness factors, z 15 -> < 1, and its
+  cross-half EM runs to convergence, 0.5 % of assignments changing, 10-30 iterations). Patch:
+  `$H/handoff/ports/6eb27fa89_site_em_convergence.patch` (apply on `hetero-tree-wip` with `git am` after the gate passes). The
+  amplitude fit alone left the IgM control unchanged (GAPw .33); the chains v7 (20 fixed iterations) and v8 (the commit, IgM root
+  + olenull + qtoynull) decide it, writing to `$H/handoff/ports/IGM_RESULTS.md`. If v8 passes, the IgM hard test (55015788/9, run
+  on the ten-iteration code) needs a repeat on the new build.
 - Piece 2, chart outputs: parked (bundle ref `wip/tree-ports-charts`); drop unless 7.2 passes.
 
 ### 7.2 Seam-free global coordinate (f2r session; full record and resume commands in `$H/handoff/f2r-global/VERDICT.md`)
