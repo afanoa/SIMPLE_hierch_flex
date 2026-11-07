@@ -14,7 +14,9 @@ use simple_flex_pca_rounds,               only: flex_pca_rounds
 use simple_flex_pca_stages,               only: flex_stage_request, PCA_STAGE_EMBED
 use simple_flex_pca_artifacts,            only: FLEX_PCA_PART_MAGIC
 use simple_flex_pca_posterior,            only: quad_form, spd_solve_dp, map_sampling_precision
-use simple_flex_pca_basis,                only: cov_herm_inner
+use simple_flex_pca_basis,                only: cov_herm_inner, basis_recs_from_images
+use simple_image,                         only: image
+use simple_reconstructor,                 only: reconstructor
 use simple_stat,                          only: pearsn_serial_8
 use simple_flex_pca_fit_types,            only: cleanup_plane
 use simple_matcher_3Drec,                 only: init_rec, cleanup_rec_buffers
@@ -48,6 +50,8 @@ end interface
 logical, parameter :: COV_EMBED_CONTRAST_GRID = .false.
 integer, parameter :: GRAM_DIAG_STRIDE        = 200   ! subsample for the projected-Gram spectrum
 integer, parameter :: EMBED_STATS_VERSION     = 1
+integer,  parameter :: NTAN          = 6
+real(dp), parameter :: POSE_PINV_REL = 1.d-4
 
 contains
 
@@ -95,6 +99,10 @@ contains
         integer,  allocatable :: gcnt_thr(:)
         integer :: nrot_t, gcnt
         real(dp) :: gsum
+        type(reconstructor), allocatable :: tan_recs(:)
+        type(fplane_type),   allocatable :: tan_fpls(:,:)
+        real(dp),            allocatable :: pose_tr_thr(:,:)
+        logical :: l_pose
         if( allocated(latent%z) ) deallocate(latent%z)
         if( allocated(latent%contrast) ) deallocate(latent%contrast)
         if( allocated(latent%precision) ) deallocate(latent%precision)
@@ -147,6 +155,14 @@ contains
         do q = 1, model%ncomp
             call model%basis_recs(q)%expand_exp
         end do
+        l_pose = pose_profile_on() .and. .not. l_from_parts
+        if( l_pose )then
+            call pose_tangent_recs(params, build, model%mean_rec, tan_recs)
+            allocate(tan_fpls(NTAN,nthr), pose_tr_thr(2,nthr))
+            pose_tr_thr = 0.d0
+            write(logfhandle,'(A)') '>>> FLEX_PCA POSE PROFILE: the mean''s 6 rigid-body tangents are profiled out of every particle'
+            call flush(logfhandle)
+        endif
         ! one read path for every pass of the run: the downscaled cache when it is in use
         l_pcache = plane_store%cache_in_use()
         call init_rec(params, build, MAXIMGBATCHSZ, fpls, cropped=l_pcache)
@@ -197,6 +213,16 @@ contains
                             Gth(r,q,ithr) = Gth(q,r,ithr)
                         end do
                     end do
+                    if( l_pose )then
+                        call project_fplanes_mean_basis(model%mean_rec, tan_recs, orientations(i), fpls(i), &
+                            &mean_fpl(ithr), tan_fpls(:,ithr), apply_ctf_amp=.true.)
+                        if( mod(row, GRAM_DIAG_STRIDE) == 0 ) pose_tr_thr(1,ithr) = pose_tr_thr(1,ithr) + &
+                            &sum([(Gth(q,q,ithr), q=1,model%ncomp)])
+                        call pose_profile(model%ncomp, tan_fpls(:,ithr), basis_fpls(:,ithr), fpls(i), mean_fpl(ithr), 0, &
+                            &Gth(:,:,ithr), bth(:,ithr), cth(:,ithr))
+                        if( mod(row, GRAM_DIAG_STRIDE) == 0 ) pose_tr_thr(2,ithr) = pose_tr_thr(2,ithr) + &
+                            &sum([(Gth(q,q,ithr), q=1,model%ncomp)])
+                    endif
                     ! split-half sufficient statistics, for the reliability-weighted prior below and for
                     ! the deconvolution's noise calibration (a worker always forms them: its part may be
                     ! reduced by a master that needs either)
@@ -212,6 +238,8 @@ contains
                                     Ghf(r,q,ihf,ithr) = Ghf(q,r,ihf,ithr)
                                 end do
                             end do
+                            if( l_pose ) call pose_profile(model%ncomp, tan_fpls(:,ithr), basis_fpls(:,ithr), fpls(i), &
+                                &mean_fpl(ithr), ihf, Ghf(:,:,ihf,ithr), bhf(:,ihf,ithr), chf(:,ihf,ithr))
                         end do
                     endif
                     latent%resid_mean_energy(row) = e_yy - 2.d0*myth(ithr) + e_mm                       ! contrast=1 mean residual
@@ -330,6 +358,11 @@ contains
         write(logfhandle,'(A,I0,A,I0,A,I0,A,I0)') '>>> FLEX_PCA D2 zeroG=',sum(nzeroG_thr), &
             &' zeroRHS=',sum(nzeroR_thr),' zeroZ=',sum(nzeroZ_thr),' of nptcls=',sel%nptcls
         write(logfhandle,'(A,F8.1)') '>>> FLEX_PCA CONTRAST EMBED SECONDS: ', toc(t_phase)
+        if( l_pose )then
+            if( sum(pose_tr_thr(1,:)) > 0.d0 ) write(logfhandle,'(A,F8.4)') &
+                &'>>> FLEX_PCA POSE PROFILE: share of the projected-basis evidence on the pose tangents ', &
+                &1.d0 - sum(pose_tr_thr(2,:)) / sum(pose_tr_thr(1,:))
+        endif
         call flush(logfhandle)
         ! worker: the image pass is done for this part's particles and everything below is coupled
         ! across all of them, so ship the sufficient statistics and leave the rest to the master
@@ -449,6 +482,17 @@ contains
         if( allocated(myhf) ) deallocate(myhf, emmhf)
         if( allocated(Ghf)    ) deallocate(Ghf, bhf, chf)
         if( allocated(gwork)  ) deallocate(gwork, gvec, gev, gspec_thr, gcnt_thr)
+        if( l_pose )then
+            do ithr = 1, nthr
+                do q = 1, NTAN
+                    call cleanup_plane(tan_fpls(q,ithr))
+                end do
+            end do
+            do q = 1, NTAN
+                call tan_recs(q)%dealloc_rho; call tan_recs(q)%kill
+            end do
+            deallocate(tan_recs, tan_fpls, pose_tr_thr)
+        endif
     end subroutine embed_latents_with_contrast
 
     !> Held-out entry: fitting rows are always excluded.
@@ -992,5 +1036,125 @@ contains
             if( gpinds(hit) /= x ) hit = 0
         endif
     end function pind_row
+
+    logical function pose_profile_on()
+        character(len=8) :: ev
+        integer :: ios
+        call get_environment_variable('SIMPLE_FLEX_POSE_PROFILE', ev, status=ios)
+        pose_profile_on = .not. (ios == 0 .and. ev == 'no')
+    end function pose_profile_on
+
+    subroutine pose_tangent_recs( params, build, mean_rec, tan_recs )
+        class(parameters),                intent(inout) :: params
+        type(builder),                    intent(inout) :: build
+        type(reconstructor),              intent(in)    :: mean_rec
+        type(reconstructor), allocatable, intent(out)   :: tan_recs(:)
+        real, parameter :: ENV_LP = 20., ENV_THRES = 0.05, ENV_GROW = 10., DSH = 0.05
+        type(image)          :: rho, tmp, tans(NTAN)
+        real,    allocatable :: env(:,:,:), g(:,:,:,:), t(:,:,:)
+        logical, allocatable :: msk(:,:,:), grown(:,:,:)
+        real(dp) :: nrm
+        real     :: shvec(3), c
+        integer  :: n, i, j, k, e, it
+        n = params%box_crop
+        call rho%copy(mean_rec)
+        if( rho%is_ft() ) call rho%ifft
+        call tmp%copy(rho)
+        call tmp%bp(0., ENV_LP)
+        env = tmp%get_rmat()
+        msk = env > ENV_THRES * maxval(env)
+        do it = 1, max(1, nint(ENV_GROW / params%smpd_crop))
+            grown = msk
+            grown(2:n,:,:)   = grown(2:n,:,:)   .or. msk(1:n-1,:,:)
+            grown(1:n-1,:,:) = grown(1:n-1,:,:) .or. msk(2:n,:,:)
+            grown(:,2:n,:)   = grown(:,2:n,:)   .or. msk(:,1:n-1,:)
+            grown(:,1:n-1,:) = grown(:,1:n-1,:) .or. msk(:,2:n,:)
+            grown(:,:,2:n)   = grown(:,:,2:n)   .or. msk(:,:,1:n-1)
+            grown(:,:,1:n-1) = grown(:,:,1:n-1) .or. msk(:,:,2:n)
+            msk = grown
+        end do
+        env = merge(1., 0., msk)
+        do it = 1, 2
+            env(2:n-1,:,:) = 0.25*env(1:n-2,:,:) + 0.5*env(2:n-1,:,:) + 0.25*env(3:n,:,:)
+            env(:,2:n-1,:) = 0.25*env(:,1:n-2,:) + 0.5*env(:,2:n-1,:) + 0.25*env(:,3:n,:)
+            env(:,:,2:n-1) = 0.25*env(:,:,1:n-2) + 0.5*env(:,:,2:n-1) + 0.25*env(:,:,3:n)
+        end do
+        call rho%set_rmat(rho%get_rmat() * env, .false.)
+        allocate(g(n,n,n,3), t(n,n,n))
+        do e = 1, 3
+            shvec    = 0.
+            shvec(e) = DSH
+            call tmp%copy(rho)
+            call tmp%shift(shvec)
+            g(:,:,:,e) = tmp%get_rmat()
+            call tmp%copy(rho)
+            call tmp%shift(-shvec)
+            g(:,:,:,e) = (g(:,:,:,e) - tmp%get_rmat()) / (2. * DSH)
+        end do
+        c = real(n/2 + 1)
+        do e = 1, NTAN
+            if( e > 3 )then
+                t = g(:,:,:,e-3)
+            else
+                do k = 1, n
+                    do j = 1, n
+                        do i = 1, n
+                            select case(e)
+                                case(1)
+                                    t(i,j,k) = (real(k) - c)*g(i,j,k,2) - (real(j) - c)*g(i,j,k,3)
+                                case(2)
+                                    t(i,j,k) = (real(i) - c)*g(i,j,k,3) - (real(k) - c)*g(i,j,k,1)
+                                case DEFAULT
+                                    t(i,j,k) = (real(j) - c)*g(i,j,k,1) - (real(i) - c)*g(i,j,k,2)
+                            end select
+                        end do
+                    end do
+                end do
+            endif
+            nrm = sqrt(sum(real(t,dp)**2))
+            if( nrm > 0.d0 ) t = real(t / nrm)
+            call tans(e)%new([n,n,n], params%smpd_crop)
+            call tans(e)%set_rmat(t, .false.)
+        end do
+        call basis_recs_from_images(params, build, tans, NTAN, tan_recs)
+        do e = 1, NTAN
+            call tans(e)%kill
+        end do
+        call rho%kill
+        call tmp%kill
+        deallocate(env, g, t, msk, grown)
+    end subroutine pose_tangent_recs
+
+    subroutine pose_profile( n, tan_fpls, basis_fpls, fpl, mean_fpl, half, G, b, c )
+        integer,           intent(in)    :: n, half
+        type(fplane_type), intent(in)    :: tan_fpls(:), basis_fpls(:), fpl, mean_fpl
+        real(dp),          intent(inout) :: G(n,n), b(n), c(n)
+        real(dp) :: Gzt(n,NTAN), K(n,NTAN), Gtt(NTAN,NTAN), V(NTAN,NTAN), Tpinv(NTAN,NTAN), ev(NTAN), bt(NTAN), ct(NTAN)
+        integer  :: a, a2, q, nrot
+        do a = 1, NTAN
+            bt(a) = real(cov_herm_inner(tan_fpls(a), fpl, half), dp)
+            ct(a) = real(cov_herm_inner(tan_fpls(a), mean_fpl, half), dp)
+            do q = 1, n
+                Gzt(q,a) = real(cov_herm_inner(basis_fpls(q), tan_fpls(a), half), dp)
+            end do
+            do a2 = a, NTAN
+                Gtt(a,a2) = real(cov_herm_inner(tan_fpls(a), tan_fpls(a2), half), dp)
+                Gtt(a2,a) = Gtt(a,a2)
+            end do
+        end do
+        ! Schur complement of the pose tangents; Gtt is pseudo-inverted, the translation along the view is its null direction
+        nrot = 0
+        call jacobi(Gtt, NTAN, NTAN, ev, V, nrot)
+        call eigsrt(ev, V, NTAN, NTAN)
+        Tpinv = 0.d0
+        do a = 1, NTAN
+            if( ev(a) > POSE_PINV_REL * ev(1) ) Tpinv = Tpinv + matmul(V(:,a:a), transpose(V(:,a:a))) / ev(a)
+        end do
+        K = matmul(Gzt, Tpinv)
+        G = G - matmul(K, transpose(Gzt))
+        G = 0.5d0 * (G + transpose(G))
+        b = b - matmul(K, bt)
+        c = c - matmul(K, ct)
+    end subroutine pose_profile
 
 end module simple_flex_pca_embed
