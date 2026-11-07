@@ -454,6 +454,14 @@ Results so far (2026-11-07, `$H/handoff/sitefocus-gates/VERDICT.md`, `tables.md`
   nats/particle on a near-empty site, kurtosis 48; at r131 its fitted tail is not the closed rows, AUROC 0.51). With tied variances
   it is clean on the null (all 15 sites < 0) but ranks site 3 above the closed-arm site 2 at r131 seed 2 (hard gate). The tree's
   own pole rule never keeps a pole on site 2 and, at seed 1, seeds from site 1, which covers neither arm.
+- The tree's site choice misses the states that matter on all three fixtures with truth: qtoy2 picks s1 (closed arm = s3 0.72,
+  s5 0.60; holo excess = s2), qtoyflex picks s3 (closed arm = s1 0.72; holo = s2), r131 seed 1 picks site 1 (closed arm = site 2,
+  0.77-0.81; site 1 covers 0.05); r131 seed 2 seeds from its fflex states (no site gives a split). Both r131 trees still deliver the
+  closed corner at r2. Oracle-mask controls (truth masks cut to the site-mask shape): qtoy2 closed 0.974 (d' 2.72) vs the tree's
+  best-covering site 0.881 (1.64) vs node 0.976 (2.85): placement costs 0.04-0.09 AUROC and focus gains nothing; qtoyflex closed
+  0.835-0.852 vs node 0.757-0.786: focus helps, the tree's site keeps little (0.764); holo masks fall far below the node on both toys.
+  On the oracle closed masks the 2-Gaussian tail is the closed state (tail AUROC 0.96 qtoy2, 0.76 qtoyflex); at the tree's r131
+  sites it is not (0.51).
 - Traps: flex_pca refuses `fflex/f.simple` (it carries the delivered state labels): use the node's `n.simple`; one compute node
   (cn121) ran flex workers ~100x slow.
 
