@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -601,14 +601,25 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     fits a blurred segment). A fission map test accepts carved continua by construction (hier-ppca: adjacent arm thirds z 20.5 /
     5.2), so it was not run. Rule: GAPw accepts a site split on IgM-like sites, no call = one leaf; large curved continua need a
     node-specific null, and a minority state next to a continuum needs a test that does not require an empty gap.
-  - Part 4b (queued): GAPw per block on the knob-free pursuit's p3 blocks, whose extra blocks Part 4 never saw.
-  - Part 5 (running; design approved): a fission saturation test replacing .28. Fission in memory (tau 1) on the framework's
-    cached Fourier planes; one y1 score orders the particles into four groups (each side of the input split halved at its
-    median); y2 maps give cross-half squared steps q_A, q_mid, q_B. DISCRETE iff z(q_mid) >= 3 and one side has q_side / q_mid
-    + 2 SE < 1: equal steps mean uniform occupancy along the path whatever its curvature, and a homogeneous state saturates.
-    Expected r: closed side ~0, curved arm continuum ~1, IgM 10 % a1 ~.5. Known limit: a continuum peaked at one end reads as a
-    state on its dense side (a subsampled qtoyflex control measures it). Runs on qtoyflex (closed vs rest, arm median split,
-    a realistic closed split) and IgM 10 % a1 fix / null.
+  - Part 4b (folded into Part 6): GAPw per block on the knob-free pursuit's p3 blocks, whose extra blocks Part 4 never saw.
+  - Part 5 (FINAL; VERDICT.md "Part 5"; jobs 55036268, 55036321-23): a knob-free saturation test with data fission.
+    - Method: fission in memory (tau 1) on the framework's cached Fourier planes; a y1 log-likelihood score orders the particles
+      into four groups (each side of the input split halved at its median); y2 maps give cross-half squared steps q_A, q_mid, q_B
+      in the site mask. DISCRETE iff z(q_mid) >= 3 and one side has r = q_side / q_mid with r + 2 SE < min(1, (2w)^2), w = that
+      side's fraction. A discrete site saturates (its groups are mixtures of two maps); a uniform continuum has equal steps
+      (r = 1) whatever its curvature.
+    - Results: qtoyflex closed vs rest (truth) DISCRETE (z 4.6, rest side r .36 +- .10; GAPw no call); the arm continuum at
+      its true median not discrete (r 1.37 / 1.24; GAPw DISCRETE .13); IgM 10 % fix a1 DISCRETE from truth (.73 / .72, z 23.7)
+      and from round-1 labels (.79 / .73); null a1 not discrete (1.39 / 1.15 truth, 1.50 / 1.24 round 1); a random split no call
+      (z_mid -0.6; 23.2 without fission, so the imprint is as large as a real middle step).
+    - Costs and limits: fission halves the score's information (10 % a1 d' 2.27 -> 1.55, r .50-.55 -> .72-.79; closest accept
+      .99 vs 1.00), so the 5 % arms may fall to no call; a mode at one end of a continuum reads as a state; a wrong split
+      direction gives no call, not a rescue (qtoyflex's realistic round-1 closed split: the labels do not separate closed); the
+      maps are the framework's ML reconstructions, not SIMPLE's PCG maps.
+    - In the tree: one seeded fission draw per particle on the fly, the score at frozen poses on y1, four forced-label
+      state_eval reconstructions on y2, three steps.
+  - Part 6 (running): the full panel with both tests per block (9 arms, 8 null blocks, the 5 % non-arm block, the p3 blocks)
+    and a measured end-peaked continuum control; it decides decision 8's acceptance test.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -810,14 +821,18 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
    null twin, the 10 % fixture and the section-3 gates.
 6. The split test: replace `state_split`'s locality guard and effect floor by a fission test (labels from X1, maps from X2,
    tau 0.6; 7.8 fission VERDICT: the null passes, qtoy2 keeps its states, .02 accuracy cost). Needs a real-data noise model
-   (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback.
+   (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback. Prototype running
+   (user: "Yes, gate nulls first"; fission-split2 session: gate nulls with the guards off, then qtoy2 and r131). Fission removes
+   noise-made splits, not carves of a real continuum (the IgM null twins' root split follows the arm angles); igm-refs Part 5's
+   saturation test is the continuum check that would complete the rule.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
    fix (stacked patch, 7.8): correct in principle and closer to truth at the root latent, but neutral to slightly negative on the
    gates (qtoy2 closed merged on 1 of 2 seeds); commit or hold after the third qtoy2 seed pair.
 8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
-   round, the best data-only chain (7.8 igm-refs Part 3), with GAPw accepting each split (Part 4: 9/10 power, 0/10 false
-   accepts; valid for IgM-like short swings, not for qtoyflex's curved arm continuum or its closed state next to it). The native
-   port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
+   round, the best data-only chain (7.8 igm-refs Part 3), with a per-site acceptance test: GAPw (Part 4: 9/10 power, 0/10
+   false accepts on IgM; fails qtoyflex both ways) or the fission saturation test (Part 5: fixes both qtoyflex failures, no
+   calibrated number, less power). Part 6 decides between them. The native port is in progress (user: port first); then the
+   r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
    gate leaf on a fission copy with a threshold calibrated on honest readouts (e.g. against random tails of matched N).
