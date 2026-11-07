@@ -522,15 +522,38 @@ Tests, in order:
 Each writes to `$H/handoff/<name>/` (VERDICT.md or STATUS.md with job ids and resume commands):
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
+  First numbers: the briefed 0.2 x peak variance mask re-makes its start mask (binning by a particle's own coordinate selects its
+  noise along the modes); a noise-calibrated threshold on the same bin maps (`zh1`: > 100 sigma, anchor-connected, data-only)
+  closes ~75 % of the trim-to-true gap on 5 % fix a1 (R^2 / LDA NMI .296 / .198 vs trim .244 / .162, true .313 / .211). At 10 %
+  plain trims reach 87-93 % of the true-mask R^2. Lever 7: lp 25 sits slightly below lp 15, no band gain. Caution: the 3-D GMM
+  NMI is recipe-fragile (a rerun that reproduced T1's coordinates to 3 decimals scored 0.000 against .300). Masks:
+  `fixture_igm{,10}/igm_masks/masks/zh1_<twin>_a<k>.mrc`.
 - `igm-refs` (lever 3, the oracle session): references built from the focused coordinate's split, assigned with the arm mask,
   iterated, as a node seeding rule; per-arm and factorial scores at 10 % and 5 %, then with data-only masks.
+  True-mask verdict: the five-arm product vs the 72 combinations reaches 0.235 at round 1 at 10 % (tree 0.042) and 0.075 at 5 %
+  (tree: one leaf). Round 1 is clean for 2-state arms (null gain <= 0.004); 3-state splits carve the null's continuous angle into
+  thirds (+0.015-0.030 on the null), and later rounds carve it at any state count. Rule: round 1 only, and a 3-state split
+  needs a map-level test before the tree accepts it. The discrete information sits in the focused seed (10 % product 0.222 vs
+  the null's 0.059). Data-only (zh1) runs started.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
+  qtoy2 root: K' 10 (agglomerated from the latent mixture) + junk lifts class accuracy .674 -> .751, closed F1 .55 -> .93 and junk
+  F1 .23 -> .58, still below the oracle (.919); 7 seeds end below stage B, so seeding matters. The merge test keeps every pair:
+  holo stays split by a tilt band (105-150 deg) that cell-level view matching does not remove, so the merge needs a view-aware
+  criterion. r1: no escape from the 80/20 fixed point (.757 vs pure references .839), though the junk reference works (F1
+  .14 -> .73). qtoyflex, r131 and qtoynull were finishing at this writing.
 - `pose-tangent` (lever 5): the node mean's rigid-body tangents projected out of the fitted flex basis, particles re-embedded
   (no refit); IgM 5 %/10 %, qtoy2, r131; a Fortran port only if it helps (flex2D's version: `d1a20eff6`).
 - `sparse-ppca` (lever 6): a flex-style PPCA with a spatial structured-sparsity prior that learns each site's support and
   coordinates in one fit (after structured sparse PCA, Jenatton, Obozinski & Bach 2010); validated against flex_pca at zero
   penalty, then IgM 10 %, 5 %, qtoyflex, qtoynull.
+- `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
+  spiked-covariance phase transition of Baik, Ben Arous & Peche 2005; Katsevich, Katsevich & Singer 2015 in cryo-EM), checked
+  against the trees' decisions and truth; and a global bound, at most r + 1 identifiable discrete states for r significant
+  directions.
+- `hier-ppca`: the tree as a hierarchical PPCA (after Bishop & Tipping 1998): every node keeps its PPCA, children are carved in
+  the parent's latent (lever 4's over-split) and refined, a view-matched map test selects, and a continuum stays one leaf with its
+  own coordinate; tested on discrete, continuous and mixed truth (qtoy2, qtoyflex, IgM 10 % fix and null, qtoynull).
 
 ## 8. Decisions waiting for the user
 
