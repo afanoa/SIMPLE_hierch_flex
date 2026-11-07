@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 34b40276-4741-4f1d-bb2d-b403a5320b95
-  modified: 2026-11-07T19:39:43.623Z
+  modified: 2026-11-07T19:43:36.192Z
 ---
 
 hier-ppca side session (handoff `hetero_tree_20261028/handoff/hier-ppca/STATUS.md`, runs `math_reworks/latent/hppca/`).
@@ -19,9 +19,16 @@ hier-ppca side session (handoff `hetero_tree_20261028/handoff/hier-ppca/STATUS.m
   leaf .289, leaf + local .314.
 - Data fission is the other valid route and keeps the low band (f2r session, `handoff/fission/`, `math_reworks/latent/fission/`):
   X1 = X + tau Z labels, X2 = X - Z/tau tests. qtoynull tau 1: over-split K 4 -> 1 on lever 4's full band (max pair z 0.46).
+  qtoy2 tau 1: the X2 test at 39-10 A keeps every real state (pairs of different composition z >= 6.9; a clean 28|28 duplicate
+  merges at z 1.5); labelling on X1 costs .07-.09 class accuracy (.703 vs lever 4's .785; closed F1 .83 vs .95). A holo VIEW split
+  (tilt 105-150 cone) survives at z 8.9: the 120-cell shuffle cannot mimic a split finer than its cells (480/1920-cell rerun 55031241).
 - Production (hetero-tree-wip source, checked by the coordinator): `state_split` runs its EM below EM_LIM 20 A and tests from
   kb + 4 shells (focus mask, as the tree calls it; 2 without) to lp 10 A, starting from stage-B labels assigned at LPB 10 A, so its test band sits inside the band that chose
   the labels. The gate nulls pass through `locality_guard` + `effect_floor`; the IgM nulls (10 % 50/50, 5 % 64/36) do not.
+- POWER VERDICT (qtoyflex truth groups, view-matched, 6 shuffles): closed vs arm z 17-22 unprotected, band split 14.6-5.6 A 0.5-3.4
+  (lost: the difference lives below 15 A), fission tau 1 X2 39-10 A 9.3-14.8, tau 0.6 4.6-8.9; holo 30.7 / 4.9 / 22.9 / 16.2; null
+  .98 / .04 / .75 / .30. X2 agreement follows S/(S + cN), c = 1 + 1/tau^2. Assignment cost (qtoy2 NMI): band split .665 (3 rounds),
+  fission tau 1 .570 (6 rounds), tau 0.6 .633 (round 1). Recommended: fission tau 0.6, test 39-10.2 A on X2; band split = fallback.
 - Traps:
   - Per-shell amplitude matching is degenerate for no-signal (junk) maps.
   - Groups under ~2k particles carry no clean-band signal; flag them untestable (half-map corr < .05).
