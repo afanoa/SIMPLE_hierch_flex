@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:33 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -814,6 +814,65 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   coordinate nor the node latent identifies extremes better than the leaves; focused site coordinates do for small parts, and
   every own-data readout, the r131 gate included, needs a fission re-read. Caveat: the honest leaves are a re-assignment among
   the tree's leaf references on X1 (agreement with the delivered labels .50 r131, .61 qtoyflex, .62 IgM fix), not a tree run on X1.
+
+### 7.9 A cohesive locally linear / mixture model: ideas from structure from motion and related fields (2026-11-07)
+
+User: "I would really like a cohesive locally linear or mixture ppca ... look into more literature on structure from motion or
+fields with similar problems". Literature scan by a subagent (42 searches; citations checked where marked in its report):
+- Non-rigid structure from motion:
+  - Torresani, Hertzmann & Bregler 2008 (EM-PPCA at known motion = our model).
+  - Procrustean normal distribution (Lee et al. 2013; mixtures: Cho, Lee & Oh 2016): deformation in a rigid-aligned frame, as
+    our pose profile does.
+  - Russell, Fayad & Agapito 2011: overlapping local models, fitted as a multi-label energy whose overlaps must agree.
+  - Yan & Pollefeys 2008: linked parts' motion subspaces intersect, so kinematic chains come from subspace ranks.
+  - Unions of subspaces (Zhu et al. 2014; Kumar et al. 2017-2019; Agudo 2022, discrete classes plus deformation).
+- Coordinating local linear models (Roweis, Saul & Hinton 2001; Brand 2002; Teh & Roweis 2002; LTSA 2004): seam-free by joint
+  alignment. At d' 1-2, though, neighbouring discrete states share responsibility and get glued into one continuum.
+- Mixtures from projected data:
+  - Common-loading factor-analyser mixtures (Baek, McLachlan & Flack 2010) and extreme deconvolution (XD; Bovy, Hogg & Roweis
+    2011).
+  - Compressive classification (Reboredo et al. 2013; Yu, Sapiro & Mallat 2012): a minority is separable only along P_i Delta
+    outside the projected continuum covariance. A 5 % state adds ~.05 |Delta|^2 of variance, so variance ranking (BBP) can
+    bury a state that likelihood still separates.
+- Single-cell trajectory inference (PAGA, Slingshot, DDRTree, Mapper, cluster trees): connectivity is decided on per-sample
+  neighbourhoods, which call discrete states connected at d' 1-2.
+- Model order reduction: quadratic manifolds (Barnett & Farhat 2022), x ~ x0 + Vq + W(q kron q). They stay additive in density
+  (unlike the falsified deformation field) and curve a low-dimensional coordinate.
+- Cryo-EM:
+  - RECOVAR (Gilles & Singer 2025): fixed-pose PPCA + deconvolved density + paths; lambda by L-curve; <= 4-D.
+  - CryoBench 2024: RECOVAR is the best fixed-pose method on IgG-1D, Spike-MD and Ribosembly.
+  - Hydra (K neural fields x d latent); 3DVA; Andén & Singer 2018.
+
+Against our record:
+- The field's cohesive answer is a shared basis with a mixture in latent space (common-loading mixtures / XD). flex_pca already
+  does this for the whole molecule (deconvolved latent -> XD labels), and the flex-precision bug sat in its input.
+- Our verdicts say the whole-molecule version cannot see the states:
+  - the chart XD gap is blind below d' ~2.5;
+  - latent density basins have no power;
+  - the global coordinate isolates no minority.
+- What breaks the SNR barrier here is locality: sparse PPCA's BBP-local supports.
+
+Proposal: one cohesive generative model per node, y_i = C_i P_i (mu + sum_s B_s z_is + T n_i) + noise. The site bases B_s are
+sparse PPCA's learned supports, the rigid tangents T are profiled, and one joint latent density over the site coordinates is fitted
+with the posterior precision A. The tree stays as the recursion that refits poses per subset. Pieces, cheapest first:
+1. Soft XD over a site's joint block coordinates as the seed. It can supply the split direction the saturation test needs for a
+   minority next to a continuum (qtoyflex's closed state sits on its site's third block; round 1 missed it). Test: qtoyflex closed
+   recall and purity, then Part 5's call; IgM 10 % fix / null as the regression.
+2. Cross-site coupling (Yan & Pollefeys): the rank of the deconvolved cross-site latent covariance separates factorial
+   (independent) sites from coupled ones, and a coupled direction is where a global coordinate comes from. Test: IgM (independent
+   by construction) and a coupled synthetic; r131 after the port.
+3. A quadratic manifold per site for curved swings: one q per site, with W (q kron q) as extra basis volumes in flex's normal
+   equations and q on a grid. Test: qtoyflex arm, R^2 against true s1, closed off the curve.
+4. Per-site decisions by the fission saturation test (igm-refs Part 5), not by latent density gaps.
+5. Minority directions ranked by separability, not variance (compressive classification): the RNase P closed spike sits far below
+   every BBP edge.
+
+Not to retry:
+- map-level soft EM (noise-locks);
+- post-hoc chart coordination (seams);
+- latent density basins / kNN connectivity (no power at d' 1-2);
+- a deformation field replacing the basis (falsified; composition);
+- VB/ARD mixtures.
 
 ## 8. Decisions waiting for the user
 
