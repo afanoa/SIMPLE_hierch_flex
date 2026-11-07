@@ -20,12 +20,14 @@ particles, not denoised samples. Each image was rotated and shifted onto its 2D 
 that registered frame (raw micrograph boxes do not fit them). The interpolation also makes the kx+ky pixel split leak:
 [[selected-subset-maps-imprint-inflates-extremes-2026-10-22]].
 **2026-11-07, the trap bit again:** the Python latent framework `math_reworks/latent/latent_states_v4.py` does `X *= ctf` with
-the SIGNED CTF for every stack, so on these ctf=flip parts the signal past the first zero (~18 A at 1.7 um) enters inverted. Found
+the SIGNED CTF for every stack, so on these ctf=flip parts the signal past the first zero (~18 A at 1.7 um) enters inverted; scale_noise then clips the
+negative per-ring scales (rings 15-19, 15.6-12.3 A, raw beta -.06..-.14) to zero weight, so in effect the band is cut at ~17 A
+instead of flex's 15 A (some inverted rings remain below the cut for high-defocus particles). Found
 by extremes-repro; scoped by the f2r session: every real-data run of the seam-free tree-wide coordinate and the site dictionary
 (mm2_r131, mm2_r131_s1, pb15_r131, full692_m33_s1 / base92 / base80; caches `latent/cache/f2r_shared_{r131,full692}.npy`) is
-contaminated, i.e. the "global coordinate: no" real-data numbers (r131 closed AUROC .67-.72, 692k closed pair d' .25). The other
+band-limited, i.e. the "global coordinate: no" real-data numbers (r131 closed AUROC .67-.72, 692k closed pair d' .25). The other
 11-06 r131 caches (`f2r_fast_r131_r1_*`, `fp_fast_r131_r1`, `sp_mm2_r131_*`, `r131_r1`, `f2r_mm2_r131_seed`) came through the same
-loader: treat their r131 numbers as suspect. All qtoy*, olenull, IgM and inode dumps are ctf=yes (unaffected). A |CTF| rerun of
+loader: treat their r131 numbers as suspect. SIMPLE's flex_pca coordinates and the r131 state-evidence gap (refine3D log-evidence) are unaffected. All qtoy*, olenull, IgM and inode dumps are ctf=yes (unaffected). A |CTF| rerun of
 the r131 seam-free readout was queued (f2r session, private loader copy; don't edit latent_states_v4.py under running jobs).
 **How to apply:** `import_particles ... ctf=flip fraca=0.1 kv=300 cs=2.7 smpd=1.464` for the denoised RNase P parts;
 check `print_project_field oritype=stk` (ctf= key) of the source project before any re-import; the port's klem
