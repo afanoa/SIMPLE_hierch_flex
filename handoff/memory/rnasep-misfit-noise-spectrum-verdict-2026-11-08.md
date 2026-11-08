@@ -1,6 +1,6 @@
 ---
 name: rnasep-misfit-noise-spectrum-verdict-2026-11-08
-description: "VERDICT: RNase P per-particle misfit = each particle's in-band NOISE SPECTRUM (sd 29 %, reliability .96, FoilHole/ice, CTF-shaped), not registration; per-particle band-wise EB noise variance kills the solvent floor and lets sparse PPCA read closed (r131 block .70-.74, span .75-.77 vs .66/.71); IgM unchanged"
+description: "VERDICT: RNase P per-particle misfit = each particle's in-band NOISE SPECTRUM (sd 29 %, reliability .96, FoilHole/ice, CTF-shaped), not registration; per-particle band-wise EB noise variance kills the solvent floor and lets sparse PPCA read closed (r131 block .70-.74, span .75-.77 vs .66/.71); IgM unchanged; native port built (uncommitted), r131 corner gate missed on seed 1 by .003"
 metadata:
   node_type: memory
   type: project
@@ -31,8 +31,17 @@ rnasep-misfit session, 2026-11-07/08 (batch2 `hetero_tree_20261028/handoff/rnase
     pose-unstable, low-amplitude population (not noise). Do NOT call it junk: the user judged the low-amplitude group at the
     692k root real RNA conformations ([[rnasep-junk-screen-off-2026-10-23]]), so read it by honest maps and growth below it.
     Next tree lever: separability-ranked proposals.
-- Port: flex already whitens per particle (`esig%sigma2_noise(shell, iptcl)`, filled in `load_and_validate_sigma`); only the values
-  change (one residual pass + 6 two-parameter fits). TRAP: on these stacks the sigma2 groups (stkind) are the 10 denoise parts.
+- Native port (2026-11-08, NOT committed; patch `handoff/rnasep-misfit/noisevar_5b17de846.patch`, build
+  `wip_builds/noisevar_5b17de8`, worktree `/Users/atifao/SIMPLE_noisevar`): `esig%sigma2_noise` is (shell, eo HALF), not per
+  particle, so the port scales each particle's observation planes per band in `planes_batch_load` (`flex_plane_store%whiten_bands`);
+  `simple_flex_noise_var` estimates in prepare, workers adopt `flex_pca_noise_var.txt`; `SIMPLE_FLEX_NOISE_VAR=no` reproduces pp_off
+  exactly. Native r131: floor 109.5 -> 9.4, span .711 -> .765, best block .659 -> .681; IgM identical; qtoyflex within .001.
+  **r131 corner HARD GATE: seed 2 passes (.959 / .541), seed 1 misses by .003 (.947 / .543 vs pp_off 1.004 / .530)**: the
+  coordinator decides. Native = Python up to flex's own per-image background normalisation (r .994-.999 after it); flex floors the
+  band limit (ring 15 at lp 15), the Python framework rounds it (16). On toys the node-mean residual takes a few % of strong state
+  contrast into v (qtoy2 holo AUROC of v .61). TRAP: on these stacks the sigma2 groups (stkind) are the 10 denoise parts.
+- Alternatives scored: micrograph / FoilHole groups and the background-window estimate (6 bands) re-learn the closed block at
+  .72-.73 too but leave 10-25x nvarB's outside floor; 2 residual bands fail. See [[latent-framework-lp-sets-lattice-overwrites-cache]].
 
 **Why:** the RNase P blocker for the shared tree model and sparse sites was per-particle misfit; this is its cause and fix.
 **How to apply:** any real-data latent / site / fission work on the RNase P stacks needs per-particle band-wise noise first; draw

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:27 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1360,6 +1360,24 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - IgM 10 % fix: product .321 (frozen .322). a5's 40/40 pair is still unresolved: a minority search does not split a
        balanced pair.
      - qtoy2 and r131 with nvarB still running. r131's closed is a 7 % minority, the case this proposal targets.
+   - Separability-ranked proposals, FINAL (STATUS addendum 5; PORT_DESIGN.md: "tested, not adopted"). None of the three
+     misses is resolved, and the must-holds pass.
+     - qtoyflex and qtoy2: unchanged.
+     - IgM 10 %: .321 (frozen .322).
+     - r131 with nvarB: one leaf, and the honest gate fails (.81 / .62).
+     - At each miss the best direction is right but hardens only a pure tail, and sat5 makes no call. qtoy2 r12: 877 particles,
+       74 % conformer 2. IgM a5: 1,562, 97 % state 1. r131: 104 particles, closed .135 vs .069.
+     - At r131 the most separable direction still tracks the residual misfit (log-likelihood .33). The K2 / K3 proposals no
+       longer track misfit under nvarB, but carry no closed signal (.50-.51).
+     - CONCLUSION: the states overlap along every single latent direction. A frozen-pose latent split cannot separate
+       overlapping states as wholes, and a full-image round does.
+       - Site chain v7: a5 .264 against the forest's .216, product .348 against .322, and a2 accepted.
+       - The production tree keeps r131's corner through stage B and state_split.
+     - DESIGN REVISION (briefed; PORT_DESIGN.md): stage B is SEEDED by the latent proposals, not replaced by them. The forest's
+       proposals and factorial states seed a full-image round on the node's subset, and an honest test (sat5 or GAPw) decides.
+       This is the user's "refinements per subset are necessary".
+     - Next, the decisive test: the site chain's worker at r131, seeded from the noise-model sparse fit (closed span .765), with
+       the corner gate read on the round's group maps, noise model on vs off.
    - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
      r131 hit an illegal instruction on a non-x6342 node and reruns pinned to x6342 (job 55059118). The IgM runs are going.
      - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.

@@ -57,6 +57,10 @@ runs `math_reworks/tree_latent/`. Python on sparse PPCA's bases; nothing in SIMP
   - Profiled y is selection-safe under the right noise model, because every y1 selection reads only the parent-and-nuisance span.
   - Trap: a y2-only 102-nat seed at micnull's root comes from the nuisance prior fitted on the fission copy, not the draw. RULE:
     anything fitted on a fission copy profiles the nuisances.
+- SEPARABILITY-RANKED PROPOSALS (2026-11-08, addendum 5): tested, NOT adopted. The best direction hardens only pure tails, and
+  r131's most separable direction is residual misfit. The states overlap along every single latent direction.
+- CONCLUSION: a frozen-pose latent split cannot separate overlapping states; a full-image round does (site chain v7 a5 .264 vs
+  .216). The port's stage B must be SEEDED by the latent proposals, not replaced by them.
 **Why:** the user wants one elegant model over the whole tree; this is its first prototype.
 **How to apply:** the shared-basis latent tree is the candidate cohesive model.
 - Next (approved): K = 3 proposals with a pairwise saturation test in forest form, for 3-state arms and close pairs.
