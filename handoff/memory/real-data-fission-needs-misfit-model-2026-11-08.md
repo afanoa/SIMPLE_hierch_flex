@@ -27,8 +27,10 @@ session found such a residual: band-wise residual power SD about .29, reliabilit
 - Report each accepted split's association with log-likelihood and amplitude before reading it as a state.
 - Toy fixtures do not show this trap.
 - 2026-11-08 01:10 (rnasep-misfit, `math_reworks/rnasep_misfit/runs/floor_r131_*`): the per-particle BAND-WISE noise variance
-  (empirical Bayes, nvarB) removes r131's solvent-control floor: 12 out-of-mask controls 59-90 nats (SE 6-8) -> -4.2..+2.8
-  (SE 1.3-1.9). A scalar per-particle variance only reaches 41-70, and a per-particle band scale changes nothing. The shared tree
-  with nvarB (`mf_tree.py`, r131 + a 692k 50k subsample) was running at the time; its closed readout decides the port.
+  (empirical Bayes, nvarB) removes most of r131's solvent-control floor (held-out block gain per control ball).
+  - The 12 corner and edge balls go from 34-133 nats to -5..+8.
+  - The 12 in-sphere solvent balls go from 175-307 to 7-50 (nvarBC -3..35), so up to 35-50 nats remain.
+  - A scalar per-particle variance only gets to 129-258 / 22-98, and a band scale changes nothing.
+  - The shared tree with nvarB (`mf_tree.py`, r131 + a 692k 50k subsample) was running; its closed readout decides the port.
 
 Related: [[tree-latent-verdict-2026-11-07]], [[data-fission-merge-test-verdict-2026-11-07]].

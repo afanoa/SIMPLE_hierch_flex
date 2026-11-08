@@ -1139,11 +1139,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - Then tree-latent reruns its decisive RNase P test, with the noise model in the whitening AND the fission draw, and
      sparse-ppca2 reruns r131 / 692k.
    - If the shared model then finds the closed lineage honestly, the forest port starts (`handoff/tree-latent/PORT_DESIGN.md`).
-   - 01:10, the floor is fixed (runs `$M/rnasep_misfit/runs/floor_r131_*`).
-     - nvarB (the per-particle band-wise noise variance, empirical Bayes) takes r131's out-of-mask solvent controls from 59-90
-       nats (SE 6-8) to -4.2 to +2.8 (SE 1.3-1.9). Its band-wise variants (nvarBC, insideB) do the same.
-     - A scalar per-particle variance (nvar1) only reaches 41-70, and a per-particle band scale (bscale) changes nothing.
-     - So the floor is the noise level, band by band.
+   - 01:10: the band-wise noise variance removes most of the floor. Runs `$M/rnasep_misfit/runs/floor_r131_*`; each number is
+     a block's held-out gain on one of 24 solvent control balls.
+     - The 12 balls outside the support sphere (box corners and edges): base 34-133 nats. nvarB (per-particle band-wise noise
+       variance, empirical Bayes) gives -5 to +8, and nvarBC -7 to +2.
+     - The 12 in-sphere solvent balls (the native run's rim control): base 175-307. nvarB gives 7-50, nvarBC -3 to 35 and
+       insideB 4-44.
+     - A scalar per-particle variance (nvar1) only reaches 129-258 / 22-98, and a per-particle band scale (bscale) changes
+       nothing.
+     - So the floor is the noise level, band by band. Up to 35-50 nats remain on the in-sphere solvent.
      - rnasep-misfit already runs the shared tree with nvarB, base vs nvarB, on r131 and a 692k 50k subsample (jobs 55052871,
        55054551). `mf_tree.py` is tl_tree8 plus the observation model in the E-step, the fission draw, the test maps and the
        scores.
