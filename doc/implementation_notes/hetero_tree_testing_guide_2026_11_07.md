@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1192,6 +1192,24 @@ Not to retry:
     - whether the latent stops tracking amplitude and log-likelihood;
     - the sparse blocks' closed AUROC.
     The fixes: a per-particle band scale, a per-particle noise variance, and an interpolation-aware noise spectrum.
+  - rnasep-misfit step 1 (r131 root; `$M/rnasep_misfit/tabs/`): the per-particle misfit is the NOISE LEVEL, not signal.
+    - Band-wise residual power relative to the model's white per-shell noise has a true SD of .29 over 117-15 A, with
+      split-half reliability .96. Nuisances and sites remove ~2 % of it, and it carries no closed signal (AUROC .48-.51).
+    - It is low-frequency and anti-correlated with 6-3 A power (r -.62): denoise_project normalised every image by its
+      whole-band background sd.
+    - It clusters by FoilHole and micrograph (LOO r .42-.70), rises with particles per micrograph (neighbours in the box) and with
+      defocus. Near the first CTF zero it follows the particle's own CTF signal (r +.72), so noise shaped like the transfer looks
+      like variance to every local mode. That is the ~100-nat floor.
+    - The 2D registration plays no part (|r| <= .08), so the interpolation-aware fix is dropped.
+    - The tree-latent "log-likelihood" tracks |site coords| and the in-band noise.
+    - Amplitude tracks SIMPLE's contrast (r .89) and CARRIES closed signal (AUROC .655), so profiling amplitude away costs closed
+      information. tree-latent has been told.
+    - Lead fix: a per-particle band-wise noise variance by empirical Bayes (inverse-gamma prior per band, posterior mean in the
+      whitening). It is scored on the solvent floor (12 rim + 12 corner controls).
+    - Added checks: the noise estimated outside the dilated molecular mask vs from the residual, so it cannot absorb closed
+      signal; closed AUROC under every fix; and per-micrograph sigma2 groups as the cheap intermediate. SIMPLE's sigma2 groups on
+      these stacks are the 10 stack parts.
+    - Port entry if it wins: a per-particle (or per-micrograph) sigma2 per shell in flex's observation operator.
 
 ## 8. Decisions waiting for the user
 
