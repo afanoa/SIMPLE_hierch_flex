@@ -43,6 +43,9 @@ rnasep-misfit session, 2026-11-07/08 (batch2 `hetero_tree_20261028/handoff/rnase
 - Alternatives scored: micrograph / FoilHole groups and the background-window estimate (6 bands) re-learn the closed block at
   .72-.73 too but leave 10-25x nvarB's outside floor; 2 residual bands fail. See [[latent-framework-lp-sets-lattice-overwrites-cache]].
 
+- COMMITTED 2026-11-08 as fork wip `03506060d`, OFF by default (`SIMPLE_FLEX_NOISE_VAR=yes` turns it on); own build + fast gate
+  15/15. Default-on waits for the user: the r131 corner read .947 on seed 1 (bar .95), within pp_off's own seed spread, and that
+  own-data readout is largely selection imprint.
 **Why:** the RNase P blocker for the shared tree model and sparse sites was per-particle misfit; this is its cause and fix.
 **How to apply:** any real-data latent / site / fission work on the RNase P stacks needs per-particle band-wise noise first; draw
 fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026-11-07]], [[band-must-be-data-derived]], [[tree-latent-verdict-2026-11-07]], [[extremes-fission-verdict-2026-11-07]],

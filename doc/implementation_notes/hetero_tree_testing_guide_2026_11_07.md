@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:38 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 06:20 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1178,6 +1178,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Closed is a 7 % minority at d' ~.9 along one block's axis, too weak to form its own XD component at 44k.
      - So the port stays on hold. The next lever is the proposal: separability-ranked proposals (7.9 item 5), briefed to
        tree-latent (STATUS addendum 5) with r131, qtoy2's 1 | 2 pair and IgM a5 as targets, and every null as the guard.
+   - 692k 50k subsample with nvarB, FINAL (misfit STATUS, "692k: the two sides of the root"; depth 3, 3.2 h on 36 cores):
+     - The root split (K = 2, z 12.6, d' 3.98; amplitude .38, log-likelihood .29) is the only one taken. Both sides are leaves,
+       and every proposal below reads closed at .48-.52.
+     - Honest y2 maps, closed / open arm occupancy: all particles .31 / .85 (open); main side (45,121) .31 / .86; low-amplitude
+       side (4,879, closed share .006) .21 / .51 (band-limited .19 / .20).
+     - So the low-amplitude side holds less density in both arm regions, the open arm most. Its arm is weaker or elsewhere, not
+       the closed arm. Described, not judged (junk_screen=no stands).
    - PORT STARTED (rnasep-misfit, worktree `SIMPLE_noisevar` on `5b17de846`): nvarB into flex's whitening, where flex already
      whitens per particle (`build%esig%sigma2_noise(shell, iptcl)`). It needs one residual pass at the node mean and 6
      two-parameter fits, ~30-40 s per 50k.
@@ -1214,6 +1221,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          run's file.
        - Then commit default-off after the fast gate.
        - Seeds 3-4 at r131 for both arms, plus nv qtoy2 seed 2. Default-on is the user's decision, with that 4-seed table.
+     - COMMITTED default-off as `03506060d`: build 3 (`noisevar_e6b9ff844.patch`, md5 b030657d), with its own build and fast
+       gate 15/15 (job 55066343, `$H/wip_builds/nv_03506060`).
+       - It has the fixes: band edges scaled to the node's band limit (box 36 keeps today's rings), a team-vs-serial tester in
+         `unit_heterogeneity` (suite `flex_noise_var`), a stale file retired so workers can't adopt it, and the switch
+         `SIMPLE_FLEX_NOISE_VAR=yes`.
+       - Builds 2 and 3 agree to 3e-7 on IgM.
+       - The r131 seeds 3-4 table (both arms) is still to come for the default-on decision.
      - Absorption check (nvarBG6, a signal-free background estimate on 6 bands): every 6-band or group model re-learns the
        closed block at .72-.74, so nvarB's closed gain is not signal absorbed into the noise level.
    - Checks under nvarB:
