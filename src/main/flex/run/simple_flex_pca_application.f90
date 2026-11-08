@@ -40,6 +40,7 @@ use simple_reconstructor,            only: reconstructor
 use simple_flex_pca_merge,           only: two_gate_state_merge
 use simple_flex_pca_weights,         only: build_covariance_state_weights
 use simple_flex_pca_targets,         only: component_reliability_proxy
+use simple_flex_sites_pursuit,       only: run_sparse_sites
 implicit none
 private
 #include "simple_local_flags.inc"
@@ -79,6 +80,12 @@ contains
         call self%pcg_env%new(params%rec_backend, params%pcg_mskfile, params%box, params%smpd, &
             &params%mskdiam, params%box_crop, params%smpd_crop)
         call self%prepare(params, build, cline, rounds)
+        if( params%sparse_sites .eq. 'yes' )then
+            if( rounds%distributed() ) THROW_HARD('sparse_sites=yes runs in shared memory (nparts=1)')
+            call run_sparse_sites(params, build, self%plane_store, self%sess%sel%pinds, self%sess%sel%nptcls)
+            call self%kill
+            return
+        endif
         call self%obtain_embedding(params, build, rounds)
         if( params%flex_sp_k > 0 )then
             call self%kill

@@ -134,6 +134,16 @@ contains
         call val%kill
     end function flex_pca_auto_states
 
+    logical function flex_pca_sparse_sites( cline ) result( l_sites )
+        class(cmdline), intent(inout) :: cline
+        type(string) :: val
+        l_sites = .false.
+        if( .not. cline%defined('sparse_sites') ) return
+        val     = cline%get_carg('sparse_sites')
+        l_sites = trim(val%to_char()) == 'yes'
+        call val%kill
+    end function flex_pca_sparse_sites
+
     ! Pick up the project consensus map (out segment, state 1) when vol1 is not on the command line:
     ! the particle map (imgkind=vol), else the class-average map (imgkind=vol_cavg). Called on the
     ! master before params%new so the workers inherit the resolved path. The mean is read at the native
@@ -211,6 +221,13 @@ contains
         call spproj%kill
         call projfile%kill
         if( box < 1 .or. smpd <= 0. ) return
+        if( flex_pca_sparse_sites(cline) .and. cline%defined('lp') )then
+            box_crop = min(box, max(26, 2 * nint(real(box) * smpd / cline%get_rarg('lp')) + 4))
+            call cline%set('box_crop', box_crop)
+            write(logfhandle,'(A,I0,A,I0,A,F6.3,A)') '>>> FLEX_PCA sparse sites working box: box ', box, ' -> box_crop ', &
+                &box_crop, ' @ ', real(box) / real(box_crop) * smpd, ' A'
+            return
+        endif
         ! lp is the one user-facing key (the resolution to which the variance is resolved); smpd_target
         ! is an expert alias and box_crop the override
         if( cline%defined('lp') )then

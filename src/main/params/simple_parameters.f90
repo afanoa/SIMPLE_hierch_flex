@@ -92,6 +92,7 @@ type :: parameters
     character(len=3)          :: greedy_sampling='yes' !< greedy class sampling or not (referring to objective function)(yes|no){yes}
     character(len=3)          :: hist='no'            !< whether to print histogram(yes|no){no}
     character(len=3)          :: preimage_auto='no'   !< flex_pca automatic state count: raise the npreimages ceiling and merge down(yes|no){no}
+    character(len=3)          :: sparse_sites='no'    !< flex_pca site masks and site coordinates by sparse site pursuit(yes|no){no}
     character(len=3)          :: rec_states='yes'     !< flex_pca: reconstruct the state volumes, or deliver the embedding only(yes|no){yes}
     character(len=3)          :: incrreslim='no'      !< Whether to add ten shells to the FSC resolution limit(yes|no){no}
     character(len=3)          :: interactive='no'     !< Whether job is interactive(yes|no){no}

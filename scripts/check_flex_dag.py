@@ -42,6 +42,8 @@ LAYERS = {
     "simple_flex_pca_embed": 2,
     "simple_flex_pca_pairmerge": 2,
     "simple_flex_pca_fit_driver": 2,
+    "simple_flex_sites_fit": 2,
+    "simple_flex_sites_pursuit": 3,
     # L3: state inference and reconstruction.
     "simple_flex_pca_weights": 3,
     "simple_flex_ancestral_init": 3,

@@ -125,6 +125,7 @@ contains
         call reg%add_yesno('greedy_sampling', self%greedy_sampling)
         call reg%add_yesno('hist', self%hist)
         call reg%add_yesno('preimage_auto', self%preimage_auto)
+        call reg%add_yesno('sparse_sites', self%sparse_sites)
         call reg%add_char('imgkind', self%imgkind)
         call reg%add_char('import_dir', self%import_dir)
         call reg%add_char('import_type', self%import_type)

@@ -93,6 +93,13 @@ contains
             '', .false., 'no', &
         &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
         &visibility=UI_VIS_STANDARD)
+        call flex_pca%add_input(UI_FILT, 'sparse_sites', 'binary', &
+            'Site masks and site coordinates (default no)', &
+            'yes finds the sites by greedy sparse site pursuit at the frozen poses and writes their masks and per-particle &
+            &coordinates to sites/, instead of states and maps(yes|no){no}', &
+            '', .false., 'no', &
+        &choices=ui_choices([character(len=3) :: 'yes', 'no']), &
+        &visibility=UI_VIS_DEVELOPER)
         call flex_pca%add_input(UI_FILT, 'rec_states', 'binary', &
             'Reconstruct the state volumes (default yes)', &
             'no delivers the latent embedding, the state labels and the tables in seconds, without &
