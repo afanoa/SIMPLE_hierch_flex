@@ -1041,7 +1041,7 @@ contains
         character(len=8) :: ev
         integer :: ios
         call get_environment_variable('SIMPLE_FLEX_POSE_PROFILE', ev, status=ios)
-        pose_profile_on = .not. (ios == 0 .and. ev == 'no')
+        pose_profile_on = ios == 0 .and. ev == 'yes'
     end function pose_profile_on
 
     subroutine pose_tangent_recs( params, build, mean_rec, tan_recs )
