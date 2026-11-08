@@ -35,3 +35,7 @@ sparse-ppca side session, 2026-11-08. The user asked for the band inside the mod
 - The ladder (band3) remains the working rule. It can be made cheaper without changing a pick: caps 1 and 2 as concurrent jobs, and a round-1 screen for box-36 nulls.
 - Coordinator 2026-11-08: briefed the seed-ball even/odd band as the last in-model try. Whichever wins (it, or the ladder plus
   concurrent caps 1-2 and a round-1 null screen) is built, fast-gated and committed to wip.
+- v5 (seed-ball even/odd band, 2026-11-08 evening) also LOST.
+  - IgM's pooled agreement stays .50-.76 on every shell, so it never cuts the band.
+  - qtoyflex fell to .844 / .875 against the ladder's .901 / .929.
+  - The ladder is final.

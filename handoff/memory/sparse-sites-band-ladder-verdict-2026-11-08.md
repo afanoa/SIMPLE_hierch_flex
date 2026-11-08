@@ -51,3 +51,11 @@ Side session sparse-ppca, 2026-11-08. The coordinator's band rule built into fle
   - sparse-ppca2 prototypes it against the ladder's seven runs. The ladder is committed only if the in-model band fails.
   - The site chain's b11 (b10 + band3) IgM trees run meanwhile.
 - 2026-11-08 later: the in-model band failed on IgM in four forms ([[sparse-sites-inband-band-verdict-2026-11-08]]); the ladder stands.
+- 2026-11-08 evening: the LADDER IS FINAL. Commit f4be24169, branch sparse-sites-band-ladder off wip 20e972dfd (worktree
+  /Users/atifao/SIMPLE_ladder): band3's rule, plus two cost changes.
+  - Cap 2 runs as a queued sub-job beside cap 1.
+  - A round-1 screen for caps 3+ applies only when the node band finds no seed.
+  - Gates: build + fast gate (55086887), then the 7 ladder fixtures must reproduce every pick, block count and gain. Only
+    then cherry-pick to wip.
+  - TRAP: cap sub-jobs need x6342 (USE_ARCHOPT). The parent job sets SBATCH_CONSTRAINT=x6342, and tree launch scripts must
+    set it too.

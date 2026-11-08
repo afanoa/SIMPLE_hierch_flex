@@ -73,3 +73,8 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
     - Every seed grows to 43-48 % by iteration 6, with poses fixed or free, on r131 and on IgM.
     - The test that separates the missing prior from the small state's noisier reference is one fixed-pose round with log class
       fractions as SIMPLE_STATE_PRIOR (briefed).
+- 2026-11-08 evening, class prior at r131 (site2hi):
+  - The EM class-fraction prior holds the state at 1.9-3.1k. The zero-prior control grows to 20,427, matching the earlier
+    round, so the missing prior causes the absorption.
+  - But members churn (39 % of the seed kept), and closed stays at about .09, honest .910 against a bar of .927.
+  - Prior = necessary, not sufficient. The next round (briefed) adds the site mask.

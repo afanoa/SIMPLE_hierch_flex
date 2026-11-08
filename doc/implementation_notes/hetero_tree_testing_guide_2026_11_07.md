@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:18 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1509,8 +1509,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              null screen at box 36), confirm the picks, build, run the fast gate and commit to wip.
          - Flag unchanged in every version: the dropped-round drift (v3 r131 with the noise model: LL/ptcl .244 -> .170 over 12
            rounds).
-         - v5 (the seed-ball band) is building. If it loses, the concurrent caps run as separate processes (one sub-job per cap,
-           then a pick step), so the pursuit's shared state needs no refactor.
+         - v5 (the seed-ball band) LOST on IgM. Its pooled agreement inside the seed balls stays .50-.76 on every IgM shell
+           (likely each particle's contrast times the mean map), so it never cuts the band. Round-1 seeds gained 8.6 / 4.7 nats,
+           as at the full band. qtoyflex fell to .844 / .875.
+         - THE LADDER IS FINAL. Commit `f4be24169` on branch `sparse-sites-band-ladder` (off wip `20e972dfd`, worktree
+           `/Users/atifao/SIMPLE_ladder`): band3's rule, plus two cost changes.
+           - Cap 2 runs as its own queued sub-job while the node runs cap 1. It writes to its own subdirectory with its ring and
+             random state; the parent picks by the unchanged rule, and runs cap 2 in-process if the sub-job fails.
+           - A round-1 screen tests caps 3+ with the node band's seeds, only when that band's round 1 finds no seed. IgM never
+             triggers it.
+           - Build and fast gate: job 55086887. Then the seven ladder fixtures must reproduce every pick, block count and gain.
+             After that it goes on wip.
+           - Cap jobs need x6342 nodes (USE_ARCHOPT builds). The parent sets `SBATCH_CONSTRAINT=x6342`, and tree launches need
+             the same. SIMPLE's template mail line (`--mail-type=FAIL --mail-user=nil`) reaches nobody.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
@@ -1615,6 +1626,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              reference.
          - Briefed: one fixed-pose round with `SIMPLE_STATE_PRIOR` = log class fractions re-estimated each iteration, from the
            IgM a1 tail and from r131's site2hi.
+         - PRIOR RESULT, r131 site2hi (seed 2,217, closed .091):
+           - With the EM prior the state holds at 1,936-3,105 by iteration 6, at closed .083-.092. The zero-prior control on
+             the same harness and score grows to 20,427 (.081), exactly as the earlier round did.
+           - So the missing prior drives the absorption.
+           - With the prior, only 39 % of the seed's members remain: the group keeps its size while its members churn. It
+             reads .910 honestly, against a bar of .927.
+           - Stage A needs a class prior, but at r131 the prior alone does not concentrate closed.
+         - IgM a1 with the prior ends at 29,371 (purity .651, NMI .068 -> .031). a1's true state is half the node, so this
+           waits on its zero-prior control.
+         - Next (briefed): the design's full round, the EM prior plus the site mask at fixed poses (r131 site2hi with the
+           closed-block mask; IgM a1 with the a1 mask).
 10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
     at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
     - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).

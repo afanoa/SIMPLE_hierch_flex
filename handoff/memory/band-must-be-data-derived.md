@@ -28,3 +28,5 @@ Use a fixed geometric ladder of caps and 2 SE as the only constants. Never propo
   - Last try (briefed): per-shell even/odd covariance agreement measured inside the seed balls, pooled into one band before
     phase 1.
   - Otherwise the ladder is final, with its two cost cuts (concurrent first caps, a round-1 null screen).
+- 2026-11-08 evening: the 5th in-model form (seed-ball band) lost too. The quarter-octave ladder is the data-derived band
+  (commit f4be24169, gating).
