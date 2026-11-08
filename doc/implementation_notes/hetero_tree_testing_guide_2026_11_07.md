@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:06 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:16 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -757,6 +757,19 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     - 18-40 min and 13.6 GB per 100k IgM particles (prototype 46-125 min, 30.7 GB); request 24 GB per 100k at box 70.
     Real-data test running on b3: r131 roots on both seeds (55039094_1-2) and the 692k root (55039095_3, 64 GB). They report
     closed AUROC / d' and the closed share of the top-N tail per block, and list every block the strict floor drops.
+    - r131 RESULT (b3, lp 15, box 36 at 6.5 A, |CTF| from flex's planes; both seeds share the root; `native/rr131s2`): no site
+      block isolates the closed arm better than the seam-free coordinate.
+      - The pursuit accepts 18 blocks and stops at round 19; leave-one-out keeps all 18. The molecule is compact, so all 18
+        overlap and form one site.
+      - Cross-half closed AUROC (d') per block: best .659 (.58), then .597 and .574; the other 15 .50-.55.
+      - Closed share of each block's top-3,075 tail: .072-.111 (base .069).
+      - The whole site's span (36 coordinates): AUROC .711 (d' .78), tail share .098. That reproduces seam-free's .69-.72 and
+        does not beat it.
+      - So RNase P's closed signal is spread over the compact molecule, not held by a localised site, unlike the IgM arms.
+    - TRAP to confirm: on r131 the solvent controls gain 90-110 held-out nats (pure solvent should give ~0), which suggests the
+      noise model misfits the registered stacks (non-stationary noise, extremes-repro). The real-data stop may then be set by
+      noise misfit. Asked whether the controls' gain grows toward the box edges.
+    - The 692k result is pending (~2-3 h).
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
@@ -986,6 +999,10 @@ quad-manifold VERDICT, half yes (`$H/handoff/quad-manifold/VERDICT.md`, tables.m
 
 tree-latent, qtoy2 v2: the root split is DISCRETE (z 28.8, deconvolved d' 9.9), but the numpy code took 51 min for qtoy2's
 14-coordinate site; a compiled version is rerunning.
+tree-latent, IgM 10 % fix v2 (joint tree on y1, frozen poses):
+- 6 leaves; five-arm product .223 on y (.135 on y1), against the v2 forest's .208, lever 3's .338 and the hetero tree's .042.
+- Per arm: a1 .234, a3 .241, a4 .023, a5 .039.
+- So at half the information it beats the tree by far but stays below the masked-round chain. v3 (proposals on y) is pending.
 
 Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
 searched 2026-11-07):
