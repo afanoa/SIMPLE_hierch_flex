@@ -1,6 +1,6 @@
 ---
 name: sparse-sites-native-port-2026-11-07
-description: "flex_pca sparse_sites=yes native port of the sparse-PPCA site pursuit (patch vs e7f7efb80, fast gate 15/15); native is MORE sensitive than the Python prototype (5 % fix 5/5 arms, 5 % null's moving arms found); solvent controls go negative natively, so the per-round check needs the seed-gain floor"
+description: "flex_pca sparse_sites=yes native port (fork b3ced0021, gate 15/15); native MORE sensitive than Python; seed-gain floor needed; RNase P: 692k block 3 alone = seam-free z_MAP on closed rows (.80), span .85, but the closed leaf pair ranks 75/112 (seam-free 46); real-data stop set by a site-independent floor"
 metadata:
   node_type: memory
   type: project
@@ -41,4 +41,17 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
   1.04-16x their seed, weak ones at 0.07-0.67x.
 - Cost: IgM 100k 18-40 min, 13.6 GB (Python 46-125 min, 31 GB).
 
-**Next:** r131 (both seeds) and 692k closed test on b3 (jobs 55039094, 55039095); then the chain integration.
+**Real data (b3, |CTF| via flex's planes; PORT.md "First real-data use", 2026-11-07):**
+- r131 root (44k, 3,075 closed): 18 blocks, one site. The best block reads closed at .659 (d' .58); the span .711 only matches the
+  seam-free .69-.72.
+- 692k root (8,720 closed; 2 h 10 min, 15.6 GB, one node): 16 blocks, one site.
+  - Block 3 alone (2 coordinates, 67 A off-centre) reads closed at .802 (d' 1.17), equal to the 30-coordinate seam-free z_MAP
+    .798; the span gives .849 (d' 1.43).
+  - Tail purity stays low: 5.3 % closed (4.2x the base). The tree's best leaf is 9.3 %.
+  - Closed leaf pair `r1111221_s1/_s2` on the seam-free test's 112 pairs (`pair_rank.py`): span d' .48 (seam-free .25), but every
+    pair separates more, so it ranks 75 (seam-free 46). No block singles it out.
+- **Trap:** the real-data stop is set by a site-independent floor. The tight mask leaves one solvent control, and any local mode
+  gains about .004-.008 nats per held-out particle, with no radial trend.
+- The strict seed-gain floor dropped nothing on either root (1.5-4.2x the seed), so the strict and 2-SE forms agree there.
+
+**Next:** the IgM lp 15 run (job 55044235, tag vx10fix15), then the chain integration.

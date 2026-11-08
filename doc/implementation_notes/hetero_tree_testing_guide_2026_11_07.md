@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:09 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -778,7 +778,20 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
       - The strict seed-gain floor dropped nothing on r131: all 18 blocks kept 1.5-4x their seed's gain.
       - Fixes to weigh before using sparse sites on real data: more controls than a tight box allows, or modelling the
         misfit (e.g. per-particle band-wise scale).
-    - The 692k result is pending (~2-3 h).
+    - 692k RESULT (2 h 10 min, 15.6 GB, one node; 8,720 closed reference rows):
+      - Pursuit: 16 blocks, one site. It stops at round 17 when the best seed (1,830 nats) falls just under the single solvent
+        control (1,834). The misfit floor per particle is about r131's.
+      - Closed vs rest (AUROC / d'): block 3 alone .802 / 1.17, at 67 A from the centre; the span of all 32 coordinates .849 / 1.43;
+        seam-free z_MAP .798 / 1.13; z_ML .667 / .45. So one 2-coordinate block matches the seam-free coordinate, and the span
+        beats it modestly.
+      - Purity stays low. The top of block 3's leading axis is 5.3 % closed (4.2x the base rate), while the tree's best leaf
+        `r1111221_s2` is 9.3 % closed.
+      - The closed leaf pair (`pair_rank.py`, the seam-free test's own pair scorer on its 112 pairs): the span separates it more
+        (d' .48 vs .25) but separates every pair more (median .61 vs .23), so it ranks 75 / 112 (seam-free 46). No single block
+        singles it out (best: block 14, 18th).
+      - The strict seed-gain floor dropped no block at either root (692k: every block kept 1.87-4.19x its seed's gain).
+      - Reading: on RNase P the sparse sites give a slightly better closed-vs-rest coordinate at 692k and none at r131. They do
+        not single out the tree's closed leaves, and their tails are less pure than the tree's best closed leaf.
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
