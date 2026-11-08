@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-verdicts
-description: "Topic index (71 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
+description: "Topic index (72 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
 metadata:
   node_type: memory
   type: reference
@@ -90,3 +90,4 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [fission-split-test-verdict-2026-11-07](fission-split-test-verdict-2026-11-07.md) — VERDICT: fission + locality guard passes the gate nulls and keeps qtoy2 but fails the r131 hard gate at tau 0.6 and 1 (the root near-tie never splits honestly)
 - [tree-latent-shared-basis-verdict-2026-11-07](tree-latent-shared-basis-verdict-2026-11-07.md) — VERDICT: shared-basis latent tree passes every null, isolates qtoyflex closed (.558), IgM 10 % .26; IgM 5 % one leaf
 - [site-coupling-factorial-verdict-2026-11-07](site-coupling-factorial-verdict-2026-11-07.md) — VERDICT: sites factorial across, joint within; product beats joint by ~2,000 held-out nats on IgM; profile nuisances
+- [site-chain-verdict-2026-11-08](site-chain-verdict-2026-11-08.md) — VERDICT: site chain recovers IgM's balanced arms (.348/.148) but not r131's 7 % closed (near-half groups, maps = node mean); v8 table built

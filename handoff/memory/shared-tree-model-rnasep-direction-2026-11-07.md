@@ -26,5 +26,8 @@ the IgM-like fixtures and holds every null, but on RNase P its splits track per-
 - 2026-11-08: the noise model is found and works ([[rnasep-misfit-noise-spectrum-verdict-2026-11-08]]). With it, the 692k root
   split stops tracking noise but splits along amplitude (a 10 % low-amplitude side), with closed not at level 1. Deeper growth,
   honest maps of both sides, the r131 tree and the native port were running that night.
+- 2026-11-08 ~05:30: at r131 neither the latent forest nor the site chain's full-image round isolates closed (7 % at d' ~.9; the
+  seeds halve the node, and the halves' maps read the node mean). The production tree finds the corner only at depth 2, after a
+  halving carve that enriches closed 1.5x. Open design question: allow an exploratory carve, then an honest test one level down.
 Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]],
 [[rnasep-closed-state-must-be-retained]].

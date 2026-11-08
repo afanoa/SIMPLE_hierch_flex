@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:21 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1381,6 +1381,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        - The test reads fission copies from the same draw under the per-particle noise model, or GAPw's own split. Seeds are
          tried in the forest's order, and Sidak counts the rounds tested.
        - It stays design-only until the site chain's r131 round reads honestly.
+     - r131 ROUND TEST: NEGATIVE (site-chain VERDICT item 6; STATUS "RNase P r131"). The b10 worker ran at r131's root (44,334;
+       closed share .069) on the native sparse fits, noise model on (9 blocks) and off (18 blocks).
+       - Result: 0 DISCRETE blocks. Every block's groups are near-halves (17k-28k), and the purest group is 1.4-1.7x enriched
+         (noise on: b7 g2, 17,149 rows, recall .64, purity .115).
+       - Its maps read the node mean (.89-.90 / .59) against the .95 / .6 corner, so own data already fails.
+       - Why: closed is a 7 % minority at d' ~.9 with no second mode, so the K = 2 seed halves the node and the round keeps that
+         split. On IgM the arm states are 27-73 % groups, which the same seed and round resolve as wholes.
+     - The production tree also halves r131 first ([22,484 | 21,850] at seed 2). It finds the corner one level down (r1 s02,
+       .96-1.00), in a child with closed recall .80 / purity .106, the same enrichment as the chain's groups.
+     - Next: the two-level test, on own data first. The chain runs inside its two best-enriched groups (sparse fit, seed, round,
+       corner readout), and the logs show what pp_off's r1 stage B did (seeds, states, pose re-search or not).
+       - If the corner appears, the design question for the user is an exploratory carve (not discrete) followed by an honest
+         test one level down.
      - Next, the decisive test: the site chain's worker at r131, seeded from the noise-model sparse fit (closed span .765), with
        the corner gate read on the round's group maps, noise model on vs off.
    - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
