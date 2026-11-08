@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 10:43 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:01 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1524,6 +1524,32 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       each node's own latent by depth.
     - The puzzle: r131 holds ~7 % reference closed rows (~1.3 % at the root), but the corner r1311_s2 holds 816 of 12,010 (6.8 %),
       no more than r131, while its own-data map reads 1.00. Honest reads of r131's leaves come from thread 8's fission pair.
+    - RESULT (rnasep-misfit, `$H/handoff/rnasep-misfit/lineage/LINEAGE.md`; memory r17d-closed-lineage-attribution-2026-11-08):
+      - Closed share by depth: r 1.26 % -> r1 1.94 -> r13 4.11 -> r131 6.94 -> r1311 5.57 (r1312 8.34) -> r1311_s2 6.79. On the
+        other lineage: r2 1.31 -> r23 2.92 -> r232 5.71 -> r2322 9.37.
+      - The concentrating steps are binary splits along ONE dimension of the node's own flex latent: r13 -> r131 (z1 AUROC .82)
+        and r23 -> r232 (z1), each taking 93 % of the parent's closed rows; then r232 -> r2322.
+      - The K-way levels above select good particles (SIMPLE corr / amplitude .59-.60, poses that moved less), with some closed
+        enrichment.
+      - Noise level, defocus, micrograph and FoilHole are flat at every split (.47-.53); views / 2D classes read .53-.58.
+      - Refitting the latent per subset adds .02-.04 closed AUROC and never beats the root latent's .786. The closed direction is
+        already in the root latent, and the tree carves along it where it leads.
+      - The corner:
+        - r131 -> r1311 went against the closed rows.
+        - r1311 -> s2 cuts along a dimension the closed rows barely follow (closed AUROC .56; 4.2 -> 6.8 %). It is the weakest
+          split that passed the re-test (z 4.87 vs 3.71), and stage B moved 16,009 of 22,464 particles away from the latent's
+          groups.
+        - So its 1.00 fits the imprint pattern; the honest reads decide.
+        - By the reference rows, the most closed leaves are r2322 (9.4 %) and r1312 (8.3 %).
+      - Coordinator's read for the shared model (thread 9):
+        - The tree concentrates closed by carving along a closed-carrying latent dimension at the node where that dimension
+          leads, whether or not the cut is discrete, after K-way levels that keep good particles.
+        - The shared model's honest discreteness test refuses such carves, and its 692k proposals (50k subsample) never led with
+          closed (.48-.52). So the carves, and the conditioning that makes closed lead, look like the missing pieces rather than
+          a better basis.
+        - Whether refinement adds closed is not shown here; thread 9's test answers it.
+      - Running (approved): one map per lineage node at entry poses, then noise-model sparse sites on r13, r1311, r1312, r23,
+        r232 and r2322 (~20 core-h). It asks whether a shared-basis site carries the closed direction where the tree cuts.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

@@ -44,3 +44,9 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - Design: latent proposals (incl. minority tails) -> a full-image round per subset (hard labels on X1) -> an honest fission
     test against matched random groups, with carves as lookahead.
   - Decisive test proposed (r131: tails vs random halves vs fflex seeds; round on X1, read on X2); waiting for the go-ahead.
+- 2026-11-08 lineage result ([[r17d-closed-lineage-attribution-2026-11-08]]):
+  - The production tree concentrates closed by carving, discrete or not, along a closed-carrying node-latent dimension (r13 / r23
+    z1, 93 % of the closed rows), after K-way levels that keep good particles. Per-subset latent refits add only .02-.04.
+  - Coordinator's read: the shared model lacks those carves and the conditioning that makes closed lead, not a better basis.
+  - Refinement's contribution is unproven: the corner's stage B moved particles along a direction the closed rows don't follow.
+  - Per-node noise-model sparse sites on the lineage nodes are running (rnasep-misfit).
