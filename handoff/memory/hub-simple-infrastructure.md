@@ -1,6 +1,6 @@
 ---
 name: hub-simple-infrastructure
-description: "Topic index (55 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
+description: "Topic index (56 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
 metadata:
   type: reference
 ---
@@ -67,3 +67,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [numba-parallel-before-fork-deadlocks](numba-parallel-before-fork-deadlocks.md) — TRAP: numba threads launched before a fork hang the pool; use NUMBA_NUM_THREADS
 - [latent-framework-lp-sets-lattice-overwrites-cache](latent-framework-lp-sets-lattice-overwrites-cache.md) — TRAP: another lp changes latent_states_v4's lattice and overwrites the shared plane cache; use prep_guard
 - [relion-reconstruct-maps-need-fsc-weighting](relion-reconstruct-maps-need-fsc-weighting.md) — "look like noise": deliver postprocess default (FSC-weighted, B=0), never raw relion_reconstruct
+- [beegfs-dir-rename-onto-existing-dir-fails](beegfs-dir-rename-onto-existing-dir-fails.md) — TRAP: BeeGFS refuses renaming a folder onto an existing (even empty) folder; simple_rename only warns

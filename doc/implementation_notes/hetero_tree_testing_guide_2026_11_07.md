@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:13 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:40 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1616,6 +1616,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              4.62.
        - r692 (job 55076637): the root split honestly, K = 3 into 601k / 82k / 8.8k. The tree is on level 3, and the table with
          both bars comes at about 18:30-19:30 EST.
+       - CARVE TREE RESULT (from `carves/tree_r692/tree.log`; tree done 18:01; rnasep-misfit's formal table to follow). FAILS
+         the pass bar (~7 % closed at recall >= .3).
+         - Main lineage: r 1.26 % -> r1 (638k) 1.31 -> r12 (642k) 1.31 -> r121 (596k) 1.27 -> leaf r1212 (248k) 1.94 %,
+           recall .55. That only matches production's depth-1 node r1 (252k, 1.94 %), three levels later.
+         - Best leaf: r1223 (14k), 3.46 % at recall .055.
+         - Production for comparison: r131 6.94 % at recall .35 by depth 3; r1312 8.3 %; r2322 9.4 %.
+         - The honest root split (z 42) does not concentrate closed. Then levels go to peeling off small groups (r11 8.6k, r122
+           50k) before the bulk is carved, and maxlev 4 stops at production's depth-1 equivalent.
+         - Honest maps: r1223 reads .44 against a random maximum of .35, and r1212 .34 against .29. The closed signal is real
+           but thin.
+       - USER (2026-11-08): "yeah dont think we can get out of refitting at each node". The shared-basis tree is closed as a
+         replacement for the tree's per-node refits on RNase P. Production's edge is its K-way root and per-node latent refits,
+         which make closed lead where the tree cuts. It is not refinement (pose test) and not one global basis (this tree).
      - REFINEMENT TEST SO FAR (r131, honest pair):
        - Every round ends in a near-half split (about 19k of 44k), whatever the seed. The round's state stays near the base
          closed share (.069).

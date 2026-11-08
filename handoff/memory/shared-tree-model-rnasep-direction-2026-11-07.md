@@ -99,3 +99,11 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - Trap: a class prior plus a fixed .95 margin makes small groups shed members at even odds.
   - Implication: refinement doesn't rescue a weak subset. Purity must come from membership (per-particle evidence, the latent
     rule); the user's "poses matter" is not borne out at r131 for 2-23k groups.
+- 2026-11-08 ~18:40, CARVE TREE at 692k (shared basis + noise model, honest splits + carves, maxlev 4) FAILS.
+  - Main lineage: 1.26 -> 1.31 -> 1.31 -> 1.27 -> r1212 1.94 % (248k, recall .55), i.e. production's depth-1 r1 three levels late.
+  - Best leaf: r1223 3.46 % at recall .055, against production's r131 6.94 % at recall .35.
+  - Honest maps above random for r1223 and r1212 only.
+- USER CONCLUSION (STANDING): "yeah dont think we can get out of refitting at each node".
+  - The shared-basis tree is closed as a replacement for per-node refits on RNase P.
+  - Future levers act inside the per-node refit framework: the node's latent fit, the membership rule, the class prior and the
+    split test.
