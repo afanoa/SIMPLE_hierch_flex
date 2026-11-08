@@ -41,6 +41,7 @@ use simple_flex_pca_merge,           only: two_gate_state_merge
 use simple_flex_pca_weights,         only: build_covariance_state_weights
 use simple_flex_pca_targets,         only: component_reliability_proxy
 use simple_flex_sites_pursuit,       only: run_sparse_sites
+use simple_flex_noise_var,           only: noise_var_on, estimate_noise_var, retire_noise_var, adopt_noise_var
 implicit none
 private
 #include "simple_local_flags.inc"
@@ -143,6 +144,11 @@ contains
             call self%plane_store%ensure_cache(params, build, sess%sel%pinds, sess%sel%nptcls)
             if( .not. rounds%distributed() .and. .not. rounds%is_worker() )then
                 call self%plane_store%enable(build%spproj_field%get_noris())
+            endif
+            if( noise_var_on() .and. cline%defined('vol1') )then
+                call estimate_noise_var(params, build, self%plane_store, sess%sel%pinds, sess%sel%nptcls)
+            else if( rounds%distributed() )then
+                call retire_noise_var
             endif
             sess%neigs_req  = max(1, min(48, params%neigs))
             ! npreimages = state ceiling (>= MIN_NSTATES); preimage_auto=yes raises it to AUTO_NSTATES unless
@@ -662,6 +668,7 @@ contains
         select case(params%stage)
             case(PCA_STAGE_PROBE, PCA_STAGE_POLISH, PCA_STAGE_EMBED, PCA_STAGE_EMBED_MERGED)
                 call self%plane_store%adopt_cache(params, build, sel%pinds, sel%nptcls)
+                call adopt_noise_var(params, build, self%plane_store)
                 ! the mean's scale comes from the master's cache
                 if( params%stage == PCA_STAGE_EMBED_MERGED )then
                     call init_mean_reconstructor(params, build, model%mean_rec)

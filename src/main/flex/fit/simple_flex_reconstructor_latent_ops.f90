@@ -240,6 +240,7 @@ contains
         t = tic()
         call prep_imgs4projected_model(params, build, batchsz, build%imgbatch(:batchsz), &
             &pinds(batchlims(1):batchlims(2)), fpls(:batchsz), cached=cached, plane_store=plane_store)
+        call plane_store%whiten_bands(pinds(batchlims(1):batchlims(2)), fpls(:batchsz))
         if( present(sec_prep) ) sec_prep = sec_prep + toc(t)
         call plane_store%store(pinds(batchlims(1):batchlims(2)), fpls(:batchsz))
     end subroutine planes_batch_load

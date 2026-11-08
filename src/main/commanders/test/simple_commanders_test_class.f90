@@ -114,6 +114,7 @@ use simple_flex_cls_kernel,                  only: run_all_flex_cls_kernel_tests
 use simple_flex_pca_application_tester,      only: run_all_flex_pca_application_tests
 use simple_flex_pcg_tester,                  only: run_all_flex_pcg_tests, run_all_flex_pcg_lib_tests, &
     &run_all_flex_pcg_sweep_tests
+use simple_flex_noise_var_tester,            only: run_all_flex_noise_var_tests
 use simple_ipc_tcp_socket_tester,            only: run_all_ipc_tcp_socket_tests
 use simple_http_post_tester,                 only: run_all_http_post_tests
 use simple_persistent_worker_message_tester, only: run_all_persistent_worker_message_tests
@@ -605,6 +606,7 @@ contains
         integer,          intent(inout) :: n
         call add_suite(s, n, 'flex PCA',          run_all_flex_pca_tests)
         call add_suite(s, n, 'flex PCG operator', run_all_flex_pcg_tests)
+        call add_suite(s, n, 'flex noise var',    run_all_flex_noise_var_tests)
         call add_suite(s, n, 'flex cls_expansion', run_all_flex_cls_expansion_tests)
         call add_suite(s, n, 'flex cls_expansion kernel', run_all_flex_cls_kernel_tests)
         call add_suite(s, n, 'site split',        run_all_site_split_tests)

@@ -26,6 +26,8 @@ type :: flex_plane_store
     integer  :: nprepped     = 0                     !< batches read and prepped
     real(dp) :: gb_held      = 0.d0
     real(dp) :: gb_budget    = 0.d0
+    real,    allocatable :: band_var(:,:)
+    integer, allocatable :: band_of(:)
   contains
     procedure, public :: ensure_cache      => plane_store_ensure_cache
     procedure, public :: adopt_cache       => plane_store_adopt_cache
@@ -37,6 +39,8 @@ type :: flex_plane_store
     procedure, public :: store             => plane_store_store
     procedure, public :: kill              => plane_store_kill
     procedure, public :: release           => plane_store_release
+    procedure, public :: set_noise_bands   => plane_store_set_noise_bands
+    procedure, public :: whiten_bands      => plane_store_whiten_bands
 end type flex_plane_store
 
 contains
@@ -204,6 +208,8 @@ contains
             call self%cache%kill
             deallocate(self%cache)
         endif
+        if( allocated(self%band_var) ) deallocate(self%band_var)
+        if( allocated(self%band_of) )  deallocate(self%band_of)
         self%l_on = .false.; self%l_full = .false.; self%l_key_set = .false.; self%l_cached_key = .false.
         self%nheld = 0; self%nserved = 0; self%nprepped = 0; self%gb_held = 0.d0; self%gb_budget = 0.d0
     end subroutine plane_store_kill
@@ -215,6 +221,47 @@ contains
         if( allocated(self%cache) ) call self%cache%delete
         call self%kill
     end subroutine plane_store_release
+
+    subroutine plane_store_set_noise_bands( self, band_var, band_of )
+        class(flex_plane_store), intent(inout) :: self
+        real,                    intent(in)    :: band_var(:,:)
+        integer,                 intent(in)    :: band_of(0:)
+        integer :: i
+        self%band_var = band_var
+        if( allocated(self%band_of) ) deallocate(self%band_of)
+        allocate(self%band_of(0:ubound(band_of,1)), source=band_of)
+        if( allocated(self%held) )then
+            do i = 1, size(self%held)
+                if( allocated(self%held(i)%cmplx_plane) )    deallocate(self%held(i)%cmplx_plane)
+                if( allocated(self%held(i)%ctfsq_plane) )    deallocate(self%held(i)%ctfsq_plane)
+                if( allocated(self%held(i)%transfer_plane) ) deallocate(self%held(i)%transfer_plane)
+            end do
+        endif
+        self%nheld = 0; self%gb_held = 0.d0; self%l_full = .false.
+    end subroutine plane_store_set_noise_bands
+
+    subroutine plane_store_whiten_bands( self, rows, fpls )
+        class(flex_plane_store), intent(in)    :: self
+        integer,                 intent(in)    :: rows(:)
+        type(fplane_type),       intent(inout) :: fpls(:)
+        real    :: f
+        integer :: i, h, k, b
+        if( .not. allocated(self%band_var) ) return
+        !$omp parallel do default(shared) private(i,h,k,b,f) schedule(static) proc_bind(close)
+        do i = 1, size(rows)
+            if( .not. allocated(fpls(i)%cmplx_plane) ) cycle
+            do k = lbound(fpls(i)%cmplx_plane,2), ubound(fpls(i)%cmplx_plane,2)
+                do h = lbound(fpls(i)%cmplx_plane,1), ubound(fpls(i)%cmplx_plane,1)
+                    b = self%band_of(min(nint(sqrt(real(h*h+k*k))), ubound(self%band_of,1)))
+                    f = 1. / sqrt(self%band_var(b,rows(i)))
+                    fpls(i)%cmplx_plane(h,k) = f * fpls(i)%cmplx_plane(h,k)
+                    if( allocated(fpls(i)%transfer_plane) ) fpls(i)%transfer_plane(h,k) = f * fpls(i)%transfer_plane(h,k)
+                    if( allocated(fpls(i)%ctfsq_plane) )    fpls(i)%ctfsq_plane(h,k)    = f * f * fpls(i)%ctfsq_plane(h,k)
+                end do
+            end do
+        end do
+        !$omp end parallel do
+    end subroutine plane_store_whiten_bands
 
     !> MemAvailable from /proc/meminfo in GB; zero when unreadable (non-Linux).
     real(dp) function mem_available_gb()
