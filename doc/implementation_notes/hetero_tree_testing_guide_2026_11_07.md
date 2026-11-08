@@ -1019,8 +1019,13 @@ quad-manifold VERDICT, half yes (`$H/handoff/quad-manifold/VERDICT.md`, tables.m
   Plausible, but no homoscedastic control was run.
 - Port traps: every site model needs a free reference offset c0 with its own prior (the qtoy gate roots' mean misfits a site by
   4.1-4.8k nats), and a 1-D curve fitted to 2-D residue folds and shows false modes.
-- 2-D q fits and their 2-D linear control (provisional gains over the block: qtoyflex ~+4,050, IgM fix ~+2,080, null ~+3,390)
-  are still running.
+- 2-D (final; VERDICT.md item 7, STATUS.md addendum): 2-D q follows the 1-D pattern, so curvature pays only on the curved
+  swing.
+  - IgM null a1: +3,341 +- 96 over the block, of which curvature (vs a 2-D linear model with the same learned density) is
+    +2,846 +- 92.
+  - IgM fix a1: +2,059 +- 77, all of it density (curvature -9 +- 55).
+  - qtoyflex: ~+4,000, about half each (log plateau only; its 2-D runs died of lattice growth).
+  - The second dimension adds on every structured site, so none of them is 1-D.
 
 tree-latent, qtoy2 v2: the root split is DISCRETE (z 28.8, deconvolved d' 9.9), but the numpy code took 51 min for qtoy2's
 14-coordinate site; a compiled version is rerunning.
