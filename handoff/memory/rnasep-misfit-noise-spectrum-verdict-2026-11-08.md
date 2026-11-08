@@ -60,3 +60,6 @@ fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026
   - Basis: the honest 4-seed r131 gate does not separate the arms (1/4 off vs 2/4 on). The noise model shrinks the own-data
     imprint (.04-.06 vs .11-.18) and removes the misfit floor.
   - rnasep-misfit flips it, builds (nvon_<hash>), fast-gates and smoke-tests it; then cherry-pick to wip.
+- ON WIP 2026-11-08 evening as 938ed9a8d (cherry-picked from dd02eff12; build nvon_dd02eff12, fast gate 15/15, build_lf's OpenBLAS
+  pair). The smoke runs with the variable unset show the master estimating in both flex steps and all 4 workers adopting.
+  SIMPLE_FLEX_NOISE_VAR=no turns it off.

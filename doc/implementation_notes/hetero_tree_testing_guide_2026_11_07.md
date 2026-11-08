@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1799,7 +1799,7 @@ Waiting for the user:
 - decision 9 (the r131 gate's honest readout): DECIDED 2026-11-08, honest re-read (section 8 item 9; thread 8);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8, 4 seeds): not separated (honest passes 1 / 4 off vs 2 / 4 on, all within ~1 null sd); the noise model shrinks the own-data imprint (.04-.06 vs .11-.18). DECIDED 2026-11-08 (user: "Yes, default on"): on by default on wip, `SIMPLE_FLEX_NOISE_VAR=no` turns it off. rnasep-misfit flips it, then builds (`$H/wip_builds/nvon_<hash>`), runs the fast gate and a smoke check with the variable unset before it goes on wip. The ladder's r131 pick under the noise model is already re-read: ring 15, 9 blocks, span .765.
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8, 4 seeds): not separated (honest passes 1 / 4 off vs 2 / 4 on, all within ~1 null sd); the noise model shrinks the own-data imprint (.04-.06 vs .11-.18). DECIDED 2026-11-08 (user: "Yes, default on"): on by default on wip, `SIMPLE_FLEX_NOISE_VAR=no` turns it off. ON WIP as `938ed9a8d` (cherry-picked from `dd02eff12`). The build `$H/wip_builds/nvon_dd02eff12` passed the fast gate 15/15 and links build_lf's OpenBLAS pair. The smoke runs on qtoynull, with the variable unset, show the master estimating the noise variance in both flex steps and all 4 workers adopting it. The ladder's r131 pick under the noise model is already re-read: ring 15, 9 blocks, span .765.
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
