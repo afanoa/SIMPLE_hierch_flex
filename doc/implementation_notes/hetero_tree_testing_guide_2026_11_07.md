@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:40 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:42 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1830,6 +1830,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Read: at r131, refining poses per subset or re-assigning with a damped rule adds no closed signal beyond what the same
         step gives a random group. The groups' membership (at most .18 closed, ~.09 label-free) is the limit. Raising it
         needs more per-particle evidence or a better membership rule, not refinement.
+13. Per-node levers on production's closed lineage (user, 2026-11-08: "Yes, run the replays"; session flex-refine-flex-weights,
+    notes `$H/handoff/node-levers/STATUS.md`).
+    - Premise, from the user: per-node refits cannot be avoided, so the levers act inside each node's refit.
+    - 2 x 2 factorial:
+      - the noise model in flex, on (wip default) or off (SIMPLE_FLEX_NOISE_VAR=no);
+      - a class prior in the state assignment, on or off. This is the log of each state's current fraction, added to the score
+        in eul_prob_tab's assign_rows and the neighbourhood table's state choice. It sits behind an env switch, default off,
+        and equal fractions reproduce the argmin.
+    - Nodes: r17d's r131, r13, r1, then the root. Each is replayed once from production's saved node through the tree's own
+      calls (f2r harness, maxdepth 0). The off/off arm on the new build is the baseline.
+    - Readouts: the node latent's closed AUROC; each child's closed share, recall and concentration factor against
+      production's own children (1.94 / 4.11 / 6.94 / 8.34 %); at r131 also the honest contrast on the fission pair.
+    - Priced before the root (ask if over ~600 core-h). The class prior goes to the gate battery only if it wins.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

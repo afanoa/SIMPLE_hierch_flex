@@ -107,3 +107,7 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - The shared-basis tree is closed as a replacement for per-node refits on RNase P.
   - Future levers act inside the per-node refit framework: the node's latent fit, the membership rule, the class prior and the
     split test.
+- 2026-11-08 user "Yes, run the replays" (guide 7.10 thread 13): a 2 x 2 node-replay factorial on r17d's closed lineage (r131, r13,
+  r1, root) in the f2r session (flex-refine-flex-weights): noise model on/off x class prior on/off in the state assignment
+  (a new env-switched code path in assign_rows). Readouts: node latent closed AUROC and the children's closed share, recall and
+  concentration. Notes in $H/handoff/node-levers/.
