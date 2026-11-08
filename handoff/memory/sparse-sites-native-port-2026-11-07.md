@@ -1,11 +1,11 @@
 ---
 name: sparse-sites-native-port-2026-11-07
-description: "flex_pca sparse_sites=yes native port (fork b3ced0021, gate 15/15); native MORE sensitive than Python; seed-gain floor needed; RNase P: 692k block 3 alone = seam-free z_MAP on closed rows (.80), span .85, but the closed leaf pair ranks 75/112 (seam-free 46); real-data stop set by a site-independent floor"
+description: "flex_pca sparse_sites=yes native port (fork b3ced0021, gate 15/15); native MORE sensitive than Python; seed-gain floor needed; band must be ranked on the pursued model (IgM 17.7-20.4 A), not seed gains (31-36 A); RNase P: 692k block 3 alone = seam-free z_MAP on closed rows (.80), span .85, but the closed leaf pair ranks 75/112 (seam-free 46); real-data stop set by a site-independent floor"
 metadata:
   node_type: memory
   type: project
   originSessionId: 6f195b76-225b-466c-a432-7fc8360148e8
-  modified: 2026-11-08T01:05:17.551Z
+  modified: 2026-11-08T07:40:55.615Z
 ---
 
 Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026-11-07]] into flex_pca.
@@ -67,7 +67,16 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
     (`native/bx10fix20`).
   - The extra 15-20 A shells hold most of a seed's cells and no arm signal, and the shared empirical-Bayes ridge then shrinks every
     seed to zero.
-  - User (2026-11-08): "really the band should be data derived". Band scan: box 36 has the gain max at the full band (qtoyflex
-    readouts best there), but r131's closed state reads best at 21-26 A while its control floor grows 3x with the band.
+  - User (2026-11-08): "really the band should be data derived".
+- **Trap: rank bands on the GROWN model, never on seed gains** (39-run scan, diagnostic build b7d, handoff `band_rule.md`,
+  2026-11-08).
+  - IgM seed gains rise toward coarse bands, 12.8 (15 A) to 3,179 (36 A), so a seed rule picks 31-36 A. There the supports fuse
+    and R^2 drops .01-.04.
+  - The pursued model's held-out gain (n_ho x LL/ptcl rise over the nuisance-only model, from the round lines) picks 17.7 A (fix)
+    and 20.4 A (null): every arm within .008 of its best. It picks the full band on qtoy and r131 (box 36 and 42).
+  - qtoynull gives 0 sites at every cap; its box-42 seed is dropped by the strict seed floor.
+  - The full-band IgM failure: the shared EB shell ridge zeroes every grown block.
+  - Proposed: a quarter-octave ladder one octave down from the node's band, coarser until the first drop, keep the argmax.
+  - Per-block leave-one-out from separate pursuits is unstable for overlapping blocks (qtoy).
 
-**Next:** profiled-coordinate reruns on build b4 (jobs 55047793-5), then the chain integration.
+**Next:** the coordinator picks the band rule; then build it on aac135dfe (prof patch committed), then chain integration.

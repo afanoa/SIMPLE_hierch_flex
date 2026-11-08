@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:35 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:59 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1171,6 +1171,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - The user judged the low-amplitude group at the 692k root to be real RNA conformations, not junk (junk_screen=no). So that
        side is read as a candidate population: honest maps of both sides, and growth to depth 3.
      - r131 shared tree with honest y2 gate maps: running (job 55054551, root ~03:00).
+   - r131 RESULT (~03:00): the shared tree is still one leaf under nvarB, so the hard gate is not met. The honest y2 map reads
+     .81 / .62 on every combination (native or nvarB-relearned basis, base or nvarB E-step).
+     - nvarB does remove the misfit mixture: the K = 2 XD held-out gain falls from .127 to .0095 nats per particle.
+     - What remains are balanced proposals along the largest spread (47/53, thirds; d' 1.0-2.1), all no call.
+     - Closed is a 7 % minority at d' ~.9 along one block's axis, too weak to form its own XD component at 44k.
+     - So the port stays on hold. The next lever is the proposal: separability-ranked proposals (7.9 item 5), briefed to
+       tree-latent (STATUS addendum 5) with r131, qtoy2's 1 | 2 pair and IgM a5 as targets, and every null as the guard.
    - PORT STARTED (rnasep-misfit, worktree `SIMPLE_noisevar` on `5b17de846`): nvarB into flex's whitening, where flex already
      whitens per particle (`build%esig%sigma2_noise(shell, iptcl)`). It needs one residual pass at the node mean and 6
      two-parameter fits, ~30-40 s per 50k.
@@ -1196,6 +1203,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Every other readout is within .012, except the IgM 10 % null's moving arms, which lose up to .035 R^2.
      - Committed as `aac135dfe` on wip after the commit's own build and fast gate passed (15/15, job 55057869,
        `$H/wip_builds/prof_aac135d`).
+   - BAND RULE (`$H/handoff/sparse-ppca/band_rule.md`, 39-run scan on diagnostic build b7d): rank caps by the PURSUED model's
+     held-out gain, not the seeds'.
+     - Seeds pick 31-36 A on IgM, where the six blocks fuse into one component and arm R^2 drops .01-.04. Detection wants coarse
+       caps and the fitted model wants fine ones.
+     - Pursued gain picks 17.7 A for the IgM fix (5 arm components, R^2 within .008 of the scan's best) and 20.4 A for the IgM
+       null (no discreteness). qtoyflex and r131 get their full band, and qtoynull has 0 sites at every cap.
+     - The rule: a quarter-octave ladder (2^(1/4)) from the node's band, down at most one octave, searched toward coarser caps,
+       stopping once the pursued gain falls below the best so far after a site is kept. The constants are 2^(1/4), one octave
+       and 2 SE.
+     - Per-block bands wait for a per-block ring limit.
+     - ACCEPTED, and briefed for the build (worktree `SIMPLE_band` on `5b17de846`): six-fixture validation, wall time per node,
+       and r131 re-read once native nvarB lands.
 3. Site chain (site-chain). v7 (sklearn-parity tied seed, b6, 15/15) worker tests run on norm. The b5 battery table goes into
    STATUS.
    - If v7 is better at 5 % with nulls at 0, it is the chain.
@@ -1229,6 +1248,8 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          (the worker never reaches the flex embedding).
        - Found on the way: `chain_blocks` read `nlines(coords.txt) - 1` rows, so the last particle was never seeded. It is a
          one-line fix (`site_chain_coords_read_fix.patch`), now built with v8 and rerun; that build is the commit candidate.
+     - Commit candidate b10 (`site_chain_v8_plus_coordsfix.patch` on `5b17de846`): fast gate 15/15, products .349 / .145 with
+       v7's accepted blocks, both null tables empty. It waits for the band rule and the IgM chain trees.
 4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
    evidence share, or off. The committed default changes only with the user.
    - 5 seeds per arm (qtoyflex): the cost is systematic.
@@ -1272,8 +1293,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Neither miss is basis-limited. qtoy2's seeds pass round 1, then decay under the group penalty; seed 36's gain lies in
        the parent span (30.6 fitted vs 2.1 profiled). IgM a5 stays below 2 SE. The limit is the proposal and the test.
      - At nodes the binding stop is the group penalty, not the 2 SE gate.
-     - Trap: micnull's y2 root shows a 102-nat central seed (SE 5.0) that y and profiled y do not. Likely a fission-noise
-       mismatch at low shells: the fission draw must match the data's noise spectrum, as on RNase P.
+     - Trap: micnull's y2 root shows a 102-nat central seed (SE 5.0) that y and profiled y do not.
+       - It is NOT the fission draw: the same y2 draw with the nuisances profiled has no such seed (best 5.6 nats, the seeds y
+         shows).
+       - Likely cause: the nuisance prior, fitted on the noisier copy, is under-converged (its EM hits the 200-iteration cap).
+       - One more reason to profile the nuisances.
      - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.
 Waiting for the user:
 - decision 1 (depth_wiener default);

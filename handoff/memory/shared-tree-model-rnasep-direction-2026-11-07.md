@@ -23,7 +23,7 @@ the IgM-like fixtures and holds every null, but on RNase P its splits track per-
 - Port to Fortran once RNase P shows the closed state honestly (r131 corner or the 692k closed lineage), using the forest design in
   `handoff/tree-latent/PORT_DESIGN.md`.
 - Present IgM-like success as a result in its own right.
-- 2026-11-08: the noise model is found and works ([[rnasep-noise-spectrum-model-verdict-2026-11-08]]). With it, the 692k root
+- 2026-11-08: the noise model is found and works ([[rnasep-misfit-noise-spectrum-verdict-2026-11-08]]). With it, the 692k root
   split stops tracking noise but splits along amplitude (a 10 % low-amplitude side), with closed not at level 1. Deeper growth,
   honest maps of both sides, the r131 tree and the native port were running that night.
 Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]],
