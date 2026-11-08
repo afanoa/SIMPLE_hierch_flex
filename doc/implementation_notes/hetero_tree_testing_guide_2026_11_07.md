@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:46 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:49 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1765,6 +1765,25 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Groups: the latent's label-free tail, blockhi (upper bound), the fflex group, and matched random groups.
       - Readout: the validated contrast readout.
       - Poses refined on X1, maps on X2.
+    - APPROVED 2026-11-08 (user: "Yes, queue it"), briefed to extremes-repro.
+      - Groups: blockhi seed (2,217), the blockhi prior+mask minority (5,046), a label-free ~5k tail of the top block's
+        leading coordinate, and the fflex closed-side group (23,381).
+      - Arms: (a) the parent's poses; (b) single-state refine3D on X1 from the parent's poses (stage B keys and iterations),
+        maps on X2. The multi-state round from the same seed is the third arm.
+      - The random bar gets the same single-state refinement (8-12 groups per N), because refinement alone may sharpen any
+        subset. IgM a1 tail plus 4 random groups is the guard.
+      - Readout: c = closed - open, applied only after the re-score's positive control shows the readout sees the reference
+        closed rows.
+    - RE-SCORE, FIRST PASS (no new maps; contrast c = closed - open against the same random bars):
+      - Gate corners: c passes one corner per arm (pp_off seed 3, noise model seed 2), with three calls flipped. The arms
+        stay unseparated.
+      - Seeds: only pc2lo clears its bar. blockhi (.184 closed) reads +.315 against .369.
+      - Rounds: fflex, pc2lo, rtail1 and rtail2 keep their passes; rsub2 (random) loses its pass.
+      - Within comparable groups the reference share and c rank alike: pose-refined rounds rho .79, fixed-pose rounds .99, gate
+        corners .90; the seeds at N 2,217 only .16. In the rounds the open arm carries much of the signal (rho -.59 / -.93).
+      - So labels and maps agree on ranking. But enrichment to .08-.13 closed does not move a map past its random bar.
+      - Running: the positive control (r131's 3,075 reference closed rows on X2; optimistic, since the rows were picked on X)
+        and a rigid-core term for blur.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

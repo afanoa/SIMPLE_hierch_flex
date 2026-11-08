@@ -59,3 +59,12 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - Prior + site mask at fixed poses: IgM a1 NMI .068 -> .210 at .875 purity (production .051; site chain EM .448); r131 nothing
     (site2hi + site 2 churns at .091; blockhi + block 2 holds 2x base closed rows, maps read below random: .883 vs .891).
   - Trap: the mm2 tree's site 2 and sparse block 2 share no voxel (87 A apart); pair a seed with its own site's mask.
+- 2026-11-08 evening, two-arm re-score (c = closed - open, same random bars, no new maps):
+  - Gate corners: c passes one per arm (pp_off s3, nv s2), so the arms stay unseparated. Seeds: only pc2lo passes.
+  - Rounds: fflex, pc2lo, rtail1 and rtail2 keep their passes; rsub2 (random) loses its pass.
+  - Reference share and c rank alike within strata (rho .79 / .99 / .90; the seeds at N 2,217 only .16). In rounds the open arm
+    carries the signal.
+  - RULE: closed-arm-only reads saturate; read the two-arm contrast. Groups at .08-.13 closed don't clear random bars at r131.
+  - The positive control (3,075 reference closed rows) is pending.
+- 2026-11-08 user "Yes, queue it": the fixed-membership pose test (single-state refine3D per group on X1, maps on X2, the random
+  bar refined the same way; guide 7.10 thread 12) is queued behind the control.
