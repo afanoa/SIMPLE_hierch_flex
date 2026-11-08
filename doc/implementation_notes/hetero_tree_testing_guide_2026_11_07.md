@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:04 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1152,6 +1152,21 @@ Not to retry:
        - Chain-exercising arms: `sc2md1_{qtoynull,olenull,micnull}`, `sc2md2_{qtoy2,r131,r131_s1}` and `sc2_qtoyflex`
          (55040559-65).
      - The section-3 battery follows the first clean firing.
+     - b2's first firing crashed: the worker's command line began `dir=` instead of `prg=` (the key-order trap). Build b3
+       (`site_chain_full_v4.patch`) fixes it, passes the fast gate 15/15 (55041807), and runs the 11 chain trees
+       (55041962-72).
+     Worker-only validation (55041863; the b3 worker on the native lp-20 root fits, against truth), MIXED. Lever 3's Python
+     round is in brackets.
+     - 10 % fix: a1 / a3 / a4 accepted, with NMI at or above lever 3 (.448 [.377], .356 [.349], .329 [.318]). The 3-state arms
+       a2 / a5 are lost (GAPw .33-.39 [.19-.22]).
+     - 10 % null: 1 / 15 false accept (b9, GAPw .199) [0 / 13].
+     - 5 % fix: a1 lost (no call); a3 / a4 accepted on almost nothing (NMI .05-.06).
+     - 5 % null: 0 / 5.
+     - Cause: site_split's one cross-half round re-randomises weak seeds (47-50 % of labels change at 5 %, 10-28 % at 10 %),
+       where lever 3's state_eval round strengthened them (5 % a3 .012 -> .139). This is the "labels fall short" gap of 7.1,
+       now isolated from discovery and masks.
+     - Next, in parallel: the same tests with the round skipped, and with refine3D's own state_eval round from the bundle ref
+       `wip/state-eval`, in a separate patch. Porting state_eval into wip is the user's decision 3.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
