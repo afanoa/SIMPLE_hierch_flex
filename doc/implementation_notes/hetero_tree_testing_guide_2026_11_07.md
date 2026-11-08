@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:04 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:05 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1045,6 +1045,19 @@ growth by the saturation test, frozen poses. In v3, proposals and test labels ar
 - Nulls: 1 leaf everywhere, including the IgM 10 % twin that the hetero tree splits. No null accept in any variant.
 - Forest = joint. Balanced K = 2 splits of a 3-state arm straddle and read continuous; lopsided ones pass.
 - Next (approved): K = 3 proposals with a pairwise saturation test in forest form (for a2 / a5 and the qtoy2 1 | 2 pair).
+- K = 3 (interim, STATUS addendum):
+  - At IgM 10 % the root recovers the 3-state arms' proportions: a2 has both boundaries DISCRETE; a5's 20 % state splits off,
+    while its two 40 % states read continuous.
+  - qtoyflex keeps the arm whole and splits closed | holo. IgM 5 % stays one leaf.
+  - Null margins get thin under K = 3 (the closest null side +.043 at 2 SE). A Sidak correction for the side tests per node
+    restores +.083 and so far costs nothing on a2 / a5; it drops one spurious a1 cut.
+- PORT question (user: "port the shared tree latent if it's useful yet"). Useful on the synthetic fixtures, but untested on RNase
+  P, where the r131 corner is the hard gate an honest test already failed (fission-split). Before any Fortran, the prototype
+  runs on the native sparse fits of the r131 root and the 692k root, at frozen poses, and reports:
+  - the closed share per leaf, and closed's own node;
+  - the hard-gate readout on honest y2 maps;
+  - each accepted split's correlation with per-particle nuisances, since real-data misfit (PORT.md trap) survives fission.
+  A port design note comes in parallel (inside hetero_tree with per-subset pose refinement; cost at 692k).
 
 Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
 searched 2026-11-07):
