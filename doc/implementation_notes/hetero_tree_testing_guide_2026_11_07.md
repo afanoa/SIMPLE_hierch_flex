@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:59 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:02 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -958,6 +958,27 @@ the saturation test.
 - IgM 5 % fix: one leaf (joint tree and forest alike). On y1 alone the deconvolution cannot resolve d' ~1 arms: the same
   fission power cost as Part 6.
 - Running: IgM 10 % fix / null and qtoy2, the forests, and a v3 with proposals and labels on y and membership on y1.
+
+quad-manifold VERDICT, half yes (`$H/handoff/quad-manifold/VERDICT.md`, tables.md; runs `$M/quad_manifold/runs`):
+- A curved swing gets one good coordinate. IgM 10 % null a1: the 1-D curve with a learned density ties the 2-mode block
+  (+12 +- 62 held-out nats). It beats a straight line with the same density freedom by +3,461 +- 111, reads the angle at R^2
+  .342 (block .287, line .304), and stays monotone where the line folds.
+- States do not sit off the curve. With a learned density the likelihood bends the curve to take the strongest state as a mode.
+  qtoyflex holo becomes the curve's far end and closed merges with the arm's end (off-curve AUROC holo .40, closed .53; s1 R^2
+  .295 on the curve vs .347 line, .339 block).
+- Curvature does not change the discreteness call. The saturation test on q-quantiles gives fix DISCRETE (.70 / .68 curve,
+  .67 / .65 line), null not discrete (2.95 / 2.59, 2.35 / 1.55) and qtoyflex not discrete.
+- The curve-minus-line held-out gain is a curvature readout: +3,461 on the swing, -167 on the 2-state fix. Three non-collinear
+  states would also read "curved" (untested).
+- With per-particle b_i, G_i, the 2-atom vs segment readout separates both IgM twins (fix +561, null -3,385), unlike Part 4.
+  Plausible, but no homoscedastic control was run.
+- Port traps: every site model needs a free reference offset c0 with its own prior (the qtoy gate roots' mean misfits a site by
+  4.1-4.8k nats), and a 1-D curve fitted to 2-D residue folds and shows false modes.
+- 2-D q fits and their 2-D linear control (provisional gains over the block: qtoyflex ~+4,050, IgM fix ~+2,080, null ~+3,390)
+  are still running.
+
+tree-latent, qtoy2 v2: the root split is DISCRETE (z 28.8, deconvolved d' 9.9), but the numpy code took 51 min for qtoy2's
+14-coordinate site; a compiled version is rerunning.
 
 Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
 searched 2026-11-07):
