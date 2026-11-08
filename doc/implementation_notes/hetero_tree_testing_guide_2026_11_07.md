@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:37 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:46 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1110,6 +1110,15 @@ Not to retry:
      `/Users/atifao/SIMPLE_site_chain` at `6206971c8`, notes to `$H/handoff/site-chain/`): an opt-in site layer running sparse
      sites -> per-block K = 2 seed from the block coordinates -> one masked round -> GAPw per block. It is add-only, like
      `site_split`. It runs on the IgM fixtures first, then the gate battery.
+     Design (approved 21:00):
+     - Key `site_chain=yes` (default no; exclusive with `site_split`). It replaces only the would-be-leaf worker's site source
+       (sparse PPCA's blocks instead of `discover_sites` / `discover_islands`) behind a new step S_SITESPARSE.
+     - Per block: the seed is a K = 2 GMM on the block's coordinates, with several starts; one round of `site_split`'s
+       classifier (cross-half references, niter 1); then GAPw. The lowest-GAPw DISCRETE block gives 2 children.
+     - The sparse fit is learned once per lineage and reused down the subtree (the shared-basis principle). lp = LPF 15.
+     - Extra chain-exercising arms: the three nulls at maxdepth 1 (the false-accept test), r131 at maxdepth 2 on both seeds
+       (hard gate), qtoy2 at maxdepth 2.
+     - The factorial split (every accepted block at once) waits for site-coupling's verdict.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
