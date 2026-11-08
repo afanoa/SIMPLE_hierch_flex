@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:01 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:27 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1491,7 +1491,7 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - First use: pp_off vs the noise model on seeds 1-2 (3-4 if close), which decides the noise-variance default. Then one script
      for the battery's r131 arm.
 9. Making the shared model work (user, 2026-11-08: "subsetting is necessary (with non random seeds derived from the latent) and
-   refinement is necessary. I only know this empirically"). Proposed, waiting for the user's go-ahead.
+   refinement is necessary. I only know this empirically"). Both tests approved 2026-11-08 (user: "Yes, run both").
    - Why, from mixture-learning theory:
      - A 2-class fit at r131 prefers to halve the largest continuous spread. A 7 % minority is therefore a local optimum,
        reached only from a start inside its basin: the latent seeds.
@@ -1514,6 +1514,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Exploratory carves act as lookahead and are merged back unless a child passes honestly.
    - Decisive test (proposed): at r131, a full-image round on X1 from the best latent tails, from random halves and from the
      production fflex groups, read on X2 against matched random tails, with the IgM nulls as the false-call guard.
+   - APPROVED and briefed (2026-11-08):
+     - Carve test (rnasep-misfit; `$H/handoff/rnasep-misfit/carves/`):
+       - The shared model with the noise model on all 692k carves along each node's leading proposal wherever no honest split
+         passes, to depth 4.
+       - Readouts: reference closed share / recall per node, and honest y2 reads against matched random subsets, compared with
+         the production lineage (thread 10).
+       - Pass: a lineage reaches ~7 % closed share at recall >= ~.3 by its own carves, with its honest map above the bar.
+       - Guards: the IgM 10 % null twin, qtoynull, qtoyflex.
+     - Tail-seed refinement test (extremes-repro; `$H/handoff/extremes/`):
+       - At r131 on the honest gate's X1 / X2 pair, production stage A on X1 from three kinds of seed: latent tails (picked with
+         the closed reference, so a mechanism test), random seeds, and the fflex groups.
+       - Each is read on X2 before and after the round, against the random bar. A fixed-pose variant runs for the best tail and
+         one random seed.
+       - Guards: the IgM 10 % null twin and fix.
 10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
     at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
     - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).

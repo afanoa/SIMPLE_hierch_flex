@@ -50,3 +50,6 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - Coordinator's read: the shared model lacks those carves and the conditioning that makes closed lead, not a better basis.
   - Refinement's contribution is unproven: the corner's stage B moved particles along a direction the closed rows don't follow.
   - Per-node noise-model sparse sites on the lineage nodes are running (rnasep-misfit).
+- 2026-11-08 user: "Yes, run both". Both tests are read honestly (guide 7.10 thread 9):
+  - the carve test, shared model at full 692k (rnasep-misfit);
+  - the tail-seed refinement test at r131 on the honest gate's X1 / X2 pair (extremes-repro).
