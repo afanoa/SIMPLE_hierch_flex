@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:24 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:33 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1715,6 +1715,25 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           tree's z1. It has nothing at the deep nodes, which matches their weak re-tests (z 4.87 / 5.33) and the corner's imprint
           pattern.
         - For the carve rule: at r23 the carve is not on the leading coordinate.
+11. Full 692k tree on wip defaults vs production (user, 2026-11-08: "Yes, run it tonight"). Session wip692; notes
+    `$H/handoff/wip692/STATUS.md`; run `$H/integration/f692_wip_s1`.
+    - Build: the noise-default flip on wip `0a29cfbee` (rnasep-misfit; fast gate and smoke check first), with the OpenBLAS
+      variant matched to `build_lf`.
+    - Keys and launcher exactly as `f692_lf.sbatch` (recipe17d keys, seed 1, all 692,392 rows). Expected 620-870 core-h, 5-6 h.
+    - One run covers everything since 2026-11-02 (master merge, depth_wiener, noise model). It is compared with production's last
+      692k run `f692_lf_s1` and with `f692_r17d_s1`.
+    - Scorecard: production's own (leaf scorecard plus docking landscape; N = wip, O = lf). Rules fixed BEFORE the run:
+      - Gate (hard): at least one leaf the user judges closed. Losing the closed state rejects the defaults, whatever else
+        improves.
+      - Same: every row inside the span of lf and r17d, the only yardstick of run-to-run variation at 692k. Purest closed leaf
+        .095 / .094; best closed-leaf F1 .115 / .119.
+      - Better: the closed state kept AND a closed row clearly past both, with the landscape no worse (all nine 2 A swing bins
+        filled, best arm CC median >= .79) and wall within 7 h. "Clearly past" means purest closed leaf >= .11, best closed-leaf
+        F1 >= .14, or 3-leaf union F1 >= .16 (lf .137).
+      - Worse: fewer user-accepted closed leaves, purest closed leaf < .08, best closed-leaf F1 < .10, a shrinking landscape,
+        or wall past 7 h.
+    - It is one seed, and the maps are the tree's own data, so any call is provisional. The closed reference rows lead. A clear
+      result needs a second seed to confirm it, and a 692k twin on the production tip (`merge_master2`) to attribute it.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

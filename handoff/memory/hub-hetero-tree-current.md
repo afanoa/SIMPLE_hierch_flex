@@ -64,3 +64,4 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 
 Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [hetero-tree-paper-plan-2026-11-06](hetero-tree-paper-plan-2026-11-06.md) — 3D tree paper started; integration of latent model + refinement is the gap; 2D stays in flex2D draft
+- [wip692-full-tree-vs-production-2026-11-08](wip692-full-tree-vs-production-2026-11-08.md) — full 692k tree on wip defaults vs f692_lf_s1 / r17d tonight; better/same/worse rules fixed before the run
