@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:17 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1176,6 +1176,17 @@ Not to retry:
   Untested; for the paper's framing.
 - Nothing is promoted to production (`hetero-tree`) without the user. Every verdict goes into this guide and memory, pushed to
   the fork.
+- USER DIRECTION (late evening): "We need to pursue this to work on the RNase P. If it works on IgM like regimes that is a great
+  result." So the shared tree model stays the main methods thread. The RNase P blocker is per-particle misfit, worked on two ways:
+  - tree-latent: the misfit-removed rerun (amplitude and nuisances profiled, sat5 groups within amplitude x log-likelihood
+    strata), on r131 and 692k;
+  - rnasep-misfit (new session; `$H/handoff/rnasep-misfit/`): what drives the misfit (residual band powers, amplitude and
+    log-likelihood against defocus, micrograph, the 2D-class registration's rotation / sub-pixel shift, class, part), and
+    observation-model fixes, each scored on three things:
+    - the r131 solvent-control floor (109.5 nats now, which should fall toward 0);
+    - whether the latent stops tracking amplitude and log-likelihood;
+    - the sparse blocks' closed AUROC.
+    The fixes: a per-particle band scale, a per-particle noise variance, and an interpolation-aware noise spectrum.
 
 ## 8. Decisions waiting for the user
 

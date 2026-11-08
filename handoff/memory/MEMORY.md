@@ -68,6 +68,7 @@
 - [tree-design-feature-freeze-2026-10-25](tree-design-feature-freeze-2026-10-25.md) — STANDING: no new tree design features until…
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
+- [shared-tree-model-rnasep-direction-2026-11-07](shared-tree-model-rnasep-direction-2026-11-07.md) — USER: pursue the shared tree model until it works on RNase P; IgM-like success is already a great result
 - [mac-retired-handoff-2026-11-07](mac-retired-handoff-2026-11-07.md) — Mac retired: guide + handoff/ on fork/hetero-tree-wip; other refs in a batch2 bundle, untracked files in a batch2 tarball; fork PUBLIC
 - [site-mask-rework-direction-2026-11-07](site-mask-rework-direction-2026-11-07.md) — USER: site ranking/masks weakest; prove failure on IgM fixture; flex prior / depth wiener / global coordinate judged there; plan = guide 7.7
 
