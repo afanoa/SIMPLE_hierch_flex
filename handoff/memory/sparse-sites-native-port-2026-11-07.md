@@ -26,6 +26,10 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
 - Only two comment lines: the mandatory `!@descr` headers.
 
 **Traps found:**
+- `coords.txt` integrates the 12 nuisance latents under their FITTED prior (`prior_precision`: inv(Gamma_n) on the nuisance
+  block). It is NOT the pose profile, though my design note claimed so; site-chain caught it. The site-coupling verdict says
+  integrating under the fitted prior invents cross-site couplings. The follow-up `sparse_sites_profiled.patch` adds
+  `coords_profiled.txt`: the same solve with a zero nuisance prior block (the Schur complement). The fit stays unchanged.
 - Use the node's `n.simple`. flex refuses its own delivered `fflex/f.simple` (it carries state labels).
 - Never nest `contains` inside internal procedures (gfortran).
 - A marker test on ssh output catches the login banner: wait on an explicit MARK line instead.

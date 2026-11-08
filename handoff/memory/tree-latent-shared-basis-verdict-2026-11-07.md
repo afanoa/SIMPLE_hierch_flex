@@ -1,6 +1,6 @@
 ---
 name: tree-latent-shared-basis-verdict-2026-11-07
-description: "VERDICT 2026-11-07: a tree grown in latent space over ONE tree-wide sparse site basis (soft Bishop-Tipping hierarchy with XD, growth by the fission saturation test, frozen poses) passes every null incl. the IgM 10 % twin, isolates qtoyflex closed (F1 .558 vs .39/.47) with the arm whole, IgM 10 % five-arm .26 (tree .042, lever 3 .338), qtoy2 .76 (pp_on .811), IgM 5 % one leaf"
+description: "VERDICT 2026-11-07: a tree grown in latent space over ONE tree-wide sparse site basis (soft Bishop-Tipping hierarchy with XD, growth by the fission saturation test, frozen poses) passes every null incl. the IgM 10 % twin, isolates qtoyflex closed (F1 .558 vs .39/.47) with the arm whole, IgM 10 % five-arm .26 (tree .042, lever 3 .338), qtoy2 .76 (pp_on .811), IgM 5 % one leaf; FAILS RNase P (splits track per-particle misfit)"
 metadata:
   node_type: memory
   type: project
@@ -26,6 +26,18 @@ runs `math_reworks/tree_latent/`. Python on sparse PPCA's bases; nothing in SIMP
 - Forest vs joint: equal. The forest never splits a 3-state arm, because the balanced K = 2 split (state 1 vs 2 + 3) straddles
   and sat5 calls it continuous; lopsided splits that isolate one state pass.
 - No null accept in any variant, so no multiplicity correction was needed.
+
+- RNase P (STATUS addendum 2; PORT_DESIGN.md on hold): FAILS the hard gate on both roots. Its mixture structure there is
+  per-particle MISFIT, not the closed state.
+  - r131: no call, 1 leaf; honest-map gate closed .81 / open .62.
+  - 692k: K = 3 [577k / 99k / 16k], both pairs DISCRETE (z 31, 35), but closed AUROC .48-.50. The splits track amplitude
+    (.21-.46) and log-likelihood (.30-.36).
+  - Fission cannot remove a per-particle property, and the nuisances were INTEGRATED under a fitted prior.
+  - Prerequisites before any port: profile amplitude and misfit; form sat5 groups within amplitude / log-likelihood strata;
+    a basis that carries closed. One misfit-removed rerun was approved; if it still tracks misfit, the real-data misfit
+    model is the prerequisite.
+- M-est: soft maps trade bias for noise; unmixing by the confusion matrix restores the slope (qtoyflex closed .51 -> .91) at
+  a noise cost (error .86 -> 1.98).
 
 **Why:** the user wants one elegant model over the whole tree; this is its first prototype.
 **How to apply:** the shared-basis latent tree is the candidate cohesive model.

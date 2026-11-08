@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:01 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:17 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1151,8 +1151,18 @@ Not to retry:
   - Holo leaf: correlation and FSC up, error and slope down. Arm leaf: slightly better on all four. Robust is close to soft.
   - Why: weights from y1 with maps from y2 give a confusion-weighted mixture of the state means.
   - Asked for: an UNMIXED estimator, mu = C^-T M with the mixture's confusion matrix, for soft and hard maps alike.
-- tree-latent on r131: ONE leaf, so hard and soft coincide. Like the fission split test, the shared model does not split the
-  r131 root honestly at 44k. The 692k run is going.
+- tree-latent on RNase P (STATUS addendum 2; PORT_DESIGN.md, forest form, ON HOLD): FAILS the hard gate on both roots.
+  - r131: no call, 1 leaf; honest y2 maps read closed .81 / open .62.
+  - 692k: K = 3 [577k / 99k / 16k] with both pairs DISCRETE (z 31 / 35), but closed shares .014 / .008 / .006 (AUROC .48-.50).
+    The splits track per-particle amplitude (.21-.46) and log-likelihood (.30-.36): misfit, not the closed state.
+  - Why: fission cannot remove a per-particle property, the nuisances were integrated under a fitted prior, and a
+    two-population amplitude difference saturates the group maps.
+  - Cost at 692k: E-step 24 min (53.8 GB); root proposals 23 min on a 50k subsample; one sat5 test 51 s.
+  - One misfit-removed rerun approved (amplitude + nuisances profiled; sat5 groups within amplitude x log-likelihood strata).
+    If the best 692k split still tracks misfit, the real-data misfit model becomes the prerequisite, not the tree.
+- K = 3 final on qtoy2: closed .910 (pp_on .891), holo .962 (.944), NMI .766; the 1 | 2 pair is still merged.
+- M-est unmixing restores the slope at a noise cost: qtoyflex closed .51 -> .91 (error .86 -> 1.98); qtoy2 closed .84 -> 1.00
+  (error .19 -> .24). IgM 10 % follows.
 - Flex -> refinement priors revisited (user: "perhaps we should also revisit flex --> refinement posteriors"; oracle session,
   igm-refs Part 7).
   - Why it may differ from the 11-06 verdict: on IgM stage B never resolves the arms, so a prior has nothing to fade against;
