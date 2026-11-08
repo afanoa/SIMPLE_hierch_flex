@@ -852,7 +852,7 @@ contains
                     call write_ints(d//'/split/split_children.txt', merge(1, 0, st > 0))
                     call write_ints(d//'/split/split_junk.txt', [integer ::])
                     call self%decide(i)
-                    self%nodes(i)%step = S_DONE
+                    if( self%nodes(i)%step /= S_SITESPLIT ) self%nodes(i)%step = S_DONE
                     return
                 endif
                 fdif = variance_spread(d, st, pres, self%p%mskdiam)
