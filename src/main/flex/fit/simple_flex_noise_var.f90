@@ -26,7 +26,7 @@ contains
         character(len=8) :: ev
         integer :: ios
         call get_environment_variable('SIMPLE_FLEX_NOISE_VAR', ev, status=ios)
-        noise_var_on = ios == 0 .and. ev == 'yes'
+        noise_var_on = .not. (ios == 0 .and. ev == 'no')
     end function noise_var_on
 
     subroutine estimate_noise_var( params, build, plane_store, pinds, nptcls )
