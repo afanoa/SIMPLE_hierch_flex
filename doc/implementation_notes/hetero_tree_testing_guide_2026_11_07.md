@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:43 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1184,6 +1184,27 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Default on, `SIMPLE_FLEX_NOISE_VAR=no` for A/B. refine3D is untouched.
      - Validation: native vs Python multipliers; native sparse_sites on r131; IgM and qtoyflex unchanged; the gate battery against
        pp_off with the r131 corner on both seeds. Committed only after the gates.
+   - PORT DELIVERED, uncommitted.
+     - Files: patch `$H/handoff/rnasep-misfit/noisevar_5b17de846.patch` (5 files, +345 lines, 2 comment lines); build
+       `$H/wip_builds/noisevar_5b17de8`, fast gate 15/15; new module `simple_flex_noise_var` (in check_flex_dag).
+     - Design: esig%sigma2_noise is per shell and half, not per particle, so the multiplier scales each particle's observation
+       planes per band in `planes_batch_load`. Every flex consumer sees sigma2 x v; refine3D is untouched.
+     - The master estimates v in prepare when vol1 is given; workers read `flex_pca_noise_var.txt`. It is on by default, and
+       `SIMPLE_FLEX_NOISE_VAR=no` turns it off.
+     - (a) Native vs Python multipliers: r .976-.993 per band. The rest is one per-particle factor, from flex's prep normalising
+       each image by its background sd; with it removed, r .994-.999.
+     - (b) Native sparse_sites at r131: controls 109.5 -> 9.4 nats, blocks 18 -> 9, span .711 -> .765, best block .659 -> .681.
+       The native per-round check needs no change.
+     - (c) IgM identical to the third decimal. qtoyflex closed .9005 -> .9010.
+     - CAVEAT: on the toys the multipliers absorb a little state signal, because the residual is taken against the node mean
+       only (qtoy2 root: v's holo AUROC .61 in band 1, CV .054). On RNase P, v carries no closed signal (.47-.53). The gates
+       decide whether it matters; if they do, the residual is taken after the node's model, not the mean.
+     - (d) Gate battery against the pp_off arms: running.
+   - Checks under nvarB:
+     - The fission copies' residual correlation across noise deciles goes from -.18..+.23 to -.02..+.04, and the fake-map null
+       within noise terciles is flat (.02-.07).
+     - Micrograph sigma2 groups remove 90-93 % of the outside floor (nvarB 99.5 %), and pooling over the 692k root adds
+       nothing. A background-only estimate matches the residual at the same 2-band resolution, so the gain is the 6-band shape.
 2. Data-derived band (sparse-ppca2). The IgM scan rows land, then the rule: gain above the solvent controls, per node or per
    block. Raw gain is out, since it follows the misfit floor on r131.
    - The rule is built into sparse_sites together with the profiled coordinates, validated on the six fixtures, and committed
