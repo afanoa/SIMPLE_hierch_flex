@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:15 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:20 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1157,6 +1157,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - The rule is built into sparse_sites together with the profiled coordinates, validated on the six fixtures, and committed
      to wip after the fast gate.
    - That lets the site chain fire on IgM inside the tree.
+   - IgM 10 % fix band scan (lp 15 lattice; round-1 best seed gain):
+     - 25 A: 2,402 nats, all 5 arms in 4 sites;
+     - 20 A: 1,081, all 5 arms, best readouts;
+     - 17.5 A: 140, one arm weaker;
+     - full band: 12.8, none.
+     Rule (a), the cap with the largest leading gain, picks 25 A; every arm is recovered, with R^2 within .003 of 20 A.
+   - The gain maximum sits at the scan's edge on every fixture: IgM at the coarsest cap, qtoy and r131 at the finest. So the
+     range cannot place the peak yet. 19 runs on norm extend it: IgM fix and null at 30 / 35 A, and qtoyflex, qtoynull and
+     r131 on a finer lattice reaching 12.5 A. The rule evaluation (a vs b) and the design note follow.
+   - Profiled coordinates (`sparse_sites_profiled.patch`, build b4, fast gate 15/15).
+     - The fit is unchanged (1e-4 of b3); 692k closed AUROC .802 -> .797 (best block), .849 -> .844 (span).
+     - Every other readout is within .012, except the IgM 10 % null's moving arms, which lose up to .035 R^2.
+     - Committed as `aac135dfe` on wip after the commit's own build and fast gate passed (15/15, job 55057869,
+       `$H/wip_builds/prof_aac135d`).
 3. Site chain (site-chain). v7 (sklearn-parity tied seed, b6, 15/15) worker tests run on norm. The b5 battery table goes into
    STATUS.
    - If v7 is better at 5 % with nulls at 0, it is the chain.
