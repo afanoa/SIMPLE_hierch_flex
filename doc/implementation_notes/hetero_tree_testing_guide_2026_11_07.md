@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:20 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:26 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -832,6 +832,24 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   at tau 1, .02 at tau 0.6 (.751 vs .772, closed F1 .90 vs .95). The one kept same-class pair is a purity split, not a view split:
   its pure-holo cores are equivalent (z 2.1-2.5) while its non-holo remainders (18 % vs 10 %) differ (z 6.0), which no map-level
   test can merge. On real data Z must be shaped by the per-group noise spectrum (the committed sigma2 groups or flex's noise model).
+- `fission-split` (fission-split2 session; `$H/handoff/fission-split/STATUS.md`; worktree `/Users/atifao/SIMPLE_fission_split` at
+  `cc6d9cbb6`, prototype env vars only):
+  - Setup: the whole tree runs on an X1 project, so poses, labels, the site layer and state_split's EM never see X2. Only the
+    split decision reads X2 (`SIMPLE_SPLIT_FISSION=<X2 project>`), and `SIMPLE_SPLIT_GUARDS=no|locality` switches the guards.
+    tau 0.6. The copies are validated by the fake-map null (qtoynull .010, olenull .011, micnull .015, r131 .025).
+  - (a) Today (mm2, pre-guard log): all three gate nulls pass the split test (qtoynull z 4.68, olenull 9.20, micnull 75.1),
+    and locality_guard merges each.
+  - (b) Guards off, fission test, same labels read on X1 vs X2:
+    - qtoynull MERGED (X2 z -0.19 vs X1 4.10): self-selection.
+    - micnull MERGED (X2 z 0.41 vs X1 61.0): self-selection with a weak pose tilt (eta^2 .023), not the pose-scatter split
+      expected.
+    - olenull KEPT (X2 z 7.78, 2 leaves; X1 15.2): a real contrast / brightness difference. The cross-half EM's small group is
+      brighter in truth (snrq 1.19 vs 1.09); B, defocus and pose are equal. The locality guard merges it (L/L_ref .228).
+    - The effect floor is redundant under fission on all three.
+  - So the guards were doing two jobs. Fission replaces the self-selection one; the locality guard keeps the "states differ
+    locally" one.
+  - (c) Running on build fsp_b2 (patch v3, fast gate 15/15) with fission + the locality guard only: qtoy2 (55038253), r131
+    seed 2 (55038254) and seed 1 (55038255). The corner is read on the trees' maps and re-read from X1 / X2 rebuilds.
 - `extremes-repro` (runs `$L/extremes/`; notes to `$H/handoff/extremes/`): whether the extreme maps along a latent coordinate
   reproduce across fission copies. qtoyflex (first numbers): self-selected tail maps "reproduce" across halves (.13-.51 at
   39-10 A), but so do tails picked along a fake map no particle carries (.23-.45); honest tails (select on X1, rebuild from X2)
@@ -977,8 +995,13 @@ Not to retry:
    null twin, the 10 % fixture and the section-3 gates.
 6. The split test: replace `state_split`'s locality guard and effect floor by a fission test (labels from X1, maps from X2,
    tau 0.6; 7.8 fission VERDICT: the null passes, qtoy2 keeps its states, .02 accuracy cost). Needs a real-data noise model
-   (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback. Prototype running
-   (user: "Yes, gate nulls first"; fission-split2 session: gate nulls with the guards off, then qtoy2 and r131). Fission removes
+   (per-group spectrum; r131's stacks are non-stationary) before the gates; the band split is the fallback. Prototype (user:
+   "Yes, gate nulls first"; 7.8 `fission-split`):
+   - With the guards off, fission merges qtoynull and micnull (self-selection) and keeps olenull's contrast split, which the
+     locality guard merges.
+   - The effect floor is redundant.
+   - The candidate rule is fission + the locality guard; qtoy2 and r131 are running on it.
+   Fission removes
    noise-made splits, not carves of a real continuum (the IgM null twins' root split follows the arm angles); igm-refs Part 5's
    saturation test is the continuum check that would complete the rule.
 7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
