@@ -1,6 +1,6 @@
 ---
 name: rnasep-misfit-noise-spectrum-verdict-2026-11-08
-description: "VERDICT: RNase P per-particle misfit = each particle's in-band NOISE SPECTRUM (sd 29 %, reliability .96, FoilHole/ice, CTF-shaped), not registration; per-particle band-wise EB noise variance kills the solvent floor and lets sparse PPCA read closed (r131 block .70-.74, span .75-.77 vs .66/.71); IgM unchanged; native port built (uncommitted), r131 corner gate missed on seed 1 by .003"
+description: "VERDICT: RNase P per-particle misfit = each particle's in-band NOISE SPECTRUM (sd 29 %, reliability .96, FoilHole/ice, CTF-shaped), not registration; per-particle band-wise EB noise variance kills the solvent floor and lets sparse PPCA read closed (r131 block .70-.74, span .75-.77 vs .66/.71); IgM unchanged; committed default-off as 03506060d; r131 corner 3/4 seeds on vs pp_off 4/4, closed purity .099 vs .079"
 metadata:
   node_type: memory
   type: project
@@ -36,8 +36,10 @@ rnasep-misfit session, 2026-11-07/08 (batch2 `hetero_tree_20261028/handoff/rnase
   particle, so the port scales each particle's observation planes per band in `planes_batch_load` (`flex_plane_store%whiten_bands`);
   `simple_flex_noise_var` estimates in prepare, workers adopt `flex_pca_noise_var.txt`; `SIMPLE_FLEX_NOISE_VAR=no` reproduces pp_off
   exactly. Native r131: floor 109.5 -> 9.4, span .711 -> .765, best block .659 -> .681; IgM identical; qtoyflex within .001.
-  **r131 corner HARD GATE: seed 2 passes (.959 / .541), seed 1 misses by .003 (.947 / .543 vs pp_off 1.004 / .530)**: the
-  coordinator decides. Native = Python up to flex's own per-image background normalisation (r .994-.999 after it); flex floors the
+  COMMITTED default-off (`SIMPLE_FLEX_NOISE_VAR=yes` turns it on) on fork `hetero-tree-wip` as 03506060d: band edges are fractions
+  of kb (today's rings at kb 15), forced-team tester `flex_noise_var`, workers follow the master's file. r131 corner over 4 seeds:
+  pp_off 4/4, noise variance 3/4 (seed 1 .947, seed 4 .953), but its best depth-1 group holds more closed reference rows on every
+  seed (purity .099 vs .079); qtoy2 seed 2 NMI .778 (seed 1's 43/49 merge was a draw). Default-on = the user's decision. Native = Python up to flex's own per-image background normalisation (r .994-.999 after it); flex floors the
   band limit (ring 15 at lp 15), the Python framework rounds it (16). On toys the node-mean residual takes a few % of strong state
   contrast into v (qtoy2 holo AUROC of v .61). TRAP: on these stacks the sigma2 groups (stkind) are the 10 denoise parts.
 - Alternatives scored: micrograph / FoilHole groups and the background-window estimate (6 bands) re-learn the closed block at
@@ -46,6 +48,9 @@ rnasep-misfit session, 2026-11-07/08 (batch2 `hetero_tree_20261028/handoff/rnase
 - COMMITTED 2026-11-08 as fork wip `03506060d`, OFF by default (`SIMPLE_FLEX_NOISE_VAR=yes` turns it on); own build + fast gate
   15/15. Default-on waits for the user: the r131 corner read .947 on seed 1 (bar .95), within pp_off's own seed spread, and that
   own-data readout is largely selection imprint.
+- 4-seed r131 table (2026-11-08 morning): own-data corner nv 3/4 vs pp_off 4/4 (seed 1 .947), but the independent closed-reference
+  purity of the best depth-1 group is higher with nv on every seed (mean .099 vs .079; recall .60-.80 vs .54-.62); qtoy2 seed 2
+  equal (.778 vs .780). Coordinator recommended default on; the user's call.
 **Why:** the RNase P blocker for the shared tree model and sparse sites was per-particle misfit; this is its cause and fix.
 **How to apply:** any real-data latent / site / fission work on the RNase P stacks needs per-particle band-wise noise first; draw
 fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026-11-07]], [[band-must-be-data-derived]], [[tree-latent-verdict-2026-11-07]], [[extremes-fission-verdict-2026-11-07]],

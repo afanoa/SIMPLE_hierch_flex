@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 06:20 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 06:23 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1227,7 +1227,23 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          `unit_heterogeneity` (suite `flex_noise_var`), a stale file retired so workers can't adopt it, and the switch
          `SIMPLE_FLEX_NOISE_VAR=yes`.
        - Builds 2 and 3 agree to 3e-7 on IgM.
-       - The r131 seeds 3-4 table (both arms) is still to come for the default-on decision.
+       - SEED TABLE (r131 corner, best stage-B map, own data: closed >= .95 / open <= .6; closed-reference purity of the best
+         depth-1 group is the independent readout, base share .069):
+
+         | seed | pp_off map | nv map | nv gate | best-group purity (recall), pp_off / nv |
+         | --- | --- | --- | --- | --- |
+         | 1 | 1.004 / .530 | .947 / .543 | miss .003 | .078 (.56) / .083 (.60) |
+         | 2 | .960 / .544 | .959 / .541 | pass | .085 (.62) / .106 (.80) |
+         | 3 | 1.016 / .511 | 1.040 / .545 | pass | .081 (.54) / .116 (.80) |
+         | 4 | 1.008 / .502 | .953 / .546 | pass (+.003) | .073 (.54) / .091 (.60) |
+
+       - On the own-data map gate, pp_off passes 4 of 4 and nv 3 of 4. On the independent readout nv concentrates the closed
+         reference rows more on every seed (mean purity .099 vs .079, recall .60-.80 vs .54-.62).
+       - qtoy2 seed 2 with nv: NMI .778 (pp_off .780), closed .91 (.89), holo .94 (.94), and combos 43 / 49 separate again (.87 /
+         .83). So seed 1's merge was that seed's draw.
+       - The default-off build reproduces pp_off r131 seed 2 exactly.
+       - Coordinator's recommendation: default ON. The closed state is not lost but better concentrated on every seed, and the
+         one-seed own-data miss sits in the imprint-prone readout. The user decides.
      - Absorption check (nvarBG6, a signal-free background estimate on 6 bands): every 6-band or group model re-learns the
        closed block at .72-.74, so nvarB's closed gain is not signal absorbed into the noise level.
    - Checks under nvarB:
@@ -1434,7 +1450,7 @@ Waiting for the user:
 - decision 9 (the r131 gate's honest readout) — FIRST: the own-data corner readout is largely selection imprint (7.10 thread 7);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): on or off, given the 4-seed r131 corner table (commit is default-off).
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on.
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
