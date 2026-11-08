@@ -29,5 +29,10 @@ the IgM-like fixtures and holds every null, but on RNase P its splits track per-
 - 2026-11-08 ~05:30: at r131 neither the latent forest nor the site chain's full-image round isolates closed (7 % at d' ~.9; the
   seeds halve the node, and the halves' maps read the node mean). The production tree finds the corner only at depth 2, after a
   halving carve that enriches closed 1.5x. Open design question: allow an exploratory carve, then an honest test one level down.
+- 2026-11-08 ~06:00: the two-level test fails (no site survives in the enriched halves). The production r1 corner comes from stage
+  A's iterated full-image 2-state assignment, and its labels read the corner even at fixed poses. But the partition is barely
+  enriched in the reference closed rows (.085-.106 vs .069), and the delivered tree's corner leaf reads .93 honestly vs 1.03 on
+  own data. So the own-data r131 corner gate is largely selection imprint, and the honest gate (decision 9) must come first
+  ([[extremes-fission-verdict-2026-11-07]]).
 Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]],
 [[rnasep-closed-state-must-be-retained]].

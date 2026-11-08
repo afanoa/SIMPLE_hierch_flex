@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: d63181a2-43e0-44aa-a87c-6f7c55606053
-  modified: 2026-11-08T10:09:12.374Z
+  modified: 2026-11-08T10:36:58.052Z
 ---
 
 site-chain session, 2026-11-07/08. Handoff `hetero_tree_20261028/handoff/site-chain/{STATUS,VERDICT}.md`, runs
@@ -27,6 +27,15 @@ site-chain session, 2026-11-07/08. Handoff `hetero_tree_20261028/handoff/site-ch
   - every split is a near-half (17-28k of 44k);
   - the purest group holds .115 closed (1.7x the .069 share; .100 with the noise model off);
   - its maps read .887-.896 / .59, the node mean, so own data already fails the corner.
+
+- Two levels (those groups as child nodes, own mean, noise model on): the sparse fits find no surviving site, so the chain has
+  nothing to test.
+- Where the production tree's r131 corner comes from (gates pp_off_r131 / nv_r131, node r1): it crosses .95 in stage A, the
+  iterated 2-state refine3D (prob_neigh, lp 15, 3 its) seeded by the fflex groups.
+  - Its r1_s2 labels, rebuilt at FIXED root poses, still read .972 / .963 at only .085 / .106 reference-row purity.
+  - So the partition (iterated likelihood selection) is the ingredient, not pose re-search or PCG.
+  - Reference-row purity does not predict the readout.
+  - On own data the corner is mostly imprint ([[extremes-fission-verdict-2026-11-07]]: a corner leaf at .93 honestly).
 
 **Why:** the K=2 tied seed halves a node whose minority state has no second mode, and the full-image round keeps the halves. The
 hybrid "shared basis -> seeds -> round" resolves balanced binary states, not a 7 % tail.

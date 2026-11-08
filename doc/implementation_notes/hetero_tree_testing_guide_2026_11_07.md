@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:21 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:38 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1394,6 +1394,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        corner readout), and the logs show what pp_off's r1 stage B did (seeds, states, pose re-search or not).
        - If the corner appears, the design question for the user is an exploratory carve (not discrete) followed by an honest
          test one level down.
+     - TWO-LEVEL TEST: NEGATIVE (site-chain STATUS, "The two-level path"). As child nodes, both enriched groups give sparse fits
+       where no site survives (seed 29.8 / 33.9 nats keeps 3.6 / 3.0 once grown), so the chain has nothing to test.
+     - WHERE THE PRODUCTION CORNER COMES FROM (`r131_ctrl/`, pp_off and nv seed 2): stage A's iterated full-image 2-state
+       assignment, seeded by its fflex groups. The corner appears in stage A (.948 / .951), before stage B.
+       - The tree's own r1_s2 labels, rebuilt at FIXED root poses, still read the corner (.972 / .963). Pose re-search and the
+         focused PCG are not needed; the partition is the ingredient.
+       - That partition is barely enriched in the reference closed rows (purity .085 / .106 against the share .069). The chain's
+         purer b7 g2 (.115) reads .887. Reference-row purity does not predict the readout.
+       - So iterated likelihood selection against closed-ish maps picks particles whose own data rebuilds the closed arm. The
+         extremes verdict's fission re-read of the delivered tree's corner leaf gave .93 / .59 against 1.03 / .54 on own data.
+       - KEY: the r131 corner gate, read on own data, largely measures selection imprint. Honestly read, no method shown so far
+         passes .95 at r131: the shared model .81, the production corner leaf .93 (delivered tree), the chain's groups .89.
+       - Tonight's own-data gate calls inherit this, e.g. the noise model's seed-1 .947 against the bar. This makes decision 9
+         (the r131 gate's honest readout) the first decision for the user.
      - Next, the decisive test: the site chain's worker at r131, seeded from the noise-model sparse fit (closed span .765), with
        the corner gate read on the round's group maps, noise model on vs off.
    - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
@@ -1403,7 +1417,7 @@ Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
 - decision 6 (fission split test: no as it stands);
-- decision 9 (the r131 gate's honest readout);
+- decision 9 (the r131 gate's honest readout) — FIRST: the own-data corner readout is largely selection imprint (7.10 thread 7);
 - the held precision fix;
 - a production candidate;
 - the noise-variance default (flex): on or off, given the 4-seed r131 corner table (commit is default-off).
