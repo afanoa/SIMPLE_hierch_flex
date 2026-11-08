@@ -26,5 +26,9 @@ session found such a residual: band-wise residual power SD about .29, reliabilit
 - On real data, give any fission-tested split a per-particle band-wise sigma^2, in the E-step whitening and in the fission draw.
 - Report each accepted split's association with log-likelihood and amplitude before reading it as a state.
 - Toy fixtures do not show this trap.
+- 2026-11-08 01:10 (rnasep-misfit, `math_reworks/rnasep_misfit/runs/floor_r131_*`): the per-particle BAND-WISE noise variance
+  (empirical Bayes, nvarB) removes r131's solvent-control floor: 12 out-of-mask controls 59-90 nats (SE 6-8) -> -4.2..+2.8
+  (SE 1.3-1.9). A scalar per-particle variance only reaches 41-70, and a per-particle band scale changes nothing. The shared tree
+  with nvarB (`mf_tree.py`, r131 + a 692k 50k subsample) was running at the time; its closed readout decides the port.
 
 Related: [[tree-latent-verdict-2026-11-07]], [[data-fission-merge-test-verdict-2026-11-07]].

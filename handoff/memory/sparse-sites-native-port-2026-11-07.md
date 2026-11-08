@@ -58,10 +58,14 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
   gains about .004-.008 nats per held-out particle, with no radial trend.
 - The strict seed-gain floor dropped nothing on either root (1.5-4.2x the seed), so the strict and 2-SE forms agree there.
 
-- **Trap: the units do not transfer across lp for IgM.** The 10 % fix at lp 15 (box 92, 71.5 min, 27.3 GB) finds NO site.
-  - Seed gain 12.8 vs 8,172 nats at lp 20; all 60 seeds decay about 0.55x per iteration, like noise seeds.
-  - The constants are in working-box voxels, so the seed ball is 35.5 A at lp 15 vs 46.7 A at lp 20, and the 60-seed cap leaves
-    gaps (7.3 vs 5 voxels).
-  - qtoy and RNase P at lp 15 (box 36) are fine. Validate IgM work at lp 20.
+- **Trap: the BAND, not the seed size, kills IgM sites at lp 15.** The 10 % fix at lp 15 (box 92) finds no site: seed gain 12.8 vs
+  8,172 nats at lp 20.
+  - lp 20's 46.7 A seeds at lp 15 still fail (gain 5.5 nats).
+  - The same lp 15 lattice and seeds with only the band capped at 20.4 A recover all 5 arms, equal to lp 20 within .007
+    (`native/bx10fix20`).
+  - The extra 15-20 A shells hold most of a seed's cells and no arm signal, and the shared empirical-Bayes ridge then shrinks every
+    seed to zero.
+  - User (2026-11-08): "really the band should be data derived". Band scan: box 36 has the gain max at the full band (qtoyflex
+    readouts best there), but r131's closed state reads best at 21-26 A while its control floor grows 3x with the band.
 
 **Next:** profiled-coordinate reruns on build b4 (jobs 55047793-5), then the chain integration.

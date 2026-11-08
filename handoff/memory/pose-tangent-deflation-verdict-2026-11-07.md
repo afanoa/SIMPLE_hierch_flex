@@ -38,7 +38,11 @@ Lever 5 of guide 7.8, run 2026-11-07 (Python, `latent_states_v4` statistics, the
   - Seed 1: the profile perturbs the root's flex states (this latent has no pose error), so the pole rule keeps one site. The root
     splits K=2 instead of 3, and r1's closed split falls to the effect floor (P/N 1.45 < 2).
   - The closed signal itself is intact (0.6 % in the tangent span; 4.4 % per particle removed; LDA .746 -> .745).
-  - Two seeds cannot separate a systematic cost from a near-tie flip; reported to the coordinator, nothing reverted.
+  - 5 seeds (2026-11-08): closed F1 on .315 +- .063 vs off .441 +- .012; holo .586 vs .601, lower in every seed; K=3 root on 0/5
+    vs off 2/5. The profile thins the root's site layer (fewer kept poles), so the cost is systematic.
+  - A 2-SE pose-share gate fails (qtoyflex R^2 .003 is ~14 SE); the truth-free evidence share separates cleanly (IgM .75-.87,
+    elsewhere <= 0).
+  - Recommended (c) default off (`SIMPLE_FLEX_POSE_PROFILE=yes` to enable); awaiting the user via the coordinator.
 
 **Why:** settles lever 5. The port is hygiene (no IgM arm gain); it passed the gates but costs qtoyflex closed at one seed.
 **How to apply:**

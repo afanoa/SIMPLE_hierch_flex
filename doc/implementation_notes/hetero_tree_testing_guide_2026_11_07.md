@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:15 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1139,6 +1139,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - Then tree-latent reruns its decisive RNase P test, with the noise model in the whitening AND the fission draw, and
      sparse-ppca2 reruns r131 / 692k.
    - If the shared model then finds the closed lineage honestly, the forest port starts (`handoff/tree-latent/PORT_DESIGN.md`).
+   - 01:10, the floor is fixed (runs `$M/rnasep_misfit/runs/floor_r131_*`).
+     - nvarB (the per-particle band-wise noise variance, empirical Bayes) takes r131's out-of-mask solvent controls from 59-90
+       nats (SE 6-8) to -4.2 to +2.8 (SE 1.3-1.9). Its band-wise variants (nvarBC, insideB) do the same.
+     - A scalar per-particle variance (nvar1) only reaches 41-70, and a per-particle band scale (bscale) changes nothing.
+     - So the floor is the noise level, band by band.
+     - rnasep-misfit already runs the shared tree with nvarB, base vs nvarB, on r131 and a 692k 50k subsample (jobs 55052871,
+       55054551). `mf_tree.py` is tl_tree8 plus the observation model in the E-step, the fission draw, the test maps and the
+       scores.
+     - Random-split controls: no call on either root (z_mid 0.0 / -1.5).
 2. Data-derived band (sparse-ppca2). The IgM scan rows land, then the rule: gain above the solvent controls, per node or per
    block. Raw gain is out, since it follows the misfit floor on r131.
    - The rule is built into sparse_sites together with the profiled coordinates, validated on the six fixtures, and committed
@@ -1150,10 +1159,38 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - Once the band rule lands, the IgM chain trees rerun. If IgM gains in the tree and the gates pass, site_chain is committed
      to wip.
    - Then the factorial-output proposal (no build).
+   - b5 battery done (`$H/handoff/site-chain/STATUS.md`, "Gate table", 14 rows). Every section-3 row passes and reproduces
+     pp_on's partition:
+     - qtoy2: 8 leaves, NMI .811, closed .89, holo .94;
+     - r131: corner kept on both seeds;
+     - nulls: 1 leaf each;
+     - ole: 8 leaves.
+     The chain never fired on a gate node, because the lp-15 sparse fit finds 0 blocks on every one. It stays unexercised until
+     the band rule lands.
 4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
    evidence share, or off. The committed default changes only with the user.
+   - 5 seeds per arm (qtoyflex): the cost is systematic.
+     - Closed F1 with the profile on is .315 +- .063, against .441 +- .012 off. Holo is .586 against .601, lower in every seed.
+     - A K = 3 root appears on 0/5 seeds with it on, against 2/5 off.
+     - Cause: the profile thins the root's site layer (fewer kept poles).
+   - Gates: a 2-SE pose-share gate fails (qtoyflex R^2 .003 is about 14 SE). The truth-free evidence share separates cleanly
+     (IgM .75-.87, elsewhere <= 0).
+   - Recommendation (c): default off, with `SIMPLE_FLEX_POSE_PROFILE=yes` to enable. The user decides.
 5. Flex -> refinement priors (oracle, Part 7): the verdict when the chains finish.
 6. Every verdict goes into this guide and memory, pushed to fork wip. New jobs go to norm. Nothing goes to production.
+7. The whole shared model (tree-latent; user: "what about the whole shared model").
+   - Thread 1 decides RNase P. The model has two untested parts besides, and both run tonight.
+   - Per-subtree refinement of the shared basis ("refinements per subset"):
+     - At each accepted node, refit the pursuit on the node's members, on y2, since its stop decides structure.
+     - Keep the parent's blocks (nested), and add blocks only by the knob-free stop. Then regrow the subtree.
+     - Targets: qtoy2's conformer 1 | 2 pair (pp_on, which re-finds sites per node, gets NMI .811 against .766) and IgM a5's
+       two 40 % states. Every null must gain no block.
+     - If it resolves a miss with the nulls clean, it becomes the port's per-node step. Else the frozen root basis stands.
+   - The knob-free band:
+     - When sparse-ppca2's rule lands, the fixture battery reruns on the rule's bases. Today the IgM result rests on a fixed
+       lp 20.
+     - In the refined model a child's new blocks take the child's own band, so the frequency march lives inside one model.
+   - Pose refinement per subset stays the port's job (stage A per product leaf).
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
