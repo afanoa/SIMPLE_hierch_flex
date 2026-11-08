@@ -1,11 +1,11 @@
 ---
 name: saturation-fission-site-test-verdict-2026-11-07
-description: "VERDICT 2026-11-07 (Part 5 of igm-refs): knob-free per-site test = saturation of cross-half steps between 4 score-quantile groups with in-memory fission; fixes both qtoyflex GAPw failures with true groups and passes IgM 10 % a1 fix / null; fission halves the score's information, 5 % arms untested"
+description: "VERDICT 2026-11-07 (Part 5 of igm-refs): knob-free per-site test = saturation of cross-half steps between 4 score-quantile groups with in-memory fission; fixes both qtoyflex GAPw failures with true groups and passes IgM 10 % a1, but loses 3-state arms split in two (p3: 3/5 vs GAPw 5/5): a complement to GAPw, not a replacement"
 metadata:
   node_type: memory
   type: project
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-07T23:11:30.090Z
+  modified: 2026-11-08T00:03:20.203Z
 ---
 
 Handoff `/mnt/beegfs/elmlund/afan/hetero_tree_20261028/handoff/igm-refs/VERDICT.md` section Part 5; outputs in results/part5/.
@@ -29,11 +29,19 @@ framework's cached planes (sparse_ppca/cache, read only; a guard refuses to rebu
   - Fission halves the score's information (10 % a1 d' 2.27 -> 1.55, r .50 -> .75), so the 5 % arms may give no call.
   - qtoyflex's round-1 closed split gives no call, because round 1 misses closed.
 
+- Addendum (19:02, on Part 4b's p3 round-1 labels):
+  - It finds 3 / 5 IgM main blocks: it LOSES both 3-state arms split in two (a2 1.10 / 1.37, a5 1.52 / .87; GAPw .22 / .19).
+    The middle state straddles the boundary, so the steps are collinear and equal, as in a continuum.
+  - 0 / 3 extras, 0 / 13 null blocks.
+  - qtoyflex holo / closed: no call, because round 1's groups (31 %, 42 %) put the jump inside a side.
+  - End-peaked control (IgM null a1, 20x keep-probability fall): dense side r 1.04 / 1.08 +- .4, not discrete.
+  - So it complements GAPw; it does not replace it.
+
 **Why:** the tree needs a site acceptance test without GAPw's calibrated .28. It must also handle curved continua and minorities
 next to a continuum (RNase P's closed corner).
 **How to apply:**
-- Treat sat5 (fis) as the per-site test candidate.
-- Run the full Part 4 panel (the 5 % arms above all) before adopting it.
+- Use sat5 (fis) only as a check where GAPw misreads (a curved continuum split in two); keep GAPw for IgM-like arms.
+- Measure the 5 % arms before relying on it.
 - Size jobs to ~7 min and 12 GB for an IgM root, 1 min and 3 GB for qtoyflex.
 - Related: [[per-site-discreteness-test-gapw-verdict-2026-11-07]], [[rnasep-closed-state-must-be-retained]],
   [[data-fission-merge-test-verdict-2026-11-07]].

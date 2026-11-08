@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-07T23:11:36.120Z
+  modified: 2026-11-08T00:03:08.738Z
 ---
 
 Handoff `/mnt/beegfs/elmlund/afan/hetero_tree_20261028/handoff/igm-refs/VERDICT.md` section Part 4; per-block files results/part4/.
@@ -19,6 +19,9 @@ Scripts `disc_a.py` (+ sbatch / list), `igs_run2.sbatch` (K = 2 round-1 + GAPw),
     alone split at its true s1 median is called DISCRETE (.13, lobes 30 A apart; reading, not tested: a curved swing leaves the
     chord empty).
   - Only .28 is calibrated (5 % IgM null median - 3 robust sd); the gates are fixed physical or dimensionless constants.
+- **Part 4b (p3 knob-free blocks, every block fed):** 5 / 5 arm main blocks DISCRETE (.04-.22), 0 / 3 extras (b5, b7, b8; nearest
+  b7 .36), 0 / 13 null blocks (.48-1.65). qtoyflex's closed reader b3 still gets no call (round 1 42 / 58, lobes 3 A).
+  The p3 extras are b5, b7, b8 (b6 = a5 main).
 - **(a)** per-particle held-out tests on sparse-PPCA block coordinates (100 bootstrap replicates, p < .01) fail:
   - 2- vs 1-Gaussian: its Gaussian null sits at -.0025 nats/ptcl (sd .0002), so it accepts anything non-Gaussian; false accepts
     5 / 12.
