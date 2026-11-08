@@ -23,6 +23,11 @@ blocks included). Held-out likelihood: fit on even, score on odd.
 - TRAP: integrating the nuisances under their fitted Gaussian prior gets 5-6 of 10 independent pairs called, and the calls
   survive the bootstrap. Profile the nuisances.
 
+- Final (all jobs done): the null twin's 10 pair tests all favour the product (free table -4.1 to -55.1 nats, z -1.1 to -7.5);
+  0 false calls on 70 independent pairs. CAVEAT: refits from another start of the site mixtures keep the decision but move the
+  gain by up to 5 paired SE (e.g. a3-a4 -4.1 vs -42.7), so fit site mixtures with restarts before the merge test. The
+  covariance screen catches 2 of 4 same-arm IgM block pairs (a2 [4]-[7] z 4.3, [4]-[8] 2.7); joint-within-site stands.
+
 **Why:** decides the shape of the cohesive model the user wants ("a cohesive model over the entire tree"): a forest of per-site
 trees, not one joint tree. That also explains the equivalence merge-up: a joint tree duplicates a site's states under other
 branches.

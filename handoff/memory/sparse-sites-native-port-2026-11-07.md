@@ -58,4 +58,10 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
   gains about .004-.008 nats per held-out particle, with no radial trend.
 - The strict seed-gain floor dropped nothing on either root (1.5-4.2x the seed), so the strict and 2-SE forms agree there.
 
-**Next:** the IgM lp 15 run (job 55044235, tag vx10fix15), then the chain integration.
+- **Trap: the units do not transfer across lp for IgM.** The 10 % fix at lp 15 (box 92, 71.5 min, 27.3 GB) finds NO site.
+  - Seed gain 12.8 vs 8,172 nats at lp 20; all 60 seeds decay about 0.55x per iteration, like noise seeds.
+  - The constants are in working-box voxels, so the seed ball is 35.5 A at lp 15 vs 46.7 A at lp 20, and the 60-seed cap leaves
+    gaps (7.3 vs 5 voxels).
+  - qtoy and RNase P at lp 15 (box 36) are fine. Validate IgM work at lp 20.
+
+**Next:** profiled-coordinate reruns on build b4 (jobs 55047793-5), then the chain integration.

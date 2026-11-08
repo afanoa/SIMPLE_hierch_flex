@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1052,6 +1052,11 @@ site-coupling VERDICT (`$H/handoff/site-coupling/VERDICT.md`): factorial across 
   sites merge only when their free table beats the product by 2 SE held out. This is also why the joint hetero tree needs an
   equivalence merge-up: it duplicates a site's states under other branches.
 - Sent to tree-latent (the port note builds on the forest) and site-chain (a factorial output-mode proposal after its tests).
+- Final (all jobs done):
+  - The null twin's 10 pairs all favour the product (z -1.1 to -7.5); 0 false calls on 70 independent pairs.
+  - CAVEAT: refits of the site mixtures from another start keep the decision but move the gain by up to 5 paired SE, so fit
+    site mixtures with restarts before the merge test.
+  - The covariance screen catches 2 of 4 same-arm IgM block pairs.
 
 tree-latent, qtoy2 v2: the root split is DISCRETE (z 28.8, deconvolved d' 9.9), but the numpy code took 51 min for qtoy2's
 14-coordinate site; a compiled version is rerunning.
