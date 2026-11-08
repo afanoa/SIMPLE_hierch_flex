@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-08T09:14:58.599Z
+  modified: 2026-11-08T12:48:54.756Z
 ---
 
 Moved here verbatim from MEMORY.md on 2026-10-29 (index over its limit). One line per memory file.
@@ -85,7 +85,7 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [spectrum-stop-rule-verdict-2026-11-07](spectrum-stop-rule-verdict-2026-11-07.md) — VERDICT: latent spectrum above a BBP edge is no stop rule (nulls continue on nuisance, N sets 692k stop, closed spike <= .13); r+1 is a lower bound; n/sqrtN law = BBP
 - [site-shift-profile-verdict-2026-11-07](site-shift-profile-verdict-2026-11-07.md) — VERDICT: flat in-plane shift profile in the site classifier kills the IgM core-patch shift split, keeps a1 DISCRETE; a 1 px prior fails
 - [per-site-discreteness-test-gapw-verdict-2026-11-07](per-site-discreteness-test-gapw-verdict-2026-11-07.md) — VERDICT: GAPw = the site-layer test (decision 8): 14/14 IgM arm blocks, 0/25 false accepts; fails qtoyflex both ways (curved continuum, closed minority)
-- [fixed-latent-prior-on-state-eval-verdict-2026-11-08](fixed-latent-prior-on-state-eval-verdict-2026-11-08.md) — VERDICT: sparse-PPCA block prior on state_eval helps only where the seed carries the arm (IgM 10 % +.01-.05); anchors 5 % tail seeds; held-out alpha > 0 on nulls
+- [fixed-latent-prior-on-state-eval-verdict-2026-11-08](fixed-latent-prior-on-state-eval-verdict-2026-11-08.md) — VERDICT (Parts 7, 7b): a fixed sparse-PPCA block prior on state_eval amplifies its seed's split, arm or null (+.003-.053 on carried arms, +.010-.016 on a balanced 10 % null); polish after GAPw only, tied-refit seed, alpha 1; held-out alpha freezes the seed
 - [saturation-fission-site-test-verdict-2026-11-07](saturation-fission-site-test-verdict-2026-11-07.md) — VERDICT: fission saturation test fixes qtoyflex GAPw failures only with true groups; IgM power 6/14 (0/4 at 5 %, 3-state arms lost) vs GAPw 14/14: decision 8 = GAPw
 - [fission-split-test-verdict-2026-11-07](fission-split-test-verdict-2026-11-07.md) — VERDICT: fission + locality guard passes the gate nulls and keeps qtoy2 but fails the r131 hard gate at tau 0.6 and 1 (the root near-tie never splits honestly)
 - [tree-latent-shared-basis-verdict-2026-11-07](tree-latent-shared-basis-verdict-2026-11-07.md) — VERDICT: shared-basis latent tree passes every null, isolates qtoyflex closed (.558), IgM 10 % .26; IgM 5 % one leaf

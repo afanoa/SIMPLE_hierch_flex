@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 06:23 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 07:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1339,6 +1339,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Caveat: β* sits at its grid top in 39 of 45 null and 5 % rounds.
    - Part 7b approved: the 10 % null and both 5 % fixtures, seeded from v7's sklearn tied refit, with no-prior / held-out α /
      α = 1 arms from that one seed, and a wider β grid.
+   - Part 7b VERDICT (igm-refs VERDICT.md; `results/part7b/`): the fixed prior amplifies whatever split its seed carries.
+     - From the tied refit seed it helps the 5 % arms: α = 1 minus no prior at round 3 is +.015 / +.021 / +.020 / +.003 on a1 /
+       a3 / a4 / a2, and it holds near-true proportions where no prior pulls toward 50 %. Most of the gain over lever 3 comes
+       from the seed itself.
+     - It anchors and deepens balanced null carves. α = 1 deepens the 10 % null carve on all five blocks (+.010 to +.016 over no
+       prior), so the null criterion fails.
+     - The held-out α hits its grid floor in most rounds (SIMPLE α 51-68), where it freezes the seed. It is never the right
+       weight.
+     - RULE: the prior is only a polish, at α = 1, on a site GAPw has accepted, seeded by the tied refit. Never weight it by
+       the held-out α, and never use it as an acceptance test.
+     - The proposed GAPw check on the tied seed's null carves is already covered: site chain v7 accepts 0 / 15 and 0 / 5 on the
+       nulls.
 6. Every verdict goes into this guide and memory, pushed to fork wip. New jobs go to norm. Nothing goes to production.
 7. The whole shared model (tree-latent; user: "what about the whole shared model").
    - Thread 1 decides RNase P. The model has two untested parts besides, and both run tonight.
