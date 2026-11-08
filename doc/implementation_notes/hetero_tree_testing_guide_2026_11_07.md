@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:04 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:16 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -725,8 +725,20 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
     headers); build `$M/sparse_port/b2` (job 55037253), fast gate 15/15, check_flex_dag and check_cli_chain pass. Native = Python on
     the gate roots: qtoyflex 2 blocks in 1 site, closed / holo AUROC .901 / .929 (Python .901 / .931), 118 s and 1.8 GB (Python
     ~5 min); qtoynull 0 sites. One seed constant (5 lattice voxels, ~2.3 lp) for both molecules. The per-round grown-block check
-    stops qtoynull at round 1 and the 5 % null at round 2 (was 9 rounds), leaves qtoyflex's list unchanged. IgM fixtures running
-    (job 55037252); the validation table follows.
+    stops qtoynull at round 1 and the 5 % null at round 2 (was 9 rounds), leaves qtoyflex's list unchanged.
+    Native validation (5 of 6 fixtures, rule as written):
+    - 10 % fix: 5/5 arms, 7 blocks in 5 sites, purity .95-.97, coverage .99-1.00, readouts within .006 of Python. 22.7 min and
+      13.6 GB (Python 35-57 min, 31 GB).
+    - 5 % fix: 5/5 arms (Python 4/5, a5 missed); R^2 .185-.304, LDA .102-.181. 26.6 min.
+    - 5 % null: 5 sites, the five continuously moving arms (coverage .99-1.00, angle R^2 .135-.151, above T1's true-mask .12),
+      with no discreteness (2- vs 1-Gaussian gain -.0028 to -.0033). The null twins' arms really swing, so Python's 0 sites
+      there was a sensitivity miss: the criterion is "no discreteness", not "0 sites".
+    - qtoyflex: closed / holo .901 / .929. qtoynull: 0 sites. 10 % null: running.
+    Departure: under flex's noise model the solvent controls' held-out gains are negative (-1.6 to -2.9; Python +0.5 to +4.6),
+    so near-dead blocks (0.3-2.2 nats, SE <= 0.4) pass "2 SE and every control" and widen arm masks. Fix (approved; build b3): a
+    grown block must keep the evidence that admitted it, i.e. its held-out gain may not fall below its seed's by more than 2 SE
+    of the paired difference. Real blocks end at 1.04-16x their seed and weak ones at 0.07-0.6x. A block that is strong when
+    added and redundant later stays inside its arm's site, and GAPw rejects such blocks (Part 4b).
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
