@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1142,9 +1142,16 @@ Not to retry:
      IgM trees running (site_chain=yes, igm keys, maxdepth 4): `$M/gates/sc1_igm{10fix,10null,fix,null}` (55040098-101). The
      gate battery follows. The stock same-run tree comes from collapsing the chain splits (`sc_collapse.py`).
      - BUG found on the way (also hits `site_split=yes`): when stage B leaves a single state, the node called decide() and was
-       then forced to S_DONE. That dropped a submitted per-site split and left its rows unplaced. Fixed (the step stays on
-       S_SITESPLIT / S_SITESPARSE); asked for as a separate patch, with a log check of which earlier `site_split=yes` runs it
-       hit.
+       then forced to S_DONE. That dropped a submitted per-site split and left its rows unplaced. COMMITTED as `b712021b2` (one
+       line; the step stays on S_SITESPLIT, as the S_SPLIT branch already does). Audit: the six earlier `site_split=yes` trees made
+       9 per-site submissions, all at 2-state nodes and all resolved, so no earlier run was hit.
+     Build b2 (`site_chain_full_v3.patch` = the fix + `site_chain_on_sdone_fix.patch`): fast gate 15/15 (55040431).
+     - Children skip blocks already used on their path; seeds take the best of 8 starts; lp 15.
+     - 13 trees run on b2 (21:24, `$M/gates`):
+       - IgM: `sc2_{igm10fix,igm10null,igmfix,igmnull}` (55040553-6), plus stock same-binary twins `sc2off_{igm10fix,igm10null}`.
+       - Chain-exercising arms: `sc2md1_{qtoynull,olenull,micnull}`, `sc2md2_{qtoy2,r131,r131_s1}` and `sc2_qtoyflex`
+         (55040559-65).
+     - The section-3 battery follows the first clean firing.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
