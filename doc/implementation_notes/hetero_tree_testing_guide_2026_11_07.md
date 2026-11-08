@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:01 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1145,6 +1145,25 @@ Not to retry:
     stays in latent space. Optionally a Student-t robust weight from the latent Mahalanobis distance.
   - Scored: against truth maps per state, minorities first, and the r131 closed-arm readout on hard vs soft maps.
 - site-chain: the first chain-exercising null, `sc3md1_micnull`, is one leaf (sparse PPCA found no site there).
+- M-est interim (tree-latent, qtoyflex, oracle references): soft weights trade bias for noise.
+  - Closed leaf: deviation FSC .512 -> .611, error .863 -> .668, map FSC .736 -> .822, but the closed-specific slope falls
+    .509 -> .235.
+  - Holo leaf: correlation and FSC up, error and slope down. Arm leaf: slightly better on all four. Robust is close to soft.
+  - Why: weights from y1 with maps from y2 give a confusion-weighted mixture of the state means.
+  - Asked for: an UNMIXED estimator, mu = C^-T M with the mixture's confusion matrix, for soft and hard maps alike.
+- tree-latent on r131: ONE leaf, so hard and soft coincide. Like the fission split test, the shared model does not split the
+  r131 root honestly at 44k. The 692k run is going.
+- Flex -> refinement priors revisited (user: "perhaps we should also revisit flex --> refinement posteriors"; oracle session,
+  igm-refs Part 7).
+  - Why it may differ from the 11-06 verdict: on IgM stage B never resolves the arms, so a prior has nothing to fade against;
+    and the posteriors are now sparse-site ones with precision A, not the miscalibrated whole-molecule latent.
+  - The test: state_eval with SIMPLE_STATE_PRIOR = alpha log w from the tied seeds' responsibilities, against lever 3's forced
+    seed, with alpha by checkerboard held-out and at 1. Rounds 1-3; null carving, and alpha on the nulls.
+- Idea (user: "sparse ppca kind of reads like a nonuniform filter"): both choose a local model per region by noise-calibrated,
+  held-out criteria on a spatial grid. The NU filter picks a local band for the MEAN (candidate bank + Potts smoothing); sparse
+  PPCA picks local supports for the VARIABILITY (a group lasso, calibrated by sign flips, + the per-shell prior). A unified
+  "nonuniform sparse PPCA" would let each site's modes take their own local band from `simple_nu_filter`'s machinery.
+  Untested; for the paper's framing.
 - Nothing is promoted to production (`hetero-tree`) without the user. Every verdict goes into this guide and memory, pushed to
   the fork.
 
