@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:02 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1313,6 +1313,26 @@ Not to retry:
      - Stock twins (b2): the 10 % null is 1 leaf; the 10 % fix root splits 52.5k / 47.5k into two leaves, so the chain fires at
        r1 / r2.
      - On b5: IgM chain trees `sc5_*` (55046502-5) and the section-3 battery `sc5_*` (55046506-12).
+     ROUND TABLE (`$H/handoff/site-chain/round_table.md`; 33 blocks x 6 variants; the lp-20 root fits): the tied seed carries the
+     gain, and the round matters little once the seed is tied. Accepted arm blocks (product of their labels) / null false
+     accepts:
+
+     | seed + round | 10 % fix | 5 % fix | 10 % null | 5 % null |
+     | --- | --- | --- | --- | --- |
+     | full, no round | 3 (.160) | 0 | 0 | 0 |
+     | full + Fortran | 3 (.264) | 2 (.031) | 1 (b9) | 0 |
+     | full + state_eval | 3 (.215) | 2 (.057) | 0 | 0 |
+     | tied + Fortran | 4 (.321) | 3 (.078) | 0 | 0 |
+     | tied + state_eval | 4 (.280) | 3 (.081) | 0 | 0 |
+
+     - The b9 false accept exists only with the full seed + Fortran round.
+     - a2 is never DISCRETE. The tied seed loses 5 % a3, which only full seeds catch.
+     - The chain as delivered is tied + Fortran (v6, b5). DECISION 3 IS NOT NEEDED by the chain; the state_eval port
+       (`$M/site_chain/state_eval_port.patch`, 5 files, b3se 15/15) stays a separate patch for the user.
+     - Remaining lever: the Fortran tied fit converges worse than sklearn's at 5 % (seed a1 .061 vs .181, a3 .005 vs .164).
+       Asked for convergence parity (k-means++, sklearn's n_init / tolerance) as v7.
+     tree-latent profiling cost: profiling amplitude out of the site coordinates moves their closed AUROC only .706 -> .700
+     (r131) and .849 -> .844 (692k). Amplitude's own closed signal (.655 / .703) never entered the coordinates.
      Nuisance check (site-coupling trap):
      - The seed coordinates (sparse PPCA's coords.txt) INTEGRATE the 12 nuisance latents under their fitted Gaussian prior
        (`simple_flex_sites_fit.f90:426-449`); the port's design note said "profiled". The round profiles (amplitude only, flat
