@@ -1175,15 +1175,15 @@ contains
 
     end subroutine sites_gains
 
-    subroutine sites_posterior_all( ops, st, m, sdv, ll )
+    subroutine sites_posterior_all( ops, st, m, sdv, ll, mp, sdp, llp )
         type(flex_sites_ops),   intent(inout) :: ops
         type(flex_sites_state), intent(in)    :: st
-        real(dp), allocatable,  intent(out)   :: m(:,:), sdv(:,:), ll(:)
+        real(dp), allocatable,  intent(out)   :: m(:,:), sdv(:,:), ll(:), mp(:,:), sdp(:,:), llp(:)
         complex(dp), allocatable :: wft(:,:)
         real(dp),    allocatable :: wr(:,:), wi(:,:), buf(:,:)
-        real(dp) :: pp(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), ldp, b(st%qs+size(st%wn,2)), &
-            &g(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), h(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), ld
-        integer  :: qs, qn, q, i, j, maxm, info
+        real(dp) :: pp(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), ppf(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), ldp, &
+            &b(st%qs+size(st%wn,2)), g(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), h(st%qs+size(st%wn,2),st%qs+size(st%wn,2)), ld
+        integer  :: qs, qn, q, i, j, maxm, info, nfail
         logical  :: ok
         qs = st%qs
         qn = size(st%wn,2)
@@ -1194,13 +1194,27 @@ contains
         call split_modes(wft, wr, wi)
         deallocate(wft)
         call prior_precision(st, qs, qn, pp, ldp)
-        allocate(m(q,ops%n), sdv(qs,ops%n), ll(ops%n), source=0.d0)
-        maxm = 2 * int(maxval(ops%ip_p(2:) - ops%ip_p(:ops%n)))
+        ppf = pp
+        ppf(qs+1:,qs+1:) = 0.d0
+        allocate(m(q,ops%n), sdv(qs,ops%n), ll(ops%n), mp(q,ops%n), sdp(qs,ops%n), llp(ops%n), source=0.d0)
+        maxm  = 2 * int(maxval(ops%ip_p(2:) - ops%ip_p(:ops%n)))
+        nfail = 0
         !$omp parallel default(shared) private(i,j,b,g,h,ld,ok,info,buf) proc_bind(close)
         allocate(buf(q,maxm))
-        !$omp do schedule(dynamic,64)
+        !$omp do schedule(dynamic,64) reduction(+:nfail)
         do i = 1, ops%n
             call pstats(ops, i, q, wr, wi, b, g, buf)
+            h = g + ppf
+            call chol_ll(q, h, b, mp(:,i), ld, ok)
+            if( ok )then
+                llp(i) = 0.5d0 * dot_product(b, mp(:,i)) - 0.5d0 * ld
+                call dpotri('U', q, h, q, info)
+                do j = 1, qs
+                    sdp(j,i) = sqrt(max(h(j,j), 0.d0))
+                end do
+            else
+                nfail = nfail + 1
+            endif
             h = g + pp
             call chol_ll(q, h, b, m(:,i), ld, ok)
             if( .not. ok ) cycle
@@ -1213,6 +1227,7 @@ contains
         !$omp end do
         deallocate(buf)
         !$omp end parallel
+        if( nfail > 0 ) write(logfhandle,'(A,I0,A)') '>>> SPARSE_SITES profiled coordinates: no posterior for ', nfail, ' particles'
     end subroutine sites_posterior_all
 
 end module simple_flex_sites_fit

@@ -33,7 +33,7 @@ contains
         type(flex_sites_state)   :: s1, t, r
         complex(dp), allocatable :: wn(:,:), wseed(:,:), wc(:,:)
         real(dp),    allocatable :: cent(:,:), x0(:,:), gn(:,:), dpm(:), gain(:), se(:), xnew(:,:), m(:,:), sdv(:,:), ll(:)
-        real(dp),    allocatable :: lgain(:), lse(:), rec(:,:), en(:)
+        real(dp),    allocatable :: lgain(:), lse(:), rec(:,:), en(:), mp(:,:), sdp(:,:), llp(:)
         logical,     allocatable :: env(:), act(:,:), even(:), odd(:), allp(:), sv(:), dead(:), used(:), inball(:)
         integer,     allocatable :: sblk(:), comp(:), cb(:)
         character(len=16), allocatable :: tnames(:)
@@ -177,8 +177,10 @@ contains
         end do
         call orient_blocks(t)
         comp = components(t)
-        call sites_posterior_all(ops, t, m, sdv, ll)
-        call write_sites(t, comp, lgain, lse, m, sdv, ll)
+        call sites_posterior_all(ops, t, m, sdv, ll, mp, sdp, llp)
+        call write_sites(t, comp, lgain, lse)
+        call write_coords(t, SDIR//'/coords.txt', m, sdv, ll)
+        call write_coords(t, SDIR//'/coords_profiled.txt', mp, sdp, llp)
         write(logfhandle,'(A,I0,A,I0,A)') '>>> SPARSE_SITES done: ', t%nb, ' site blocks in ', maxval(comp), ' sites'
         call flush(logfhandle)
         call ops%kill
@@ -329,29 +331,35 @@ contains
             call fclose(fu)
         end subroutine write_empty
 
-        subroutine write_sites( st, lab, lg, ls, mm, sdd, lll )
+        subroutine write_coords( st, fname, mm, sdd, lll )
             type(flex_sites_state), intent(in) :: st
-            integer,                intent(in) :: lab(:)
-            real(dp),               intent(in) :: lg(:), ls(:), mm(:,:), sdd(:,:), lll(:)
+            character(len=*),       intent(in) :: fname
+            real(dp),               intent(in) :: mm(:,:), sdd(:,:), lll(:)
             integer, allocatable :: prow(:), keys(:)
-            real(dp), allocatable :: ev(:), sp(:)
-            character(len=:), allocatable :: txt
-            integer  :: fu, ios, i, nk, q, s, nsite
-            real(dp) :: cr, w
-            q = size(mm, 1)
+            integer :: fu, ios, i, jj, nk
             allocate(prow(ops%n))
             prow = ops%pind
             if( params%rowmap%strlen() > 0 )then
                 call read_pind_list(params%rowmap%to_char(), keys, nk)
                 prow = keys(ops%pind)
             endif
-            call fopen(fu, string(SDIR//'/coords.txt'), status='replace', action='write', iostat=ios)
-            write(fu,'(A,*(A))') '# row eo fit ll', (' s'//int2str(j), j=1,st%qs), (' '//trim(tnames(j)), j=1,size(tnames)), &
-                &(' sd_s'//int2str(j), j=1,st%qs)
+            call fopen(fu, string(fname), status='replace', action='write', iostat=ios)
+            write(fu,'(A,*(A))') '# row eo fit ll', (' s'//int2str(jj), jj=1,st%qs), (' '//trim(tnames(jj)), jj=1,size(tnames)), &
+                &(' sd_s'//int2str(jj), jj=1,st%qs)
             do i = 1, ops%n
                 write(fu,'(I0,1X,I0,A,ES14.6,*(1X,ES13.5))') prow(i), ops%eo(i), ' 1 ', lll(i), mm(:,i), sdd(:,i)
             end do
             call fclose(fu)
+        end subroutine write_coords
+
+        subroutine write_sites( st, lab, lg, ls )
+            type(flex_sites_state), intent(in) :: st
+            integer,                intent(in) :: lab(:)
+            real(dp),               intent(in) :: lg(:), ls(:)
+            real(dp), allocatable :: ev(:), sp(:)
+            character(len=:), allocatable :: txt
+            integer  :: fu, ios, i, s, nsite
+            real(dp) :: cr, w
             call fopen(fu, string(SDIR//'/modes.txt'), status='replace', action='write', iostat=ios)
             write(fu,'(A)') '# mode block site'
             do j = 1, st%qs
