@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:21 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:03 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1197,6 +1197,12 @@ Not to retry:
     so seed geometry is ruled out.
   - The band cap must come from the data: the cap that maximises the leading seeds' held-out gain per node, or per block in
     the nonuniform-filter style. sparse-ppca2 scans caps from 25 to 12.5 A on IgM, qtoy and r131 and proposes the rule.
+  - CAUSE CONFIRMED: lp 15 with only the band cut at 20.4 A recovers all 5 IgM arms (matching lp 20 within .007; round-1
+    gain 1,081 vs 12.8 nats). The 15-20 A shells carry no arm signal but most of each seed's cells, so the shared shrinkage
+    prior pulls every seed to zero.
+  - Box-36 scan: qtoyflex is best at the full band, and qtoynull finds no site at any band. r131's gain is largest at the full
+    band, but its closed state reads best at 21-26 A, and its solvent floor grows ~3x with the band. So raw gain alone
+    (rule a) follows the misfit floor on real data; the rule must measure gain above the solvent controls. IgM scan pending.
 - USER DIRECTION (late evening): "We need to pursue this to work on the RNase P. If it works on IgM like regimes that is a great
   result." So the shared tree model stays the main methods thread. The RNase P blocker is per-particle misfit, worked on two ways:
   - tree-latent: the misfit-removed rerun (amplitude and nuisances profiled, sat5 groups within amplitude x log-likelihood
@@ -1371,6 +1377,11 @@ Not to retry:
      - Next (on norm): seeds 3-5 per arm, mean +- SE closed / holo F1, plus a pose-share gate statistic at qtoyflex, qtoy2,
        IgM and r131.
      - Then a recommendation: keep on, gate on measured pose share (2 SE), or default off. Nothing reverted yet.
+     - Gate statistic: the root latent's shift-error R^2 is .30-.35 on every IgM root (.002 with the profile), qtoy2 .034,
+       qtoyflex .003, r131 0.
+       - A significance gate fails: R^2 .003 clears 2 SE at 60k particles, and it needs true poses.
+       - The truth-free share of latent evidence the profile removes separates by an order of magnitude: 75-87 % on IgM, <= 0
+         elsewhere. That is the candidate gate.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
