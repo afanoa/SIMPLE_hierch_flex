@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:16 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -766,9 +766,18 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
       - The whole site's span (36 coordinates): AUROC .711 (d' .78), tail share .098. That reproduces seam-free's .69-.72 and
         does not beat it.
       - So RNase P's closed signal is spread over the compact molecule, not held by a localised site, unlike the IgM arms.
-    - TRAP to confirm: on r131 the solvent controls gain 90-110 held-out nats (pure solvent should give ~0), which suggests the
-      noise model misfits the registered stacks (non-stationary noise, extremes-repro). The real-data stop may then be set by
-      noise misfit. Asked whether the controls' gain grows toward the box edges.
+    - TRAP (confirmed, PORT.md; diagnostic run `native/rr131diag`): on r131 any local mode captures ~100 held-out nats of
+      reproducible non-site variance (noise-model or per-particle misfit), wherever it sits.
+      - mskdiam 225 A in a 234 A box leaves room for ONE solvent control (at the rim, 112 A from the centre), not 12. It gains
+        109.5 nats (SE 9.9).
+      - The 37 on-molecule seeds gain 72-275 (median 140) with no radial trend (r -.14).
+      - By round 19 the unused seeds' median (69) falls below the control (90), and the pursuit stops there.
+      - The 692k root shows the same floor per particle.
+      So on real data the stop is set by that misfit floor, and blocks near it may be misfit, which fits no block isolating the
+      closed arm.
+      - The strict seed-gain floor dropped nothing on r131: all 18 blocks kept 1.5-4x their seed's gain.
+      - Fixes to weigh before using sparse sites on real data: more controls than a tight box allows, or modelling the
+        misfit (e.g. per-particle band-wise scale).
     - The 692k result is pending (~2-3 h).
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
