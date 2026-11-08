@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:04 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:05 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1136,6 +1136,15 @@ Not to retry:
      - Extra chain-exercising arms: the three nulls at maxdepth 1 (the false-accept test), r131 at maxdepth 2 on both seeds
        (hard gate), qtoy2 at maxdepth 2.
      - The factorial split (every accepted block at once) waits for site-coupling's verdict.
+     Build (21:30): `$M/site_chain/b1` = `6206971c8` + `site_chain_v2.patch` (6 files, ~300 lines; ports recipe on x6342 with
+     OpenBLAS, matching the pp_on / b3 baselines), fast gate 15/15 (job 55039984). The approved changes are in: best-of-5 seeds,
+     and a would-be leaf reuses its own or its nearest ancestor's sparse fit.
+     IgM trees running (site_chain=yes, igm keys, maxdepth 4): `$M/gates/sc1_igm{10fix,10null,fix,null}` (55040098-101). The
+     gate battery follows. The stock same-run tree comes from collapsing the chain splits (`sc_collapse.py`).
+     - BUG found on the way (also hits `site_split=yes`): when stage B leaves a single state, the node called decide() and was
+       then forced to S_DONE. That dropped a submitted per-site split and left its rows unplaced. Fixed (the step stays on
+       S_SITESPLIT / S_SITESPARSE); asked for as a separate patch, with a log check of which earlier `site_split=yes` runs it
+       hit.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
