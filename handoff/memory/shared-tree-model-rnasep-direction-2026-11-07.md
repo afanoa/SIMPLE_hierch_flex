@@ -91,3 +91,11 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - The queued test has frozen membership as arm (b), and arm (c) for damped moves: an EM class prior plus an anchor (log w_flex,
     or one-hot on the current state), moves only at posterior >= .95, alternating with single-state pose refinement.
   - It retries [[flex-refinement-integration-verdicts-2026-11-06]] with the class prior and frozen-first membership.
+- 2026-11-08 ~17:40, POSE TEST VERDICT (POSETEST.md, 76 core-h): at r131, MEMBERSHIP limits the closed signal, not poses.
+  - Frozen membership with solo refinement: 2-5k groups lose contrast like same-size random groups (combined p .15), and the
+    loss doesn't grow with closed share. Even IgM's pure a1 tail loses amplitude 172 -> 154: solo refinement of ~5k degrades maps.
+  - Damped re-assignment (class prior + anchor + .95): closed shares flat. Flex weights as an anchor are too weak (median .5
+    nats) and only freeze the partition.
+  - Trap: a class prior plus a fixed .95 margin makes small groups shed members at even odds.
+  - Implication: refinement doesn't rescue a weak subset. Purity must come from membership (per-particle evidence, the latent
+    rule); the user's "poses matter" is not borne out at r131 for 2-23k groups.

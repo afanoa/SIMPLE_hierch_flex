@@ -1,11 +1,11 @@
 ---
 name: extremes-fission-verdict-2026-11-07
-description: "VERDICT 2026-11-07: self-selected tail/leaf maps place extremes 1.3-3.1x too far out and fake maps 'reproduce' (.16-.45); fission re-reads fix it; the r131 closed-corner HARD GATE passes only on own-data imprint (corner leaf 1.03/.54 own, .93/.59 honest; no leaf passes honestly); global coordinate / node latent find extremes no better than leaves; focused coordinates on data-only site masks do (IgM)"
+description: "VERDICT 2026-11-07: self-selected tail/leaf maps place extremes 1.3-3.1x too far out and fake maps 'reproduce' (.16-.45); fission re-reads fix it; the r131 closed-corner HARD GATE passes only on own-data imprint (corner leaf 1.03/.54 own, .93/.59 honest; no leaf passes honestly); global coordinate / node latent find extremes no better than leaves; focused coordinates on data-only site masks do (IgM); 11-08: frozen-membership pose refinement / damped re-assignment no better than random at r131"
 metadata:
   node_type: memory
   type: project
   originSessionId: cc23038c-fea9-4b5f-b321-d58eb2942350
-  modified: 2026-11-08T21:00:37.476Z
+  modified: 2026-11-08T22:39:40.077Z
 ---
 
 extremes-repro session (user asked "Run it": can the latent cut out extremes that reproduce?). Write-up
@@ -65,6 +65,12 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - Reference share and c rank alike within strata (rho .79 / .99 / .90; the seeds at N 2,217 only .16). In rounds the open arm
     carries the signal.
   - RULE: closed-arm-only reads saturate; read the two-arm contrast. Groups at .08-.13 closed don't clear random bars at r131.
-  - The positive control (3,075 reference closed rows) is pending.
-- 2026-11-08 user "Yes, queue it": the fixed-membership pose test (single-state refine3D per group on X1, maps on X2, the random
-  bar refined the same way; guide 7.10 thread 12) is queued behind the control.
+  - Positive control PASSED: the 3,075 reference closed rows read c +.487 vs bar +.359; c rises ~.2 per unit closed share.
+- 2026-11-08 night, fixed-membership pose test (user "Yes, queue it" + arm (c); thread 12; `handoff/extremes/POSETEST.md`, 76 core-h):
+  - Refined alone with membership frozen, every 2-5k group loses c on X2 (random groups -.081 / -.082). Closed-rich groups lose
+    as much (z <= 1.6, joint p .15); 23k groups don't move. The shift doesn't grow with closed share (28 groups, rho -.17).
+  - Damped re-assignment (EM prior + .95 rule) leaves every closed share flat. For a 5 % group, log(.05/.95) cancels the .95
+    margin: members leave at even odds and joiners need 5.9 nats. The fflex anchor log w_flex (median .5 nats) moves 0.3 %:
+    flex weights at that strength just freeze the partition. IgM guard: the a1 tail grows at .97 purity, random groups shrink.
+  - RULE: at r131 a group's honest contrast follows its membership; pose refinement or damped re-assignment on a fixed group
+    does no better than random groups of its size.

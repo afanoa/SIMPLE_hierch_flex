@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:44 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1792,6 +1792,28 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - So labels and maps agree on ranking. But enrichment to .08-.13 closed does not move a map past its random bar.
       - Running: the positive control (r131's 3,075 reference closed rows on X2; optimistic, since the rows were picked on X)
         and a rigid-core term for blur.
+    - POSITIVE CONTROL PASSED: the reference closed group reads c +.487 against a bar of +.359. The two-arm readout sees a pure
+      closed group.
+    - POSE TEST VERDICT (`$H/handoff/extremes/POSETEST.md`, `tables/posetest.md`; 76 core-h): at r131, membership limits the
+      closed signal, not poses.
+      - Arm (b), membership frozen and poses refined alone: every 2-5k group loses contrast like random groups of its size.
+        blockhi -.062 against random -.081 +- .022; bpm1 -.069 against -.082 +- .008; blk1top -.079 against -.082; combined
+        p = .15. At 23k (fflex) nothing moves.
+        - The shift does not grow with closed share (28 groups: Spearman -.17, slope +.04 +- .10).
+        - Even IgM's 97 %-pure a1 tail loses arm amplitude when refined alone (172 -> 154). Solo refinement of a 5k subset
+          degrades its map.
+      - Arm (c), damped re-assignment (EM class prior + anchor, move at posterior >= .95, two passes): closed shares stay
+        flat (blockhi .184 -> .184, bpm1 .128 -> .131, blk1top .091 -> .093). Every change in c falls inside the random
+        groups' changes.
+        - Design flaw: for a 5 % group the class prior (-2.94 nats) cancels the .95 margin, so members leave at even odds
+          while a newcomer needs 5.9 nats. Small groups shrink: random 21-30 %, blockhi 33 %, groups along real variability
+          4-8 %.
+        - Flex weights as the anchor are weak (median .50 nats, 90th percentile 1.87, under the 2.94 margin). Only 125 and
+          then 30 of 44,334 particles move, so they just freeze the partition (closed .085, recall .645).
+      - IgM guard passes: the a1 tail grows 5,000 -> 5,354 at .97 purity; random groups shrink to ~4,700 at .50.
+      - Read: at r131, refining poses per subset or re-assigning with a damped rule adds no closed signal beyond what the same
+        step gives a random group. The groups' membership (at most .18 closed, ~.09 label-free) is the limit. Raising it
+        needs more per-particle evidence or a better membership rule, not refinement.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
