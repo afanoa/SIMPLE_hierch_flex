@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:06 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:09 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1109,6 +1109,16 @@ Not to retry:
   - A variant that passes the IgM worker tests and the gates is committed to `hetero-tree-wip` only, never to `hetero-tree`.
     If it needs the state_eval port (decision 3), that is flagged in the morning summary.
 - site-coupling (factorial vs joint) and the 692k sparse PPCA result are folded in when they land.
+- M-estimation retry (user: "maybe try M-estimation since these responsibilities seem more rigorous now"), queued with
+  tree-latent after the RNase P tests.
+  - Why it failed before: M-est added nothing because the tree's posteriors were one-hot or null-level, and soft EM at fixed
+    poses noise-locked through full-image E-steps.
+  - What changes now: tree-latent's responsibilities come from the deconvolved site-space mixture (posterior precision A,
+    memberships on y1).
+  - The test: each leaf's map built on y2 from hard members vs from responsibility weights. It is one M-step, so the E-step
+    stays in latent space. Optionally a Student-t robust weight from the latent Mahalanobis distance.
+  - Scored: against truth maps per state, minorities first, and the r131 closed-arm readout on hard vs soft maps.
+- site-chain: the first chain-exercising null, `sc3md1_micnull`, is one leaf (sparse PPCA found no site there).
 - Nothing is promoted to production (`hetero-tree`) without the user. Every verdict goes into this guide and memory, pushed to
   the fork.
 
