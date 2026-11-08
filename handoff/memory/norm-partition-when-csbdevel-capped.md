@@ -41,3 +41,6 @@ Related: [[batch2-400-core-limit-and-worker-timeouts]], [[batch2-shared-account-
   `-p norm`, with QOS norm by submitting there directly, `-c` <= 36 per job, and `qsys_partition=norm` in every SIMPLE call
   so workers land there too. csbdevel stays usable as well; running jobs are left where they are. Relayed to every active
   session.
+
+- 2026-11-08 STANDING (user via the coordinator: "just use norm"): submit NEW jobs straight to `-p norm` (so the QOS is norm),
+  `-c` <= 36 per job, `qsys_partition=norm` in every SIMPLE call so tree workers land there too; leave running csbdevel jobs alone.

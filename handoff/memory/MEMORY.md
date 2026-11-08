@@ -107,7 +107,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [klem-priority-every-state-before-refinement](klem-priority-every-state-before-refinement.md) — user 2026-10-15: recover…
 - [no-4m-synthetic-tests-too-expensive](no-4m-synthetic-tests-too-expensive.md) — 4M synthetic run cancelled (too…
 - [batch2-400-core-limit-and-worker-timeouts](batch2-400-core-limit-and-worker-timeouts.md) — no 400 limit (user 2026-10-21): >=…
-- [norm-partition-when-csbdevel-capped](norm-partition-when-csbdevel-capped.md) — 2026-11-08 USER: "just use norm" for new jobs (-c <= 36, qsys_partition=norm); history inside
+- [norm-partition-when-csbdevel-capped](norm-partition-when-csbdevel-capped.md) — STANDING 2026-11-08 "just use norm": new jobs -p norm, -c <= 36, qsys_partition=norm
 - [hear-the-target-sampling-not-the-import-number](hear-the-target-sampling-not-the-import-number.md) — repeated pixel-size…
 
 - [simple-chdir-failure-does-not-abort](simple-chdir-failure-does-not-abort.md) — TRAP: runs in project root
@@ -139,6 +139,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [flex-frozen-poses-only-no-woodbury-2026-11-06](flex-frozen-poses-only-no-woodbury-2026-11-06.md) — HARD GATE: flex only on frozen poses; no latent recalculation or Woodbury algebra inside refinement
 - [data-fission-merge-test-verdict-2026-11-07](data-fission-merge-test-verdict-2026-11-07.md) — VERDICT: data fission (labels X1, maps X2) removes the merge test's self-selection: null merges 4 -> 1, qtoy2 keeps real states; cost -.08/-.02 accuracy at tau 1/0.6; TRAP: purity splits (5 % conformer admixture) stay kept by any map-level test
 - [extremes-fission-verdict-2026-11-07](extremes-fission-verdict-2026-11-07.md) — VERDICT: own-data extremes 1.3-3.1x inflated; r131 corner gate passes only on imprint (1.03 own vs .93 honest); focused site coordinates find IgM extremes
-- [tree-latent-verdict-2026-11-07](tree-latent-verdict-2026-11-07.md) — VERDICT: shared site basis + XD tree + sat5 splits: qtoyflex beats tree, qtoy2 ties, IgM10 .26 vs tree .042 / lever3 .338; nulls 1 leaf; 3-state arms need K=3
+- [tree-latent-verdict-2026-11-07](tree-latent-verdict-2026-11-07.md) — VERDICT: shared site basis + XD tree + sat5 splits: fixtures good (IgM10 .322 with K=3 vs lever3 .338), RNase P finds only misfit; port on hold
+- [real-data-fission-needs-misfit-model-2026-11-08](real-data-fission-needs-misfit-model-2026-11-08.md) — TRAP: sat5 accepts RNase P misfit splits even profiled + stratified; needs per-particle band-wise sigma2 in whitening and fission draw
 - [fission-select-members-on-y1-labels-may-read-y](fission-select-members-on-y1-labels-may-read-y.md) — RULE: fission tree selects members on X1; proposals and sat5 labels may read y
 - [numba-parallel-before-fork-deadlocks](numba-parallel-before-fork-deadlocks.md) — TRAP: numba threads launched before a fork hang the pool; use NUMBA_NUM_THREADS

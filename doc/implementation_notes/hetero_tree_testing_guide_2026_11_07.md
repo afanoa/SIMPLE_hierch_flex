@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:17 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:20 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1165,7 +1165,18 @@ Not to retry:
   - Cost at 692k: E-step 24 min (53.8 GB); root proposals 23 min on a 50k subsample; one sat5 test 51 s.
   - One misfit-removed rerun approved (amplitude + nuisances profiled; sat5 groups within amplitude x log-likelihood strata).
     If the best 692k split still tracks misfit, the real-data misfit model becomes the prerequisite, not the tree.
+- DECISIVE RERUN (STATUS addendum 3; VERDICT.md 2026-11-08 section): amplitude + nuisances profiled, sat5 groups in 3x3
+  amplitude x log-likelihood strata.
+  - r131: 1 leaf; the honest gate fails (closed .81 / open .62).
+  - 692k: K2 [616.5k / 75.9k] DISCRETE (z 20.3, was 43.2), but closed AUROC .483. The split tracks log-likelihood .42 and
+    amplitude .30.
+  - Coordinates + amplitude separate closed at LDA .745 / .856, so the signal exists; the splits just do not find it.
+  - Mechanism: a per-particle noise level off the model correlates y1 and y2 by ~e/(2+e), so misfit survives fission.
+  - STOP: the real-data noise model (rnasep-misfit) is the prerequisite. It must enter the whitening AND the fission draw.
 - K = 3 final on qtoy2: closed .910 (pp_on .891), holo .962 (.944), NMI .766; the 1 | 2 pair is still merged.
+- M-est final:
+  - Hard maps are the default. Soft dilutes every state leaf; robust is the compromise and beats hard on large IgM leaves.
+  - Unmixing restores the slope but over-corrects by up to 38 % and blows up on small leaves.
 - M-est unmixing restores the slope at a noise cost: qtoyflex closed .51 -> .91 (error .86 -> 1.98); qtoy2 closed .84 -> 1.00
   (error .19 -> .24). IgM 10 % follows.
 - Flex -> refinement priors revisited (user: "perhaps we should also revisit flex --> refinement posteriors"; oracle session,

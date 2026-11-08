@@ -36,8 +36,19 @@ runs `math_reworks/tree_latent/`. Python on sparse PPCA's bases; nothing in SIMP
   - Prerequisites before any port: profile amplitude and misfit; form sat5 groups within amplitude / log-likelihood strata;
     a basis that carries closed. One misfit-removed rerun was approved; if it still tracks misfit, the real-data misfit
     model is the prerequisite.
-- M-est: soft maps trade bias for noise; unmixing by the confusion matrix restores the slope (qtoyflex closed .51 -> .91) at
-  a noise cost (error .86 -> 1.98).
+- DECISIVE RERUN (2026-11-08; STATUS addendum 3), with amplitude and the 12 nuisances profiled and sat5 groups within 3x3
+  amplitude x log-likelihood strata: still no closed node. r131 is 1 leaf. At 692k the K2 [616.5k / 75.9k] split is DISCRETE
+  (z 20.3, was 43.2), but closed AUROC is .483 and the split tracks log-likelihood .42 and amplitude .30.
+  - Profiling costs .005 of closed AUROC.
+  - Coordinates + amplitude separate closed at LDA .745 (r131) / .856 (692k), so the signal is there.
+  - Mechanism: a per-particle noise level off the model correlates the fission copies by ~e/(2+e), so misfit splits survive
+    the test. The per-particle noise model must enter the whitening AND the fission draw.
+  - STOP: the real-data misfit model is the prerequisite, not the tree; PORT_DESIGN.md stays on hold.
+- M-est final:
+  - Use hard maps by default. Soft weights dilute the slope on every state leaf; robust weights are the compromise and beat
+    hard on large IgM leaves.
+  - Unmixing by the confusion matrix restores the slope (qtoyflex closed .51 -> .91) but over-corrects by up to 38 % and
+    blows up on small toy leaves. It cannot repair a 2-state leaf with no sibling.
 
 **Why:** the user wants one elegant model over the whole tree; this is its first prototype.
 **How to apply:** the shared-basis latent tree is the candidate cohesive model.

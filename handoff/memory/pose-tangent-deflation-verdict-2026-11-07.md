@@ -33,7 +33,14 @@ Lever 5 of guide 7.8, run 2026-11-07 (Python, `latent_states_v4` statistics, the
     both seeds (on: s01 1.01/.52 and 1.00/.54); qtoy2 NMI .780 -> .811; cost unchanged (99 vs 96 core-h).
   - flex_pca's own IgM 5 % coordinates: shift-error R^2 .003 on vs .35 off. Off reproduces the old fflex at R^2 .998-1.000.
 
-**Why:** settles lever 5. The port is hygiene (no IgM arm gain), and it passed the gates.
+- **qtoyflex A/B (2026-11-08):** closed F1 on vs off, seed 1 .159 vs .474, seed 2 .413 vs .433. The site-chain session's .159 was
+  this profile at seed 1.
+  - Seed 1: the profile perturbs the root's flex states (this latent has no pose error), so the pole rule keeps one site. The root
+    splits K=2 instead of 3, and r1's closed split falls to the effect floor (P/N 1.45 < 2).
+  - The closed signal itself is intact (0.6 % in the tangent span; 4.4 % per particle removed; LDA .746 -> .745).
+  - Two seeds cannot separate a systematic cost from a near-tie flip; reported to the coordinator, nothing reverted.
+
+**Why:** settles lever 5. The port is hygiene (no IgM arm gain); it passed the gates but costs qtoyflex closed at one seed.
 **How to apply:**
 - Never retry basis-level tangent deflation (flex2D-style or weighted).
 - Compare like with like: A/B the profile with the env toggle in one binary.
