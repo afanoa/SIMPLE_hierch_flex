@@ -1373,9 +1373,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        overlapping states as wholes, and a full-image round does.
        - Site chain v7: a5 .264 against the forest's .216, product .348 against .322, and a2 accepted.
        - The production tree keeps r131's corner through stage B and state_split.
-     - DESIGN REVISION (briefed; PORT_DESIGN.md): stage B is SEEDED by the latent proposals, not replaced by them. The forest's
+     - DESIGN REVISION (done in PORT_DESIGN.md, section "The full-image round"): stage B is SEEDED by the latent proposals, not replaced by them. The forest's
        proposals and factorial states seed a full-image round on the node's subset, and an honest test (sat5 or GAPw) decides.
        This is the user's "refinements per subset are necessary".
+       - The round takes the node subset (X1 members, stage-A poses), seeds as hard MAP labels on X1 (or soft weights as a prior
+         with the held-out α, never α = 1), and the seeding site's support as a mask.
+       - The test reads fission copies from the same draw under the per-particle noise model, or GAPw's own split. Seeds are
+         tried in the forest's order, and Sidak counts the rounds tested.
+       - It stays design-only until the site chain's r131 round reads honestly.
      - Next, the decisive test: the site chain's worker at r131, seeded from the noise-model sparse fit (closed span .765), with
        the corner gate read on the round's group maps, noise model on vs off.
    - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
