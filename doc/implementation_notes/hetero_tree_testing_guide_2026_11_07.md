@@ -1296,8 +1296,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Trap: micnull's y2 root shows a 102-nat central seed (SE 5.0) that y and profiled y do not.
        - It is NOT the fission draw: the same y2 draw with the nuisances profiled has no such seed (best 5.6 nats, the seeds y
          shows).
-       - Likely cause: the nuisance prior, fitted on the noisier copy, is under-converged (its EM hits the 200-iteration cap).
-       - One more reason to profile the nuisances.
+       - CONFIRMED: micnull is synthetic and the draw already matched its spectrum (.985-1.006 per shell). A generator-spectrum
+         draw keeps the seed (98.3 nats), while profiling the nuisances removes it.
+       - The cause is the second-moment nuisance prior fitted on the noisier copy. Its centred low-frequency templates are
+         under-absorbed (EM stops at its 200-iteration cap), and a central seed takes their variance.
+       - RULE (PORT_DESIGN.md, fission step): anything fitted on a fission copy profiles the nuisances.
      - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.
 Waiting for the user:
 - decision 1 (depth_wiener default);
