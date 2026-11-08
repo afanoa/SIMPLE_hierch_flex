@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:49 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1774,6 +1774,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         subset. IgM a1 tail plus 4 random groups is the guard.
       - Readout: c = closed - open, applied only after the re-score's positive control shows the readout sees the reference
         closed rows.
+      - Arm (c), added at the user's request ("freeze the memberships and just refine the poses, or only allow a very small
+        number of state reassignments ... injecting the flex weights into the refinement"):
+        - After (b), a fixed-pose state pass (state_eval) with SIMPLE_STATE_PRIOR = log class fraction plus an anchor: log
+          w_flex for the fflex group, a one-hot on the current state for the others.
+        - A particle moves only at posterior >= .95.
+        - Two alternations of pose refinement and damped re-assignment.
+        - Unlike the 11-06 flex->refine test (calibrated alpha, no class prior, inside freely re-assigning rounds; it switched
+          itself off at r131), membership here starts frozen and can only move on strong evidence.
     - RE-SCORE, FIRST PASS (no new maps; contrast c = closed - open against the same random bars):
       - Gate corners: c passes one corner per arm (pp_off seed 3, noise model seed 2), with three calls flipped. The arms
         stay unseparated.

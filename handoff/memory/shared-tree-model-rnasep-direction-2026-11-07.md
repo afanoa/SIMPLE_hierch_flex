@@ -86,3 +86,8 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
 - 2026-11-08 user: "I think poses matter a lot but if multi state is scrambling membership too much it may be detrimental".
   Master's own multi-state benchmark agrees on scrambling ([[master-multistate-posterior-draw-2026-11-08]]). Proposed lever: hold
   membership fixed while single-state refine3D refines the poses per group (guide 7.10 thread 12).
+- 2026-11-08 user: "couldnt you just freeze the memberships and just refine the poses (or only allow a very small number of state
+  reassignments)? this is why I wanted to pursue somehow injecting the flex weights into the refinement".
+  - The queued test has frozen membership as arm (b), and arm (c) for damped moves: an EM class prior plus an anchor (log w_flex,
+    or one-hot on the current state), moves only at posterior >= .95, alternating with single-state pose refinement.
+  - It retries [[flex-refinement-integration-verdicts-2026-11-06]] with the class prior and frozen-first membership.
