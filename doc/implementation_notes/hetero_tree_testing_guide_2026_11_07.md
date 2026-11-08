@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:20 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:26 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1185,6 +1185,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - ole: 8 leaves.
      The chain never fired on a gate node, because the lp-15 sparse fit finds 0 blocks on every one. It stays unexercised until
      the band rule lands.
+   - v7 is the chain (build b6, fast gate 15/15; worker tests 55057520; v7 columns in `round_table.md`).
+     - Its seed now matches sklearn's tied fit (5 % a1 .180 against .181, a3 .162 against .164).
+     - Why: sklearn's k-means++ start plus its 1e-3 stop keep the seed on the states. A fully converged tied fit leaves them
+       (5 % a3 .164 -> .005).
+     - 10 % fix: 5/5 arms DISCRETE, product .348 (v6 .321, lever 3 .338). a2 is accepted for the first time.
+     - 5 % fix: 4/5 arms, product .148 (v6 .078, lever 3 .104). a2 (.119 at GAPw .29) is the only miss.
+     - Nulls: 0/15 and 0/5.
+     - No b6 battery: every gate firing had 0 blocks, so the b5 table stands. The battery reruns with the band rule.
+   - Factorial output (`$H/handoff/site-chain/PROPOSAL_factorial_output.md`):
+     - Per sparse site, it writes the accepted block with the lowest GAPw, once per lineage at the node that owns the sparse fit,
+       in the existing factorial/ layout.
+     - The tree's decisions are unchanged.
+     - Approved as v8 on wip `a4886d747`, with no new key. It is judged by worker-test parity (.348 / .148) and empty tables on
+       the nulls.
 4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
    evidence share, or off. The committed default changes only with the user.
    - 5 seeds per arm (qtoyflex): the cost is systematic.
