@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:26 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:32 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -664,7 +664,8 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
   do not follow pose error (AUROC .51-.54): hygiene, not the failure.
   - Port of the per-particle profile (user: "Port it"; pose-tangent2 session; `$H/handoff/pose-tangent/STATUS.md`): patch
     `$H/handoff/pose-tangent/pose_profile_f3eab71ce.patch` on f3eab71ce, in `embed_latents_with_contrast`
-    (`src/main/flex/fit/simple_flex_pca_embed.f90`), default on, `SIMPLE_FLEX_POSE_PROFILE=no` turns it off. Build
+    (`src/main/flex/fit/simple_flex_pca_embed.f90`). It was on by default; since `4afe93b80` it is off, and
+    `SIMPLE_FLEX_POSE_PROFILE=yes` turns it on (decision 7). Build
     `$M/build_poseprof`, fast gate 15/15. At both IgM 5 % roots flex's own coordinates become pose-free (shift-error R^2 .003 vs
     .35 off); off reproduces the old coordinates (R^2 .998-1.000). Same-binary on/off gate trees (`$M/gates/pp_{on,off}_*`,
     readouts `pp_{on,off}{,_s1}_readout.txt`) PASS: qtoynull, olenull and micnull one leaf with identical partitions; qtoy2 8 leaves
@@ -1207,7 +1208,8 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - Cause: the profile thins the root's site layer (fewer kept poles).
    - Gates: a 2-SE pose-share gate fails (qtoyflex R^2 .003 is about 14 SE). The truth-free evidence share separates cleanly
      (IgM .75-.87, elsewhere <= 0).
-   - Recommendation (c): default off, with `SIMPLE_FLEX_POSE_PROFILE=yes` to enable. The user decides.
+   - DECIDED (user, 2026-11-08: "Yes, default off"): `4afe93b80` turns it off by default, and `SIMPLE_FLEX_POSE_PROFILE=yes`
+     turns it on. Gate trees compared with earlier pp_on arms must set the key.
 5. Flex -> refinement priors (oracle, Part 7): the verdict when the chains finish.
 6. Every verdict goes into this guide and memory, pushed to fork wip. New jobs go to norm. Nothing goes to production.
 7. The whole shared model (tree-latent; user: "what about the whole shared model").
@@ -1228,7 +1230,6 @@ Waiting for the user:
 - decision 3 (state_eval port; not needed by the chain);
 - decision 6 (fission split test: no as it stands);
 - decision 9 (the r131 gate's honest readout);
-- the pose-profile default;
 - the held precision fix;
 - a production candidate.
 
@@ -1361,10 +1362,12 @@ Waiting for the user:
    Fission removes
    noise-made splits, not carves of a real continuum (the IgM null twins' root split follows the arm angles); igm-refs Part 5's
    saturation test is the continuum check that would complete the rule.
-7. Pose profile in flex's embedding: done, `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8). The flex-precision
-   fix (stacked patch, 7.8): correct in principle and closer to truth at the root latent, but neutral to slightly negative on the
-   gates (qtoy2 closed merged on 2 of 3 seeds, 0 of 3 without it): HELD. The deconvolution's input is wrong today, but the gate
-   trees do better with it as it is.
+7. Pose profile in flex's embedding: `5f80720e0` on `hetero-tree-wip` after the gates passed (7.8).
+   - DECIDED 2026-11-08 (user: "Yes, default off"): off by default since `4afe93b80`; `SIMPLE_FLEX_POSE_PROFILE=yes` turns it on.
+   - Why: over five qtoyflex seeds it costs closed (F1 .315 against .441), and no tree-level gain has been shown.
+   - The flex-precision fix (stacked patch, 7.8) is correct in principle and closer to truth at the root latent, but neutral to
+     slightly negative on the gates (qtoy2 closed merged on 2 of 3 seeds, 0 of 3 without it): HELD. The deconvolution's input
+     is wrong today, but the gate trees do better with it as it is.
 8. Site layer: sparse PPCA's pursuit (knob-free stop: 2 SE + solvent controls, leave-one-out, support components) + one masked
    round, the best data-only chain (7.8 igm-refs Part 3).
    - Acceptance: GAPw on every block (Parts 4 / 4b: all IgM arms, no null or extra block).

@@ -1,6 +1,6 @@
 ---
 name: pose-tangent-deflation-verdict-2026-11-07
-description: "VERDICT lever 5: deflating the mean's rigid tangents from the flex basis: plain metric does nothing, information metric costs qtoy2 signal; only per-particle E-step profiling removes pose cleanly; PORTED the same day into flex embedding, gates pass (uncommitted patch)"
+description: "VERDICT lever 5: deflating the mean's rigid tangents from the flex basis fails; only per-particle E-step profiling removes pose cleanly; ported as fork wip 5f80720e0, but it costs qtoyflex closed over 5 seeds (.315 vs .441), so DEFAULT OFF since 4afe93b80 (user 2026-11-08); SIMPLE_FLEX_POSE_PROFILE=yes turns it on"
 metadata:
   node_type: memory
   type: project
@@ -42,7 +42,8 @@ Lever 5 of guide 7.8, run 2026-11-07 (Python, `latent_states_v4` statistics, the
     vs off 2/5. The profile thins the root's site layer (fewer kept poles), so the cost is systematic.
   - A 2-SE pose-share gate fails (qtoyflex R^2 .003 is ~14 SE); the truth-free evidence share separates cleanly (IgM .75-.87,
     elsewhere <= 0).
-  - Recommended (c) default off (`SIMPLE_FLEX_POSE_PROFILE=yes` to enable); awaiting the user via the coordinator.
+  - DECIDED 2026-11-08 (user: "Yes, default off"): fork wip `4afe93b80` makes the profile off by default;
+    `SIMPLE_FLEX_POSE_PROFILE=yes` turns it on. Gate arms compared with earlier pp_on runs must set the key.
 
 **Why:** settles lever 5. The port is hygiene (no IgM arm gain); it passed the gates but costs qtoyflex closed at one seed.
 **How to apply:**
