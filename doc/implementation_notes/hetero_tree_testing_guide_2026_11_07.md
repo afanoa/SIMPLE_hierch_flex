@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:52 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:55 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1230,6 +1230,29 @@ Not to retry:
        now isolated from discovery and masks.
      - Next, in parallel: the same tests with the round skipped, and with refine3D's own state_eval round from the bundle ref
        `wip/state-eval`, in a separate patch. Porting state_eval into wip is the user's decision 3.
+     The seed is the bottleneck, more than the round.
+     - Seed-only (no round): 10 % seeds a1 .389, a3 .145, a4 .138; at 5 % every seed is <= .013.
+     - sklearn on the same coordinates: the full-covariance GMM picks unbalanced high-likelihood optima at 5 %, while a TIED
+       covariance cannot. Tied lifts all five 5 % arms to .10-.18 and matches full at 10 %.
+     - Full seeds, Fortran round vs state_eval round (port builds, 15/15; `state_eval_port.patch`): the Fortran round is better
+       at 10 % (a3 .356 vs .276), state_eval lifts weak 5 % seeds about twice as far, and neither fixes a dead seed. state_eval's
+       maps also remove the 10 % null false accept (b9 .97).
+     - Tied seed + Fortran round (v6, build b5, fast gate 15/15; worker tests 55045233) is the winner:
+       - 10 % fix: 4/5 arms DISCRETE (a1 .448, a3 .414, a4 .382, a5 .267; a2 not discrete), product .321 (lever 3 .338).
+       - 5 % fix: 3/5 (a1 .154, a4 .087, a5 .067), product .078 (lever 3 .104).
+       - Nulls 0/15 and 0/5; b9 is gone (1.21).
+     - Tied seed + state_eval round: running (55046338).
+     Trees so far:
+     - Chain-exercising nulls (maxdepth 1) are 1 leaf each.
+     - qtoy2 maxdepth 2: 9 leaves, NMI .811 = pp_on, closed .89 / holo .94.
+     - On all 7 gate-node firings the lp-15 sparse fit found 0 blocks, so the gates only show the chain does no harm.
+     - r131 maxdepth 2 never fires (both depth-1 nodes split), so it gives the hard-gate readout only.
+     - Stock twins (b2): the 10 % null is 1 leaf; the 10 % fix root splits 52.5k / 47.5k into two leaves, so the chain fires at
+       r1 / r2.
+     - On b5: IgM chain trees `sc5_*` (55046502-5) and the section-3 battery `sc5_*` (55046506-12).
+     SIDE FINDING to check: qtoyflex closed F1 .159 (holo .595) on this base's stock tree, against .47 for ports4 / ports7 at the
+     same maxdepth, with no chain split involved. The pose profile (5f80720e0, default on) was never gated on qtoyflex. An A/B
+     (profile on vs off, one binary, 2 seeds) has been asked of the pose-tangent2 session.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
