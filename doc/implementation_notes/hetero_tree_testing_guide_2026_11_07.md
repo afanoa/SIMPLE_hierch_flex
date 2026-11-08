@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:21 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:35 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1264,6 +1264,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        parent-and-nuisance span, so under white noise y's complement is untouched by selection. On real data this needs the
        per-particle noise model.
      - Leak checks: qtoyflex nodes, plus the IgM 10 % twin root and qtoynull root. The fitted-prior y variant is the contrast.
+   - Part 2, FINAL (STATUS addendum 4; `math_reworks/tree_latent/refine/summary.txt`): no node gains a block, so the frozen
+     root basis stands. PORT_DESIGN.md: "Per-subtree refinement of B: tested, not adopted".
+     - Nodes tested: qtoyflex 4, qtoy2 15, IgM 10 % fix 11, the IgM twin root, and the three null roots.
+     - Blocks added: 0 on y2, 0 on profiled y. The only fitted-prior y block (qtoy2 r1, seed 36, 20.4 nats) has no y2 or
+       profiled counterpart, so it is the leak and is out.
+     - Neither miss is basis-limited. qtoy2's seeds pass round 1, then decay under the group penalty; seed 36's gain lies in
+       the parent span (30.6 fitted vs 2.1 profiled). IgM a5 stays below 2 SE. The limit is the proposal and the test.
+     - At nodes the binding stop is the group penalty, not the 2 SE gate.
+     - Trap: micnull's y2 root shows a 102-nat central seed (SE 5.0) that y and profiled y do not. Likely a fission-noise
+       mismatch at low shells: the fission draw must match the data's noise spectrum, as on RNase P.
+     - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

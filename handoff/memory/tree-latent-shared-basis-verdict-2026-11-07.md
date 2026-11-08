@@ -50,6 +50,12 @@ runs `math_reworks/tree_latent/`. Python on sparse PPCA's bases; nothing in SIMP
   - Unmixing by the confusion matrix restores the slope (qtoyflex closed .51 -> .91) but over-corrects by up to 38 % and
     blows up on small toy leaves. It cannot repair a 2-state leaf with no sibling.
 
+- PER-SUBTREE REFINEMENT OF B (2026-11-08; STATUS addendum 4): tested, NOT adopted.
+  - The test: the nested pursuit at every forest node (parents fixed, root stop) on y2, on y with the fitted prior, and on
+    profiled y. 0 blocks on y2 / profiled y at 34 nodes; the one fitted-prior block (qtoy2 r1) is the leak.
+  - qtoy2's 1 | 2 pair and IgM a5 are limited by the proposal and the test, not the basis.
+  - Profiled y is selection-safe under the right noise model, because every y1 selection reads only the parent-and-nuisance span.
+  - Trap: a y2-only 102-nat seed at micnull's root (fission noise mismatched at low shells).
 **Why:** the user wants one elegant model over the whole tree; this is its first prototype.
 **How to apply:** the shared-basis latent tree is the candidate cohesive model.
 - Next (approved): K = 3 proposals with a pairwise saturation test in forest form, for 3-state arms and close pairs.
