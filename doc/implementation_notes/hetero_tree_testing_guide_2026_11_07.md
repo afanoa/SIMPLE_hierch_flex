@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:16 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:27 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1199,7 +1199,23 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - CAVEAT: on the toys the multipliers absorb a little state signal, because the residual is taken against the node mean
        only (qtoy2 root: v's holo AUROC .61 in band 1, CV .054). On RNase P, v carries no closed signal (.47-.53). The gates
        decide whether it matters; if they do, the residual is taken after the node's model, not the mean.
-     - (d) Gate battery against the pp_off arms: running.
+     - (d) Gate battery against pp_off ("nv" = the noise-variance build; "nvoff" = the same build with the switch off):
+       - Nulls: one leaf each (qtoynull, olenull, micnull).
+       - qtoyflex: passes (NMI .223 vs .225; closed .46 vs .47).
+       - nvoff reproduces pp_off exactly on every fixture it ran.
+       - qtoy2: NMI .756 vs .780, inside the seed spread (.707-.812). Closed and holo hold (.90 / .95). Combos 43 and 49 merge,
+         and one node's second state becomes a pure junk leaf.
+       - r131 seed 2 passes (corner .959 / .541 vs .960 / .544).
+       - r131 seed 1 MISSES the corner gate by .003 (.947 / .543 vs pp_off 1.004 / .530). The miss is inside pp_off's own seed
+         movement (.960 <-> 1.004), and nv's first r1 group recalls more closed rows (.60 vs .56; seed 2 .80 vs .62).
+     - DECISION (coordinator): no commit as delivered.
+       - Fixes requested: band edges in resolution, not box rings (rings 2-14 match 117-15 A only at box 36); a team-vs-serial
+         tester for the two new parallel regions; default OFF (`SIMPLE_FLEX_NOISE_VAR=yes` enables); workers adopt only this
+         run's file.
+       - Then commit default-off after the fast gate.
+       - Seeds 3-4 at r131 for both arms, plus nv qtoy2 seed 2. Default-on is the user's decision, with that 4-seed table.
+     - Absorption check (nvarBG6, a signal-free background estimate on 6 bands): every 6-band or group model re-learns the
+       closed block at .72-.74, so nvarB's closed gain is not signal absorbed into the noise level.
    - Checks under nvarB:
      - The fission copies' residual correlation across noise deciles goes from -.18..+.23 to -.02..+.04, and the fake-map null
        within noise terciles is flat (.02-.07).
@@ -1353,7 +1369,8 @@ Waiting for the user:
 - decision 6 (fission split test: no as it stands);
 - decision 9 (the r131 gate's honest readout);
 - the held precision fix;
-- a production candidate.
+- a production candidate;
+- the noise-variance default (flex): on or off, given the 4-seed r131 corner table (commit is default-off).
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
