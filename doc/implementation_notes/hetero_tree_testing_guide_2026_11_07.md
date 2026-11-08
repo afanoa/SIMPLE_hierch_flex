@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:33 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:38 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1717,6 +1717,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - For the carve rule: at r23 the carve is not on the leading coordinate.
 11. Full 692k tree on wip defaults vs production (user, 2026-11-08: "Yes, run it tonight"). Session wip692; notes
     `$H/handoff/wip692/STATUS.md`; run `$H/integration/f692_wip_s1`.
+    - CANCELLED before launch (user, ~17:00: "I dont want a safety check ... I dont want to run it if its not going to meaningfully
+      change results"). The launcher stays prepared in wip692. No full tree runs until a lever shows a clear gain on node replays.
+    - Correction to the baseline below: lf has SEVEN closed leaves at closed-arm >= .6 (r1312, r1321, r5111, r2112, r5121,
+      r1322, r1311, all `_g1_2`; the 2026-11-03 union run used all seven). Three is only the count the user judged by eye on
+      Nov 2.
     - Build: the noise-default flip on wip `0a29cfbee` (rnasep-misfit; fast gate and smoke check first), with the OpenBLAS
       variant matched to `build_lf`.
     - Keys and launcher exactly as `f692_lf.sbatch` (recipe17d keys, seed 1, all 692,392 rows). Expected 620-870 core-h, 5-6 h.

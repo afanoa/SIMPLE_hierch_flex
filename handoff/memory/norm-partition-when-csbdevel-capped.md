@@ -1,11 +1,11 @@
 ---
 name: norm-partition-when-csbdevel-capped
-description: "2026-11-08 USER: \"just use norm\" -> new jobs go to norm (QOS norm, -c <= 36, qsys_partition=norm). History: 2026-10-23 DEFAULT was csbdevel (jobs queue behind our 642 per-user cap); norm also has a 600-core per-user cap reserved for full-data picking/extraction (until ~17:00) -> use -p norm only when told norm is free (<= 36 cpus/job there)"
+description: "2026-11-08 latest USER: \"feel free to use both norm and csbdevel\" -> new jobs on either, under each cap (csbdevel 642, norm 600), -c <= 36 on norm, qsys_partition = the master's partition. Earlier same day: \"just use norm\". History: 2026-10-23 DEFAULT was csbdevel; norm's 600 cap once reserved for full-data picking"
 metadata:
   node_type: memory
   type: feedback
   originSessionId: 1ca67e82-4d15-4725-b95d-0ee5719be9f4
-  modified: 2026-10-25T09:52:59.755Z
+  modified: 2026-11-08T21:38:26.448Z
 ---
 
 Submit new batch2 work to csbdevel as before, even when it is at our per-user cap: jobs queue behind the 642-core QOS cap.
@@ -44,3 +44,10 @@ Related: [[batch2-400-core-limit-and-worker-timeouts]], [[batch2-shared-account-
 
 - 2026-11-08 STANDING (user via the coordinator: "just use norm"): submit NEW jobs straight to `-p norm` (so the QOS is norm),
   `-c` <= 36 per job, `qsys_partition=norm` in every SIMPLE call so tree workers land there too; leave running csbdevel jobs alone.
+- 2026-11-08 evening (coordinator): "just use norm" was the answer to csbdevel being full; it is not a ban.
+  - The wip692 692k tree went to csbdevel: our norm share was 420/600 used, csbdevel was idle for us, and the merge-up needs one
+    48-core job, past norm's 36-core nodes.
+  - Rule: full-size trees go wherever our cap has room, lf-comparable on csbdevel; small diagnostics stay on norm.
+- 2026-11-08 ~17:00 STANDING (user): "also feel free to use both norm and csbdevel". New jobs may go to either partition; stay
+  under each cap (csbdevel 642, norm 600), -c <= 36 per job on norm, qsys_partition matching the master. Relayed to rnasep-misfit,
+  sparse-ppca2 and site-chain.

@@ -23,3 +23,7 @@ once read honestly, and no wip build had run at 692k. So: one full tree tonight.
 **How to apply:** judge the result by these pre-set rules, closed reference rows first; never move the bar after seeing it.
 Related: [[integration-692k-lf-launch-2026-11-02]], [[integration-lf-closed-three-leaves-2026-11-02]],
 [[rnasep-closed-state-must-be-retained]], [[rnasep-misfit-noise-spectrum-verdict-2026-11-08]].
+- CANCELLED before launch (user ~17:00: "I dont want a safety check ... I dont want to run it if its not going to meaningfully
+  change results"). See [[full-runs-only-for-meaningful-change-2026-11-08]].
+- Correction: lf has 7 closed leaves at closed-arm >= .6 (r1312 r1321 r5111 r2112 r5121 r1322 r1311, all _g1_2; the union run's
+  list). "3" was only the count the user judged by eye on Nov 2. The user remembers "like 8 closed leaves in the presentation".
