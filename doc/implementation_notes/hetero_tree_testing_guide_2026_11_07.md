@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:27 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1564,6 +1564,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - Whether refinement adds closed is not shown here; thread 9's test answers it.
       - Running (approved): one map per lineage node at entry poses, then noise-model sparse sites on r13, r1311, r1312, r23,
         r232 and r2322 (~20 core-h). It asks whether a shared-basis site carries the closed direction where the tree cuts.
+      - SITES RESULT (`$H/handoff/rnasep-misfit/lineage/LINEAGE_SITES.md`): native sparse sites with the noise model on rebuilt
+        node means, 4-16 min per node.
+        - r13 (13 blocks): the leading site coordinate ranks the tree's cut to r131 at .859 (the tree's z1 .821, latent LDA .847).
+          Closed: block 1 .754, span .847 (z1 .718).
+        - r23 (12 blocks): the cut to r232 sits on block 2 (.753 / .778; span .834 against z1 .819), not on the leading
+          coordinate (.501). Block 2 reads closed at .836 against z1's .743.
+        - r131 (9 blocks): closed block 1 .681, span .765. The cut to r1311, which went against the closed rows, is on block 2
+          (.740).
+        - r1311 (where the corner cut is made), r1312, r232 and r2322 (8-22k): 0 blocks. Every grown block adds 0-29 nats held
+          out.
+        - Read: the shared basis carries both carves that bring closed in, from its own coordinates and more sharply than the
+          tree's z1. It has nothing at the deep nodes, which matches their weak re-tests (z 4.87 / 5.33) and the corner's imprint
+          pattern.
+        - For the carve rule: at r23 the carve is not on the leading coordinate.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

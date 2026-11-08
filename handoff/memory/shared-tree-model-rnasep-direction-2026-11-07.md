@@ -53,3 +53,6 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
 - 2026-11-08 user: "Yes, run both". Both tests are read honestly (guide 7.10 thread 9):
   - the carve test, shared model at full 692k (rnasep-misfit);
   - the tail-seed refinement test at r131 on the honest gate's X1 / X2 pair (extremes-repro).
+- 2026-11-08: the shared basis carries the production tree's closed-concentrating carves (r13, r23) but has no site at the deep
+  nodes (corner); see [[r17d-closed-lineage-attribution-2026-11-08]]. Carve rule caveat: at r23 the carve is on block 2, not the
+  leading coordinate.

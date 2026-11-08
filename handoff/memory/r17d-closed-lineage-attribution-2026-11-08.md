@@ -28,3 +28,8 @@ closed content by honest (fission) reads, not own-data maps. Related: [[integrat
 [[extremes-fission-verdict-2026-11-07]], [[rnasep-misfit-noise-spectrum-verdict-2026-11-08]].
 - 2026-11-08 coordinator: approved the per-node rebuild (r13, r1311, r1312, r23, r232, r2322; ~20 core-h). The question: does a
   shared-basis site carry the closed direction where the tree cuts, and could the shared model have made these carves itself?
+- 2026-11-08 sites per node (LINEAGE_SITES.md): the noise-model sparse sites carry both carves that bring closed in.
+  - r13: the leading coordinate ranks the cut at .859 against z1's .821.
+  - r23: block 2 carries it (closed .836 against z1's .743), although it is not the leading coordinate.
+  - r1311, r1312, r232 and r2322 (8-22k) have 0 blocks.
+  - So the shared model could make the carves that bring closed in, but not the deep ones such as the corner's.
