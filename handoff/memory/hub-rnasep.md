@@ -52,3 +52,4 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [rnasep-relion-polish-pilot-2026-11-03](rnasep-relion-polish-pilot-2026-11-03.md) — RNase P RELION pilot + union (15 leaves) + REST chain 54939918 (other 51 leaves); solvent mask; raw poses e1/e2/e3 +shift
 - [rnasep-relion-maps-are-mirror-of-tree-frame-2026-11-04](rnasep-relion-maps-are-mirror-of-tree-frame-2026-11-04.md) — RELION leafd maps = mirror+165deg of tree frame; rel_xform.json registers all; RELION hand = deposited
 - [relion-small-state-local-refine-blurs](relion-small-state-local-refine-blurs.md) — per-state RELION local refine <10k ptcls worse than consensus poses (SSNR<1 stall)
+- [rnasep-noise-spectrum-model-verdict-2026-11-08](rnasep-noise-spectrum-model-verdict-2026-11-08.md) — VERDICT: per-particle misfit = noise spectrum; 6-band EB noise variance removes the floor, lifts closed AUROC; port into flex started

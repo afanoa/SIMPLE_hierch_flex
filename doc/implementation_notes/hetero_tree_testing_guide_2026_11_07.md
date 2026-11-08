@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:41 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:21 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1153,6 +1153,30 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        55054551). `mf_tree.py` is tl_tree8 plus the observation model in the E-step, the fission draw, the test maps and the
        scores.
      - Random-split controls: no call on either root (z_mid 0.0 / -1.5).
+   - VERDICT (rnasep-misfit, ~02:00; `$H/handoff/rnasep-misfit/VERDICT.md`): RNase P's per-particle misfit is each particle's noise
+     spectrum.
+     - Residual power over 117-15 A varies with a true SD of 29 % (reliability .96). It is low-frequency and CTF-shaped, clusters
+       by FoilHole and micrograph (ice), and follows from denoise_project's whole-band normalisation. Registration plays no part.
+     - The fix, nvarB: a 6-band inverse-gamma prior fitted by marginal likelihood; the posterior mean enters the whitening and the
+       fission draw. It is knob-free and collapses on IgM (prior CV <= .013).
+     - Floor at r131: the balls outside the molecule go from 76 to 0.4 nats (z 0.3), and the rim controls from 245 to 29. A
+       scalar per particle fixes 20 %.
+     - Sparse pursuit with nvarB and the per-round control check: r131 best block .640 -> .70-.74 and span .694 -> .75-.77 (the
+       same site in every run, ~(40, -33, 7) A). 692k 50k subsample: .737 -> .791 and .794 -> .853, beyond native on all 692k
+       (.802 / .849). IgM arms within .003.
+     - The per-round check is required: without the floor, the as-written stop runs away (held-out LL falls after 8 blocks).
+     - Shared tree, 692k 50k subsample: the noise part of the root split is gone (.20 -> .07). The root now splits along
+       amplitude (.38) into a 10 % low-amplitude, pose-unstable side (amplitude .52 vs 1.03; angular jump 20 vs 5 deg). Closed
+       is not reached at level 1 (AUROC .495).
+     - The user judged the low-amplitude group at the 692k root to be real RNA conformations, not junk (junk_screen=no). So that
+       side is read as a candidate population: honest maps of both sides, and growth to depth 3.
+     - r131 shared tree with honest y2 gate maps: running (job 55054551, root ~03:00).
+   - PORT STARTED (rnasep-misfit, worktree `SIMPLE_noisevar` on `5b17de846`): nvarB into flex's whitening, where flex already
+     whitens per particle (`build%esig%sigma2_noise(shell, iptcl)`). It needs one residual pass at the node mean and 6
+     two-parameter fits, ~30-40 s per 50k.
+     - Default on, `SIMPLE_FLEX_NOISE_VAR=no` for A/B. refine3D is untouched.
+     - Validation: native vs Python multipliers; native sparse_sites on r131; IgM and qtoyflex unchanged; the gate battery against
+       pp_off with the r131 corner on both seeds. Committed only after the gates.
 2. Data-derived band (sparse-ppca2). The IgM scan rows land, then the rule: gain above the solvent controls, per node or per
    block. Raw gain is out, since it follows the misfit floor on r131.
    - The rule is built into sparse_sites together with the profiled coordinates, validated on the six fixtures, and committed
@@ -1200,6 +1224,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - The tree's decisions are unchanged.
      - Approved as v8 on wip `a4886d747`, with no new key. It is judged by worker-test parity (.348 / .148) and empty tables on
        the nulls.
+     - v8 (b9 on `5b17de846`, fast gate 15/15): parity is exact.
+       - Table products .348 / .148, both null tables empty, and all 33 blocks' labels bitwise v7's, with the profile on or off
+         (the worker never reaches the flex embedding).
+       - Found on the way: `chain_blocks` read `nlines(coords.txt) - 1` rows, so the last particle was never seeded. It is a
+         one-line fix (`site_chain_coords_read_fix.patch`), now built with v8 and rerun; that build is the commit candidate.
 4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
    evidence share, or off. The committed default changes only with the user.
    - 5 seeds per arm (qtoyflex): the cost is systematic.
