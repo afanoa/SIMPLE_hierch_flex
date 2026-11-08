@@ -2,10 +2,15 @@
 module simple_flex_sites_pursuit
 !$ use omp_lib, only: omp_get_max_threads
 use simple_core_module_api,          only: dp, fclose, fopen, int2str, int2str_pad, logfhandle, simple_exception, simple_mkdir, string
+use simple_defs,                     only: CWD_GLOB
+use simple_fileio,                   only: nlines, read_exit_code, simple_copy_file
+use simple_syslib,                   only: del_file, dir_exists, file_exists, simple_abspath, simple_chdir, simple_getcwd, simple_rename
 use simple_builder,                  only: builder
+use simple_cmdline,                  only: cmdline
 use simple_parameters,               only: parameters
+use simple_qsys_env,                 only: qsys_env
 use simple_image,                    only: image
-use simple_rnd,                      only: gasdev
+use simple_rnd,                      only: gasdev, get_rnd_state, put_rnd_state
 use simple_flex_pca_planes,          only: flex_plane_store
 use simple_flex_pca_project_gateway, only: read_pind_list
 use simple_flex_sites_fit,           only: flex_sites_ops, flex_sites_grid, flex_sites_state, sites_em_iter, sites_gains, sites_posterior_all, &
@@ -19,36 +24,46 @@ public :: run_sparse_sites
 integer,  parameter :: GSZ = 3, SEED_R = 5, MAXSEEDS = 60, NCTL = 12, ENV_DIL = 3, CTL_MARGIN = 4, SITE_R = 2
 integer,  parameter :: SEED_ITS = 6, GROW_ITS = 6, FINAL_ITS = 8
 real(dp), parameter :: ENV_THR = 0.1d0, KAPPA = 3.d0, PI_DP = 3.14159265358979323846d0
-character(len=*), parameter :: SDIR = 'sites'
+character(len=*), parameter :: SDIR = 'sites', CAP_DIR = 'sites_cap', CAP_FILE = 'sites_cap.txt', CAP_RES = 'sites_cap_gain.txt'
+character(len=*), parameter :: CAP_EXIT = 'sites_cap.exit', CAP_PROJ = 'sites_cap.simple', CAP_STOP = 'sites_cap.stop'
+integer,          parameter :: CAP_POLL = 5
 
 contains
 
-    subroutine run_sparse_sites( params, build, plane_store, pinds, nptcls )
+    subroutine run_sparse_sites( params, build, plane_store, pinds, nptcls, cline )
         class(parameters),       intent(in)    :: params
         class(builder),          intent(inout) :: build
         class(flex_plane_store), intent(inout) :: plane_store
         integer,                 intent(in)    :: pinds(:), nptcls
-        type(flex_sites_ops)     :: ops
+        class(cmdline),          intent(in)    :: cline
+        type(flex_sites_ops), target  :: full, sub
+        type(flex_sites_ops), pointer :: ops
         type(flex_sites_grid)    :: grd
-        type(flex_sites_state)   :: s1, t, r
-        complex(dp), allocatable :: wn(:,:), wseed(:,:), wc(:,:)
+        type(flex_sites_state)   :: t, r, tbest
+        complex(dp), allocatable :: wn(:,:), wseed(:,:), wc(:,:), wcb(:,:)
         real(dp),    allocatable :: cent(:,:), x0(:,:), gn(:,:), dpm(:), gain(:), se(:), xnew(:,:), m(:,:), sdv(:,:), ll(:)
-        real(dp),    allocatable :: lgain(:), lse(:), rec(:,:), en(:), mp(:,:), sdp(:,:), llp(:)
+        real(dp),    allocatable :: lgain(:), lse(:), rec(:,:), en(:), mp(:,:), sdp(:,:), llp(:), recb(:,:)
         logical,     allocatable :: env(:), act(:,:), even(:), odd(:), allp(:), sv(:), dead(:), used(:), inball(:)
-        integer,     allocatable :: sblk(:), comp(:), cb(:)
+        integer,     allocatable :: sblk(:), comp(:), cb(:), rs0(:), rsb(:), krng(:), rsc(:), sblk1(:)
+        complex(dp), allocatable :: wseed1(:,:), wn1(:,:)
+        real(dp),    allocatable :: gn1(:,:)
         character(len=16), allocatable :: tnames(:)
-        real(dp) :: g, sd, thr, base, rnorm, cg, cse, cthr
-        integer  :: nseed, nctl, nb, j, k, rnd, best, gi, newb, ib, nrec, ntot
-        logical  :: ok, okc, l_guard
-        call simple_mkdir(SDIR)
-        call ops%new(params, build, plane_store, pinds, nptcls)
+        real(dp)   :: g, sd, thr, base, rnorm, cg, cse, cthr, gj, gbest
+        integer    :: nseed, nctl, nb, j, k, rnd, best, gi, newb, ib, nrec, ntot, nrecb, kbj, kbest, jl, ncap, nrs0, nrsb
+        integer    :: kcap, nrsc, nbc
+        integer(8) :: tc0, tc1, tc2, trate
+        logical    :: ok, okc, l_guard, l_capjob, l_subbest, l_r1fail
+        if( file_exists(string(CAP_FILE)) .and. file_exists(string(CAP_STOP)) )then
+            write(logfhandle,'(A)') '>>> SPARSE_SITES band ladder: the node''s own job ran this cap; nothing to do'
+            return
+        endif
+        call full%new(params, build, plane_store, pinds, nptcls)
         call plane_store%release
+        ops => full
         call make_grid(ops, grd)
-        call templates(ops, wn, tnames)
         allocate(allp(ops%n), source=.true.)
         even = ops%eo == 0
         odd  = .not. even
-        call sites_fit_nuisance(ops, wn, allp, gn)
         call seed_centres(ops, grd, cent, env, nseed)
         call control_centres(ops, grd, env, cent, nctl)
         nb = nseed + nctl
@@ -58,118 +73,143 @@ contains
         end do
         write(logfhandle,'(A,I0,A,I0,A,I0,A,I0,A)') '>>> SPARSE_SITES ', nseed, ' seeds and ', nctl, ' solvent controls, ', &
             &minval(count(act, 2)), '-', maxval(count(act, 2)), ' groups per ball'
-        allocate(x0(ops%n3,nb), source=0.d0)
-        do j = 1, nb
-            do k = 1, grd%nsupp
-                if( act(j,grd%gid(k)) ) x0(grd%sv(k),j) = real(gasdev(), dp)
-            end do
-        end do
         allocate(sv(ops%n3), source=.false.)
         sv(grd%sv) = .true.
-        call bandlimit(ops, x0)
-        do j = 1, nb
-            where( .not. sv ) x0(:,j) = 0.d0
+        kbest     = 0
+        gbest     = 0.d0
+        ncap      = 0
+        l_subbest = .false.
+        l_r1fail  = .false.
+        ! quarter-octave caps from the node's band down one octave, searched coarser until the pursued held-out gain drops; every
+        ! cap draws what a run at its band alone would (cap 2 in its own job), and a seedless node band screens the coarser caps
+        call get_rnd_state(rs0, nrs0)
+        allocate(krng(0))
+        do jl = 0, 4
+            kbj = nint(real(full%kb, dp) * 2.d0**(-0.25d0 * real(jl, dp)))
+            if( .not. any(krng == kbj) ) krng = [krng, kbj]
         end do
-        allocate(wc(ops%nc,nb))
-        call modes_ft(ops, x0, wc)
-        dpm = sites_diag_precision(ops, wc)
-        do j = 1, nb
-            x0(:,j) = x0(:,j) * sqrt(1.d0 / max(dpm(j), 1.d-300))
-        end do
-        call init_state(s1, x0, [(j, j=1,nb)], nb, wn, gn)
-        do j = 1, SEED_ITS
-            call sites_em_iter(ops, grd, s1, even, KAPPA, .false., 'seeds it '//int2str(j), bsupp=act)
-        end do
-        sblk = s1%blk
-        allocate(wseed(ops%nc,nb))
-        call modes_ft(ops, s1%x, wseed)
-        call init_state(t, s1%x(:,:0), [integer ::], 0, wn, s1%gn)
-        t%alpha = s1%alpha; t%rho = s1%rho; t%rhor = s1%rhor
-        allocate(rec(13,nseed), source=0.d0)
-        allocate(used(nseed), source=.false.)
-        nrec = 0
-        l_guard = .true.
-        allocate(gain(nb), se(nb))
-        do rnd = 1, nseed
-            call sites_gains(ops, t, wseed, sblk, nb, odd, gain, se, base)
-            thr  = maxval(gain(nseed+1:nb))
-            best = 0
-            do j = 1, nseed
-                if( used(j) ) cycle
-                if( best == 0 )then
-                    best = j
-                else if( gain(j) > gain(best) )then
-                    best = j
+        l_capjob = file_exists(string(CAP_FILE))
+        if( l_capjob )then
+            call read_cap
+        else if( size(krng) > 1 )then
+            call launch_cap(krng(2))
+        endif
+        do jl = 1, size(krng)
+            kbj = krng(jl)
+            if( l_capjob .and. kbj /= kcap ) cycle
+            call system_clock(tc0, trate)
+            if( .not. l_capjob .and. jl == 2 )then
+                if( .not. file_exists(string(CAP_DIR//'/'//CAP_EXIT//'.job')) ) call stop_cap
+                if( wait_cap(gj, nbc) )then
+                    call system_clock(tc2)
+                    ncap = ncap + 1
+                    call ladder_line(kbj, nbc, gj, real(tc2 - tc0) / real(trate), 0., ' (its own job)')
+                    if( nbc > 0 .and. (kbest == 0 .or. gj > gbest) )then
+                        kbest     = kbj
+                        gbest     = gj
+                        l_subbest = .true.
+                    else if( kbest > 0 )then
+                        exit
+                    endif
+                    cycle
                 endif
-            end do
-            if( best == 0 ) exit
-            g  = gain(best); sd = se(best)
-            ok = g > 2.d0 * sd .and. g > thr .and. g > 0.d0
-            nrec = nrec + 1
-            rec(:,nrec) = [real(rnd,dp), real(best,dp), cent(:,best), g, sd, thr, merge(1.d0, 0.d0, ok), 0.d0, 0.d0, 0.d0, -1.d0]
-            write(logfhandle,'(A,I0,A,F10.5,A,I0,A,3F6.1,A,F10.1,A,F7.1,A,F7.1,A,A)') '>>> SPARSE_SITES pursuit round ', rnd, &
-                &' (held-out LL/ptcl of the sites ', base, '): best seed ', best, ' at', cent(:,best), ' gain ', g, ' nats (SE ', &
-                &sd, '); controls <= ', thr, ' -> ', merge('NEW SITE', 'stop    ', ok)
-            call flush(logfhandle)
-            if( .not. ok )then
-                l_guard = .false.
+            endif
+            if( jl > 1 )then
+                call sub%band(full, kbj)
+                ops => sub
+            endif
+            if( .not. l_capjob .and. l_r1fail .and. kbest == 0 .and. jl > 2 )then
+                if( .not. screen_cap() )then
+                    call system_clock(tc2)
+                    ncap = ncap + 1
+                    call ladder_line(kbj, 0, 0.d0, real(tc2 - tc0) / real(trate), 0., ' (screened out)')
+                    cycle
+                endif
+            endif
+            if( l_capjob )then
+                call put_rnd_state(rsc, nrsc)
+            else
+                call put_rnd_state(rs0, nrs0)
+            endif
+            call pursue(gj, tc1)
+            call system_clock(tc2)
+            ncap = ncap + 1
+            call ladder_line(kbj, t%nb, gj, real(tc2 - tc0) / real(trate), real(tc1 - tc0) / real(trate), '')
+            if( l_capjob ) call write_cap_gain(kbj, t%nb, gj)
+            if( ncap == 1 )then
+                recb  = rec(:,:nrec)
+                nrecb = nrec
+                if( .not. l_capjob .and. nrec > 0 ) l_r1fail = rec(9,1) < 0.5d0
+                if( l_r1fail )then
+                    wseed1 = wseed
+                    sblk1  = sblk
+                    wn1    = wn
+                    gn1    = gn
+                endif
+            endif
+            if( t%nb > 0 .and. (kbest == 0 .or. gj > gbest) )then
+                kbest     = kbj
+                gbest     = gj
+                tbest     = t
+                recb      = rec(:,:nrec)
+                nrecb     = nrec
+                wcb       = wseed(:,nseed+1:nb)
+                l_subbest = .false.
+                call get_rnd_state(rsb, nrsb)
+            else if( kbest > 0 )then
                 exit
             endif
-            used(best) = .true.
-            allocate(xnew(ops%n3,SITE_R), source=0.d0)
-            xnew(:,1) = s1%x(:,best)
-            do j = 2, SITE_R
-                do k = 1, grd%nsupp
-                    if( act(best,grd%gid(k)) ) xnew(grd%sv(k),j) = real(gasdev(), dp)
-                end do
-            end do
-            call bandlimit(ops, xnew(:,2:))
-            allocate(inball(ops%n3), source=.false.)
-            do k = 1, grd%nsupp
-                inball(grd%sv(k)) = act(best,grd%gid(k))
-            end do
-            do j = 2, SITE_R
-                where( .not. inball ) xnew(:,j) = 0.d0
-                rnorm = sqrt(sum(xnew(:,j)**2))
-                xnew(:,j) = xnew(:,j) * 0.3d0 * sqrt(sum(xnew(:,1)**2)) / max(rnorm, 1.d-300)
-            end do
-            call add_block(t, xnew)
-            deallocate(xnew, inball)
-            newb = t%nb
-            do gi = 1, GROW_ITS
-                call sites_em_iter(ops, grd, t, even, KAPPA, .true., 'round '//int2str(rnd)//' grow '//int2str(gi))
-            end do
-            en = block_energy(t)
-            dead = en <= 0.d0
-            if( dead(newb) )then
-                newb = 0
-            else
-                newb = newb - count(dead(:newb-1))
-            endif
-            do ib = t%nb, 1, -1
-                if( dead(ib) ) call drop_block(t, ib)
-            end do
-            okc = newb > 0
-            cg = 0.d0; cse = 0.d0; cthr = 0.d0
-            if( okc )then
-                call block_gain(t, newb, cg, cse)
-                cthr = control_max(t)
-                okc  = cg > 2.d0 * cse .and. cg > cthr .and. cg >= g
-            endif
-            rec(10:13,nrec) = [cg, cse, cthr, merge(1.d0, 0.d0, okc)]
-            write(logfhandle,'(A,I0,A,F10.1,A,F7.1,A,F7.1,A,F10.1,A,A)') '>>> SPARSE_SITES round ', rnd, ' check: the grown block adds ', &
-                &cg, ' nats held out given the other sites (SE ', cse, '); controls <= ', cthr, '; seed ', g, ' -> ', &
-                &merge('kept   ', 'dropped', okc)
-            call flush(logfhandle)
-            if( .not. okc .and. newb > 0 ) call drop_block(t, newb)
         end do
-        if( l_guard ) write(logfhandle,'(A)') '>>> SPARSE_SITES runaway guard: every seed was used before the stop'
-        call write_rounds(rec(:,:nrec), nrec)
-        if( t%nb > 0 ) call leave_one_out(t, lgain, lse)
+        if( l_subbest )then
+            if( adopt_cap() )then
+                write(logfhandle,'(A,I0,A,F6.1,A,I0,A)') '>>> SPARSE_SITES band: ring ', kbest, ' (', real(ops%box) * ops%smpd / &
+                    &real(kbest), ' A), the largest pursued held-out gain of ', ncap, ' caps; its own job''s sites are kept'
+                write(logfhandle,'(A,I0,A,I0,A)') '>>> SPARSE_SITES done: ', nlines(string(SDIR//'/blocks.txt')), &
+                    &' site blocks in ', nlines(string(SDIR//'/sites.txt')), ' sites'
+                call flush(logfhandle)
+                call full%kill
+                call sub%kill
+                return
+            endif
+            call sub%band(full, kbest)
+            ops => sub
+            call put_rnd_state(rs0, nrs0)
+            call pursue(gj, tc1)
+            tbest = t
+            recb  = rec(:,:nrec)
+            nrecb = nrec
+            wcb   = wseed(:,nseed+1:nb)
+            call get_rnd_state(rsb, nrsb)
+        endif
+        call simple_mkdir(SDIR)
+        call write_rounds(recb, nrecb)
+        if( kbest > 0 )then
+            if( kbest /= ops%kb )then
+                if( kbest == full%kb )then
+                    call sub%kill
+                    ops => full
+                else
+                    call sub%band(full, kbest)
+                    ops => sub
+                endif
+            endif
+            if( associated(ops, sub) )then
+                call full%kill
+            else
+                deallocate(full%rs, full%rc, full%rt, full%ry)
+            endif
+            t = tbest
+            wseed(:,nseed+1:nb) = wcb
+            write(logfhandle,'(A,I0,A,F6.1,A,I0,A)') '>>> SPARSE_SITES band: ring ', kbest, ' (', real(ops%box) * ops%smpd / &
+                &real(kbest), ' A), the largest pursued held-out gain of ', ncap, ' caps'
+            call put_rnd_state(rsb, nrsb)
+            call leave_one_out(t, lgain, lse)
+        endif
         if( t%nb == 0 )then
             write(logfhandle,'(A)') '>>> SPARSE_SITES no site survives'
             call write_empty
-            call ops%kill
+            call full%kill
+            call sub%kill
             return
         endif
         do j = 1, FINAL_ITS
@@ -183,9 +223,290 @@ contains
         call write_coords(t, SDIR//'/coords_profiled.txt', mp, sdp, llp)
         write(logfhandle,'(A,I0,A,I0,A)') '>>> SPARSE_SITES done: ', t%nb, ' site blocks in ', maxval(comp), ' sites'
         call flush(logfhandle)
-        call ops%kill
+        call full%kill
+        call sub%kill
 
       contains
+
+        subroutine ladder_line( kk, nn, gg, secs, sph, tag )
+            integer,          intent(in) :: kk, nn
+            real(dp),         intent(in) :: gg
+            real,             intent(in) :: secs, sph
+            character(len=*), intent(in) :: tag
+            write(logfhandle,'(A,I0,A,F6.1,A,I0,A,F12.1,A,F9.1,A,F9.1,A,A)') '>>> SPARSE_SITES band ladder: ring ', kk, ' (', &
+                &real(ops%box) * ops%smpd / real(kk), ' A), ', nn, ' site blocks, pursued held-out gain ', gg, ' nats; ', &
+                &secs, ' s, phase 1 ', sph, ' s', tag
+            call flush(logfhandle)
+        end subroutine ladder_line
+
+        subroutine read_cap
+            integer :: fu, ios, nsz
+            call fopen(fu, string(CAP_FILE), status='old', action='read', iostat=ios)
+            read(fu,*) kcap, nsz, nrsc
+            allocate(rsc(nsz))
+            read(fu,*) rsc
+            call fclose(fu)
+            write(logfhandle,'(A,I0,A)') '>>> SPARSE_SITES band ladder: this job runs ring ', kcap, ' of its node''s ladder'
+            call flush(logfhandle)
+        end subroutine read_cap
+
+        subroutine launch_cap( kk )
+            integer, intent(in) :: kk
+            character(len=11), parameter :: PKEYS(5) = [character(len=11) :: 'vol1', 'rowmap', 'pindfile', 'mskfile', 'pcg_mskfile']
+            type(qsys_env) :: q
+            type(cmdline)  :: cl
+            type(string)   :: root, here, ap, xp
+            character(len=4096) :: exe
+            real(dp)       :: mb
+            integer        :: fu, ios, ik
+            call simple_mkdir(CAP_DIR)
+            call del_file(string(CAP_DIR//'/'//CAP_RES))
+            call del_file(string(CAP_DIR//'/'//CAP_EXIT))
+            call del_file(string(CAP_DIR//'/'//CAP_EXIT//'.job'))
+            call del_file(string(CAP_DIR//'/'//CAP_STOP))
+            call fopen(fu, string(CAP_DIR//'/'//CAP_FILE), status='replace', action='write', iostat=ios)
+            write(fu,*) kk, size(rs0), nrs0
+            write(fu,*) rs0
+            call fclose(fu)
+            ap = simple_abspath(params%projfile)
+            call simple_copy_file(ap, string(CAP_DIR//'/'//CAP_PROJ))
+            cl = cline
+            call cl%set('projfile', CAP_PROJ)
+            call cl%set('mkdir',    'no')
+            do ik = 1, size(PKEYS)
+                if( .not. cl%defined(trim(PKEYS(ik))) ) cycle
+                ap = cl%get_carg(trim(PKEYS(ik)))
+                ap = simple_abspath(ap)
+                call cl%set(trim(PKEYS(ik)), ap%to_char())
+            end do
+            mb = (real(ops%nc, dp) * real(nb, dp) * real(nb + 1, dp) * 8.d0 + real(ops%ip_p(ops%n+1) - 1, dp) * 32.d0) / 1.d6 + 4000.d0
+            if( cline%defined('qsys_partition') )then
+                call q%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr, &
+                    &qsys_partition=cline%get_carg('qsys_partition'))
+            else
+                call q%new(params, 1, exec_bin=string('simple_exec'), qsys_nthr=params%nthr)
+            endif
+            call q%qdescr%set('job_memory_per_task', int2str(nint(mb)))
+            call q%qdescr%set('job_cpus_per_task',   int2str(params%nthr))
+            call get_command_argument(0, exe)
+            xp = string('')
+            if( index(exe, '/') > 0 ) xp = simple_abspath(trim(exe))
+            call simple_getcwd(root)
+            call simple_chdir(string(CAP_DIR))
+            call simple_getcwd(here)
+            CWD_GLOB = here%to_char()
+            if( xp%strlen_trim() > 0 )then
+                call q%exec_simple_prg_in_queue_async(cl, string('./sites_cap.sh'), string('sites_cap.log'), exec_bin=xp, &
+                    &exit_code_fname=string(CAP_EXIT))
+            else
+                call q%exec_simple_prg_in_queue_async(cl, string('./sites_cap.sh'), string('sites_cap.log'), &
+                    &exit_code_fname=string(CAP_EXIT))
+            endif
+            call simple_chdir(root)
+            CWD_GLOB = root%to_char()
+            call q%kill
+            write(logfhandle,'(A,I0,A,A,A,I0,A)') '>>> SPARSE_SITES band ladder: ring ', kk, ' submitted as its own job in ', CAP_DIR, &
+                &' (', nint(mb), ' MB)'
+            call flush(logfhandle)
+        end subroutine launch_cap
+
+        subroutine stop_cap
+            integer :: fu, ios
+            call fopen(fu, string(CAP_DIR//'/'//CAP_STOP), status='replace', action='write', iostat=ios)
+            write(fu,'(A)') 'the node''s own job runs this cap'
+            call fclose(fu)
+            write(logfhandle,'(A)') '>>> SPARSE_SITES band ladder: the cap job has not started; the cap runs here'
+            call flush(logfhandle)
+        end subroutine stop_cap
+
+        logical function wait_cap( gg, nn )
+            real(dp), intent(out) :: gg
+            integer,  intent(out) :: nn
+            integer :: fu, ios, kk, code
+            logical :: err
+            wait_cap = .false.
+            gg = 0.d0
+            nn = 0
+            if( file_exists(string(CAP_DIR//'/'//CAP_STOP)) ) return
+            do
+                if( file_exists(string(CAP_DIR//'/'//CAP_RES)) )then
+                    call fopen(fu, string(CAP_DIR//'/'//CAP_RES), status='old', action='read', iostat=ios)
+                    read(fu,*,iostat=ios) kk, nn, gg
+                    call fclose(fu)
+                    wait_cap = ios == 0
+                    return
+                endif
+                if( file_exists(string(CAP_DIR//'/'//CAP_EXIT)) )then
+                    call read_exit_code(string(CAP_DIR//'/'//CAP_EXIT), code, err)
+                    if( .not. err )then
+                        write(logfhandle,'(A,I0,A)') '>>> SPARSE_SITES band ladder: the cap job ended (exit ', code, &
+                            &') without its gain; the cap runs here'
+                        return
+                    endif
+                endif
+                call sleep(CAP_POLL)
+            end do
+        end function wait_cap
+
+        subroutine write_cap_gain( kk, nn, gg )
+            integer,  intent(in) :: kk, nn
+            real(dp), intent(in) :: gg
+            integer :: fu, ios
+            call fopen(fu, string(CAP_RES//'.tmp'), status='replace', action='write', iostat=ios)
+            write(fu,*) kk, nn, gg
+            call fclose(fu)
+            call simple_rename(string(CAP_RES//'.tmp'), string(CAP_RES))
+        end subroutine write_cap_gain
+
+        logical function adopt_cap()
+            integer :: code
+            logical :: err
+            do while( .not. file_exists(string(CAP_DIR//'/'//CAP_EXIT)) )
+                call sleep(CAP_POLL)
+            end do
+            call read_exit_code(string(CAP_DIR//'/'//CAP_EXIT), code, err)
+            adopt_cap = .not. err .and. code == 0 .and. file_exists(string(CAP_DIR//'/'//SDIR//'/sites.txt')) .and. &
+                &.not. dir_exists(string(SDIR))
+            if( adopt_cap )then
+                call simple_rename(string(CAP_DIR//'/'//SDIR), string(SDIR))
+                adopt_cap = file_exists(string(SDIR//'/sites.txt'))
+            endif
+            if( .not. adopt_cap ) write(logfhandle,'(A)') '>>> SPARSE_SITES band ladder: the kept cap''s sites could not be '//&
+                &'taken from its job; the cap runs here'
+        end function adopt_cap
+
+        logical function screen_cap()
+            type(flex_sites_state) :: t0
+            real(dp), allocatable  :: gs(:), ss(:)
+            real(dp) :: bs
+            integer  :: jb
+            call init_state(t0, x0(:,:0), [integer ::], 0, wn1, gn1)
+            allocate(gs(nb), ss(nb))
+            call sites_gains(ops, t0, wseed1, sblk1, nb, odd, gs, ss, bs)
+            jb = maxloc(gs(:nseed), 1)
+            screen_cap = gs(jb) > 2.d0 * ss(jb) .and. gs(jb) > maxval(gs(nseed+1:nb)) .and. gs(jb) > 0.d0
+        end function screen_cap
+
+        subroutine pursue( gp, tph )
+            real(dp),   intent(out) :: gp
+            integer(8), intent(out) :: tph
+            type(flex_sites_state) :: s1
+            real(dp) :: base0
+            if( allocated(x0) ) deallocate(x0, wc, wseed, rec, used, gain, se, gn)
+            call templates(ops, wn, tnames)
+            call sites_fit_nuisance(ops, wn, allp, gn)
+            allocate(x0(ops%n3,nb), source=0.d0)
+            do j = 1, nb
+                do k = 1, grd%nsupp
+                    if( act(j,grd%gid(k)) ) x0(grd%sv(k),j) = real(gasdev(), dp)
+                end do
+            end do
+            call bandlimit(ops, x0)
+            do j = 1, nb
+                where( .not. sv ) x0(:,j) = 0.d0
+            end do
+            allocate(wc(ops%nc,nb))
+            call modes_ft(ops, x0, wc)
+            dpm = sites_diag_precision(ops, wc)
+            do j = 1, nb
+                x0(:,j) = x0(:,j) * sqrt(1.d0 / max(dpm(j), 1.d-300))
+            end do
+            call init_state(s1, x0, [(j, j=1,nb)], nb, wn, gn)
+            do j = 1, SEED_ITS
+                call sites_em_iter(ops, grd, s1, even, KAPPA, .false., 'seeds it '//int2str(j), bsupp=act)
+            end do
+            call system_clock(tph)
+            sblk = s1%blk
+            allocate(wseed(ops%nc,nb))
+            call modes_ft(ops, s1%x, wseed)
+            call init_state(t, s1%x(:,:0), [integer ::], 0, wn, s1%gn)
+            t%alpha = s1%alpha; t%rho = s1%rho; t%rhor = s1%rhor
+            allocate(rec(13,nseed), source=0.d0)
+            allocate(used(nseed), source=.false.)
+            nrec = 0
+            l_guard = .true.
+            allocate(gain(nb), se(nb))
+            do rnd = 1, nseed
+                call sites_gains(ops, t, wseed, sblk, nb, odd, gain, se, base)
+                if( rnd == 1 ) base0 = base
+                thr  = maxval(gain(nseed+1:nb))
+                best = 0
+                do j = 1, nseed
+                    if( used(j) ) cycle
+                    if( best == 0 )then
+                        best = j
+                    else if( gain(j) > gain(best) )then
+                        best = j
+                    endif
+                end do
+                if( best == 0 ) exit
+                g  = gain(best); sd = se(best)
+                ok = g > 2.d0 * sd .and. g > thr .and. g > 0.d0
+                nrec = nrec + 1
+                rec(:,nrec) = [real(rnd,dp), real(best,dp), cent(:,best), g, sd, thr, merge(1.d0, 0.d0, ok), 0.d0, 0.d0, 0.d0, -1.d0]
+                write(logfhandle,'(A,I0,A,F10.5,A,I0,A,3F6.1,A,F10.1,A,F7.1,A,F7.1,A,A)') '>>> SPARSE_SITES pursuit round ', rnd, &
+                    &' (held-out LL/ptcl of the sites ', base, '): best seed ', best, ' at', cent(:,best), ' gain ', g, ' nats (SE ', &
+                    &sd, '); controls <= ', thr, ' -> ', merge('NEW SITE', 'stop    ', ok)
+                call flush(logfhandle)
+                if( .not. ok )then
+                    l_guard = .false.
+                    exit
+                endif
+                used(best) = .true.
+                allocate(xnew(ops%n3,SITE_R), source=0.d0)
+                xnew(:,1) = s1%x(:,best)
+                do j = 2, SITE_R
+                    do k = 1, grd%nsupp
+                        if( act(best,grd%gid(k)) ) xnew(grd%sv(k),j) = real(gasdev(), dp)
+                    end do
+                end do
+                call bandlimit(ops, xnew(:,2:))
+                allocate(inball(ops%n3), source=.false.)
+                do k = 1, grd%nsupp
+                    inball(grd%sv(k)) = act(best,grd%gid(k))
+                end do
+                do j = 2, SITE_R
+                    where( .not. inball ) xnew(:,j) = 0.d0
+                    rnorm = sqrt(sum(xnew(:,j)**2))
+                    xnew(:,j) = xnew(:,j) * 0.3d0 * sqrt(sum(xnew(:,1)**2)) / max(rnorm, 1.d-300)
+                end do
+                call add_block(t, xnew)
+                deallocate(xnew, inball)
+                newb = t%nb
+                do gi = 1, GROW_ITS
+                    call sites_em_iter(ops, grd, t, even, KAPPA, .true., 'round '//int2str(rnd)//' grow '//int2str(gi))
+                end do
+                en = block_energy(t)
+                dead = en <= 0.d0
+                if( dead(newb) )then
+                    newb = 0
+                else
+                    newb = newb - count(dead(:newb-1))
+                endif
+                do ib = t%nb, 1, -1
+                    if( dead(ib) ) call drop_block(t, ib)
+                end do
+                okc = newb > 0
+                cg = 0.d0; cse = 0.d0; cthr = 0.d0
+                if( okc )then
+                    call block_gain(t, newb, cg, cse)
+                    cthr = control_max(t)
+                    okc  = cg > 2.d0 * cse .and. cg > cthr .and. cg >= g
+                endif
+                rec(10:13,nrec) = [cg, cse, cthr, merge(1.d0, 0.d0, okc)]
+                write(logfhandle,'(A,I0,A,F10.1,A,F7.1,A,F7.1,A,F10.1,A,A)') '>>> SPARSE_SITES round ', rnd, ' check: the grown block adds ', &
+                    &cg, ' nats held out given the other sites (SE ', cse, '); controls <= ', cthr, '; seed ', g, ' -> ', &
+                    &merge('kept   ', 'dropped', okc)
+                call flush(logfhandle)
+                if( .not. okc .and. newb > 0 ) call drop_block(t, newb)
+            end do
+            if( l_guard )then
+                write(logfhandle,'(A)') '>>> SPARSE_SITES runaway guard: every seed was used before the stop'
+                call sites_gains(ops, t, wseed, sblk, nb, odd, gain, se, base)
+            endif
+            gp = 0.d0
+            if( t%nb > 0 ) gp = (base - base0) * real(count(odd), dp)
+        end subroutine pursue
 
         subroutine block_gain( st, bb, gg, ss )
             type(flex_sites_state), intent(in)  :: st

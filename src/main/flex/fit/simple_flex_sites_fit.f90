@@ -23,16 +23,18 @@ real(dp), parameter :: PI_DP = 3.14159265358979323846d0
 type :: flex_sites_ops
     integer  :: box = 0, nh = 0, nc = 0, n3 = 0, nyq = 0, kb = 0, n = 0, nthr = 1
     real     :: smpd = 0., msk = 0.
-    integer,     allocatable :: cell_shell(:), cell_lg(:,:), pind(:), eo(:), col_p(:), pid_c(:)
+    integer,     allocatable :: cell_shell(:), cell_lg(:,:), pind(:), eo(:), col_p(:), pid_c(:), rs(:), rc(:,:)
     integer(8),  allocatable :: ip_p(:), ip_c(:)
     real(dp),    allocatable :: cell_fw(:), beta(:), sig2(:), amp(:), mu_real(:)
-    real,        allocatable :: t_p(:), t_c(:)
-    complex,     allocatable :: r_p(:), r_c(:)
+    real,        allocatable :: t_p(:), t_c(:), rt(:,:)
+    complex,     allocatable :: r_p(:), r_c(:), ry(:,:)
     complex(dp), allocatable :: mu(:)
     logical,     allocatable :: hasdata(:)
     type(image), allocatable :: fimg(:)
   contains
     procedure :: new     => ops_new
+    procedure :: band    => ops_band
+    procedure, private :: assemble => ops_assemble
     procedure :: to_ft   => ops_to_ft
     procedure :: to_real => ops_to_real
     procedure :: cell_of => ops_cell_of
@@ -66,15 +68,11 @@ contains
         type(fplane_type), allocatable :: fpls(:)
         type(ori),         allocatable :: os(:)
         type(image)                    :: vol
-        integer,     allocatable :: hs(:), ks(:), rs(:), rc(:,:), cnt(:)
+        integer,     allocatable :: hs(:), ks(:), rs(:), rc(:,:)
         real,        allocatable :: rt(:,:)
         complex,     allocatable :: ry(:,:)
-        real(dp),    allocatable :: f2(:,:), aa(:,:), bb(:,:), cw(:), num(:), den(:)
-        complex(dp) :: mus, rv
-        real(dp)    :: tv, sw, a2b2
         real        :: rmat(3,3), loc(3)
-        integer     :: h, k, i, j, c, cc, ib, bl(2), bsz, ns, p(3), r2, x, y, z, it, mate, lg(3), kft(2)
-        integer(8)  :: e
+        integer     :: h, k, i, j, c, ib, bl(2), bsz, ns, p(3), r2, x, y, z, lg(3), kft(2)
         logical     :: l_pcache
         self%box  = params%box_crop
         self%smpd = params%smpd_crop
@@ -165,10 +163,31 @@ contains
         end do
         call reads%kill
         call cleanup_rec_buffers(build, fpls)
+        call self%assemble(rs(:ns), rc, rt, ry)
+        self%rs = rs(:ns)
+        call move_alloc(rc, self%rc)
+        call move_alloc(rt, self%rt)
+        call move_alloc(ry, self%ry)
+    end subroutine ops_new
+
+    subroutine ops_assemble( self, rs, rc, rt, ry )
+        class(flex_sites_ops), intent(inout) :: self
+        integer,               intent(in)    :: rs(:), rc(:,:)
+        real,                  intent(in)    :: rt(:,:)
+        complex,               intent(in)    :: ry(:,:)
+        integer,     allocatable :: cnt(:)
+        real(dp),    allocatable :: f2(:,:), aa(:,:), bb(:,:), cw(:), num(:), den(:)
+        complex(dp) :: mus, rv
+        real(dp)    :: tv, sw, a2b2
+        integer     :: h, i, j, c, cc, it, mate, ns, nptcls
+        integer(8)  :: e
+        ns     = size(rs)
+        nptcls = self%n
         allocate(f2(0:self%kb,nptcls), aa(0:self%kb,nptcls), bb(0:self%kb,nptcls), source=0.d0)
         !$omp parallel do default(shared) private(i,j,c,mus) schedule(static) proc_bind(close)
         do i = 1, nptcls
             do j = 1, ns
+                if( rs(j) > self%kb ) cycle
                 f2(rs(j),i) = f2(rs(j),i) + 2.d0 * abs(cmplx(ry(j,i), kind=dp))**2
                 c = rc(j,i)
                 if( c == 0 ) cycle
@@ -181,6 +200,7 @@ contains
         !$omp end parallel do
         allocate(cw(0:self%kb), source=0.d0)
         do j = 1, ns
+            if( rs(j) > self%kb ) cycle
             cw(rs(j)) = cw(rs(j)) + 2.d0
         end do
         allocate(self%beta(0:self%kb), self%sig2(0:self%kb), num(0:self%kb), den(0:self%kb))
@@ -199,11 +219,12 @@ contains
             self%amp = self%amp / median(self%amp)
         end do
         write(logfhandle,'(A,I0,A,F7.3,A,I0,A,F6.1,A,I0,A,I0,A)') '>>> SPARSE_SITES lattice: box ', self%box, ' at ', self%smpd, &
-            &' A, band to ring ', self%kb, ' (', real(self%box) * self%smpd / real(self%kb), ' A), ', nptcls, ' particles, ', ns, &
+            &' A, band to ring ', self%kb, ' (', real(self%box) * self%smpd / real(self%kb), ' A), ', nptcls, ' particles, ', count(rs <= self%kb), &
             &' samples per particle'
         allocate(cnt(nptcls), source=0)
         do i = 1, nptcls
             do j = 1, ns
+                if( rs(j) > self%kb ) cycle
                 c = rc(j,i)
                 if( c == 0 ) cycle
                 cnt(i) = cnt(i) + merge(2, 1, self%cell_lg(1,abs(c)) == 0)
@@ -219,6 +240,7 @@ contains
         do i = 1, nptcls
             e = self%ip_p(i)
             do j = 1, ns
+                if( rs(j) > self%kb ) cycle
                 c = rc(j,i)
                 if( c == 0 ) cycle
                 cc  = abs(c)
@@ -241,7 +263,7 @@ contains
             end do
         end do
         !$omp end parallel do
-        deallocate(rc, rt, ry, f2, aa, bb, cnt)
+        deallocate(f2, aa, bb, cnt)
         allocate(cnt(self%nc), source=0)
         do e = 1, self%ip_p(nptcls+1) - 1
             cnt(self%col_p(e)) = cnt(self%col_p(e)) + 1
@@ -280,7 +302,7 @@ contains
             quant = s(m)
         end function quant
 
-    end subroutine ops_new
+    end subroutine ops_assemble
 
     pure integer function ops_cell_of( self, lg ) result( c )
         class(flex_sites_ops), intent(in) :: self
@@ -345,8 +367,42 @@ contains
         if( allocated(self%r_c) )        deallocate(self%r_c)
         if( allocated(self%mu) )         deallocate(self%mu)
         if( allocated(self%hasdata) )    deallocate(self%hasdata)
+        if( allocated(self%rs) )         deallocate(self%rs)
+        if( allocated(self%rc) )         deallocate(self%rc)
+        if( allocated(self%rt) )         deallocate(self%rt)
+        if( allocated(self%ry) )         deallocate(self%ry)
         self%n = 0
     end subroutine ops_kill
+
+    subroutine ops_band( self, full, kbj )
+        class(flex_sites_ops), intent(inout) :: self
+        class(flex_sites_ops), intent(in)    :: full
+        integer,               intent(in)    :: kbj
+        integer :: i
+        call self%kill
+        self%box  = full%box
+        self%nh   = full%nh
+        self%nc   = full%nc
+        self%n3   = full%n3
+        self%nyq  = full%nyq
+        self%kb   = min(kbj, full%kb)
+        self%n    = full%n
+        self%nthr = full%nthr
+        self%smpd = full%smpd
+        self%msk  = full%msk
+        self%cell_shell = full%cell_shell
+        self%cell_lg    = full%cell_lg
+        self%cell_fw    = full%cell_fw
+        self%pind       = full%pind
+        self%eo         = full%eo
+        self%mu_real    = full%mu_real
+        self%mu         = full%mu
+        allocate(self%fimg(self%nthr))
+        do i = 1, self%nthr
+            call self%fimg(i)%new([self%box,self%box,self%box], self%smpd, wthreads=.false.)
+        end do
+        call self%assemble(full%rs, full%rc, full%rt, full%ry)
+    end subroutine ops_band
 
     subroutine modes_ft( ops, x, w )
         type(flex_sites_ops), intent(inout) :: ops

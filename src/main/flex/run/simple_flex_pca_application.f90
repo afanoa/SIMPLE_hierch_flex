@@ -83,7 +83,7 @@ contains
         call self%prepare(params, build, cline, rounds)
         if( params%sparse_sites .eq. 'yes' )then
             if( rounds%distributed() ) THROW_HARD('sparse_sites=yes runs in shared memory (nparts=1)')
-            call run_sparse_sites(params, build, self%plane_store, self%sess%sel%pinds, self%sess%sel%nptcls)
+            call run_sparse_sites(params, build, self%plane_store, self%sess%sel%pinds, self%sess%sel%nptcls, cline)
             call self%kill
             return
         endif
