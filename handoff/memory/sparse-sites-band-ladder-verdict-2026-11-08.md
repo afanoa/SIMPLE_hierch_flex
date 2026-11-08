@@ -50,3 +50,4 @@ Side session sparse-ppca, 2026-11-08. The coordinator's band rule built into fle
 - 2026-11-08: commit HELD. The user asked for the band inside the model instead of the ladder ([[band-must-be-data-derived]]).
   - sparse-ppca2 prototypes it against the ladder's seven runs. The ladder is committed only if the in-model band fails.
   - The site chain's b11 (b10 + band3) IgM trees run meanwhile.
+- 2026-11-08 later: the in-model band failed on IgM in four forms ([[sparse-sites-inband-band-verdict-2026-11-08]]); the ladder stands.

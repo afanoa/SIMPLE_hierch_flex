@@ -56,3 +56,12 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
 - 2026-11-08: the shared basis carries the production tree's closed-concentrating carves (r13, r23) but has no site at the deep
   nodes (corner); see [[r17d-closed-lineage-attribution-2026-11-08]]. Carve rule caveat: at r23 the carve is on block 2, not the
   leading coordinate.
+- 2026-11-08 afternoon results (guide 7.10 thread 9):
+  - Carve guards:
+    - qtoyflex holds (F1 .571 vs .558); qtoynull holds trivially.
+    - The IgM 10 % null fails once: 1 honest pass in 73 tested nodes, z 3.3 vs bar 3.32 under a carved parent.
+    - The per-node Sidak bar needs a tree-wide split under carving. Briefed: alpha (n_node / n_root) / (maxdepth + 1), then Sidak
+      within the node.
+  - r692 root: honest K = 3 (601k / 82k / 8.8k); the table is due ~19:00-20:00 EST.
+  - Refinement: production stage A pulls every seed to about half the node, so a minority seed does not survive the round. The
+    suspected cause is no class-size prior in the assignment; a per-iteration readout and a code check are running.

@@ -23,3 +23,8 @@ Use a fixed geometric ladder of caps and 2 SE as the only constants. Never propo
   - Either a per-site per-shell prior variance by marginal likelihood (ARD over shells), or the per-shell half-set agreement
     of the modes as Wiener weights.
   - Briefed to sparse-ppca2.
+- 2026-11-08 afternoon: four in-model forms all lost the IgM 10 % fix ([[sparse-sites-inband-band-verdict-2026-11-08]]).
+  - A seed needs its band fixed before its first iteration, and a node-wide probe is too coarse.
+  - Last try (briefed): per-shell even/odd covariance agreement measured inside the seed balls, pooled into one band before
+    phase 1.
+  - Otherwise the ladder is final, with its two cost cuts (concurrent first caps, a round-1 null screen).

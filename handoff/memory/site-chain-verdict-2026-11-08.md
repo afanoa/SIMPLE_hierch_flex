@@ -43,3 +43,8 @@ hybrid "shared basis -> seeds -> round" resolves balanced binary states, not a 7
 **How to apply:** for RNase P's closed state, don't expect the chain or any balanced K=2 seed to isolate it. A minority needs a tail
 or unbalanced proposal, and its honest maps need a fission re-read ([[extremes-fission-verdict-2026-11-07]]). Keep the chain for
 balanced site states; batch2 does not enforce memory, so size its worker from MaxRSS ([[batch2-memory-not-enforced]]).
+- 2026-11-08 afternoon, b11 = b10 + band3 (guide 7.10 thread 3):
+  - The gate battery passes 14 / 14, and the r131 corner holds on own data. The chain fired on 7 gate nodes, keeping 0 sites each
+    time: the battery shows no harm, not benefit.
+  - IgM stock twins: 10 % fix 2 leaves (combo NMI .034), 5 % fix .001, nulls 1 leaf.
+  - The 4 IgM chain trees are still running; `sc11_igm_score.sbatch` scores them. Commit only if IgM gains in the tree.

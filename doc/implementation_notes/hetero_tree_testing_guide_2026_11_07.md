@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:44 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1317,6 +1317,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          one-line fix (`site_chain_coords_read_fix.patch`), now built with v8 and rerun; that build is the commit candidate.
      - Commit candidate b10 (`site_chain_v8_plus_coordsfix.patch` on `5b17de846`): fast gate 15/15, products .349 / .145 with
        v7's accepted blocks, both null tables empty. It waits for the band rule and the IgM chain trees.
+   - b11 = b10 + band3 (`$H/handoff/site-chain/STATUS.md`, 2026-11-08 afternoon):
+     - Gate battery, 14 trees, all rows pass. Where the chain did not fire, the trees match pp_off exactly (qtoy2's 8 leaves at NMI
+       .780; r131's maps to three decimals). r131 corner on own data: s02 .960 / .544, s01 1.004 / .530, and it holds at maxdepth 2.
+     - The chain fired on 7 gate nodes and the band3 fit kept 0 sites each time, so the battery shows no harm but cannot show
+       benefit. It never fires on r131, because every node there splits before it becomes a would-be leaf.
+     - IgM stock twins: 10 % fix 2 leaves (combo NMI .034), 5 % fix 2 leaves (.001), nulls 1 leaf each. The 4 IgM chain trees are
+       still running, and `sc11_igm_score.sbatch` scores chain against stock when they end. Cost per firing: sparse fit 2-15 min at
+       32 threads, worker 2-5 s.
 4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
    evidence share, or off. The committed default changes only with the user.
    - 5 seeds per arm (qtoyflex): the cost is systematic.
@@ -1483,6 +1491,24 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          likelihood (ARD over shells) or the per-shell half-set agreement of the modes as Wiener weights. It is compared with
          the ladder on the same seven runs, at a target cost of ~1 fit.
        - The ladder stays uncommitted until that reports.
+       - IN-MODEL RESULT (sparse-ppca2, 2026-11-08 afternoon; `$H/handoff/sparse-ppca/inband_band.md`): none of four versions
+         replaces the ladder. Each loses the IgM 10 % fix entirely (no site), where the ladder finds all five arms.
+         - Versions:
+           - v1: a per-site per-shell prior.
+           - v2 / v3: a per-block band edge by held-out gain. v3 is batched: r131 .678 / .743 (.740 / .772 with the noise model),
+             qtoyflex .900 / .929, at 1.0-1.5x.
+           - v4: one node-wide per-shell weight from the even/odd agreement of the node covariance. On IgM it falls below one
+             half at 110-330 A, far coarser than the arms' 18-30 A.
+         - Mechanism: a seed needs its band fixed before its first iteration.
+           - Learned during the fit, the band never cuts in time. v1's edge stayed at ring 43 while the seed's energy fell 14x,
+             and v3's narrowing collapsed seeds faster.
+           - A node-wide probe finds a global low-frequency direction, not the local arm motions.
+         - Next (briefed 2026-11-08): the one design left open. Measure the per-shell even/odd covariance agreement inside the
+           seed balls and pool it into one band before phase 1.
+           - If it loses the IgM fix, the ladder is final. Add the two cost changes (caps 1 and 2 as concurrent jobs; a round-1
+             null screen at box 36), confirm the picks, build, run the fast gate and commit to wip.
+         - Flag unchanged in every version: the dropped-round drift (v3 r131 with the noise model: LL/ptcl .244 -> .170 over 12
+           rounds).
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
@@ -1490,6 +1516,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - The bar is the 95th percentile of matched-N random tails and random subsets from the corner's parent node, read on X2.
    - First use: pp_off vs the noise model on seeds 1-2 (3-4 if close), which decides the noise-variance default. Then one script
      for the battery's r131 arm.
+   - SEEDS 1-2 RESULT (`$H/handoff/extremes/GATE.md`; battery script `scripts/ext_gate_tree.sbatch`). Corner, own X1 -> honest
+     X2, against the bar:
+     - pp_off seed 1: r1_s1 (10,459), 1.074 / .599 -> .893 / .641 against .892: PASS (+.001).
+     - noise model seed 1: r2_g1_2 (21,354; r2 unsplit), .882 / .534 -> .843 / .607 against .856: FAIL (-.013).
+     - pp_off seed 2: r1_s1 (10,983), 1.004 / .569 -> .870 / .607 against .883: FAIL (-.013).
+     - noise model seed 2: r2_s2 (12,620), .919 / .563 -> .864 / .620 against .855: PASS (+.009).
+     - Every corner loses .04-.18 of closed occupancy when rebuilt from X2. Read honestly, the arms split one-all and each pass
+       is narrow.
+     - The stricter null is the latent tail along the parent's own X1 latent, which reads as closed as the corner about 5 % of
+       the time.
+     - Root splits reproduce within an arm (79 % / 77 % agreement across seeds) but not across arms (50-56 %). The noise model
+       moves the root split onto a different axis.
+     - Seeds 3-4 are running (jobs 55084993-96), each with its own readout. Cost so far: 126.9 core-h for the four arm-seeds.
 9. Making the shared model work (user, 2026-11-08: "subsetting is necessary (with non random seeds derived from the latent) and
    refinement is necessary. I only know this empirically"). Both tests approved 2026-11-08 (user: "Yes, run both").
    - Why, from mixture-learning theory:
@@ -1528,6 +1567,39 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        - Each is read on X2 before and after the round, against the random bar. A fixed-pose variant runs for the best tail and
          one random seed.
        - Guards: the IgM 10 % null twin and fix.
+     - CARVE TEST SO FAR (2026-11-08 afternoon; `CARVES.md`):
+       - Guards:
+         - qtoyflex holds: closed best-leaf F1 .571 against .558. Only the root split honestly; 11 nodes were carved.
+         - qtoynull holds trivially: no site survives its basis.
+         - The IgM 10 % null twin FAILS once. S3:r11 at level 2 split honestly (K = 3 pair 1,176 / 2,617, z_mid 3.3 against the
+           Sidak bar 3.32) under a carved "not discrete" parent. That is 1 pass in 73 tested nodes (177 tests); all five
+           random-split controls read no call.
+       - The per-node Sidak bar does not control the tree once carving multiplies the nodes tested.
+         - Briefed: re-read every pass against a size-and-depth Bonferroni split, alpha_node = alpha (n_node / n_root) /
+           (maxdepth + 1), then Sidak within the node. The shares come from the X1 tree.
+         - That bounds the false-pass rate over the whole tree.
+       - r692 (job 55076637): the root split honestly, K = 3 into 601k / 82k / 8.8k. Level 1 runs at about 30 min per node, and
+         the table comes at about 19:00-20:00 EST.
+     - REFINEMENT TEST SO FAR (r131, honest pair):
+       - Every round ends in a near-half split (about 19k of 44k), whatever the seed. The round's state stays near the base
+         closed share (.069).
+         - Random seeds (rtail1, rtail2, rsub1, rsub2) clear the bar 3 of 4 times, at closed share .062-.077.
+         - Latent tails (pc2lo, site2hi, blockhi) clear it 1 of 3 times, at .076-.089.
+         - Site-masked blockhi clears it 0 of 1 times, at .098.
+         - rsub2 has both halves at the base share (.069 / .070) and still reads .857 against .853. Clearing the bar after a
+           round does not need any closed signal in the seed.
+       - IgM guard: a 97.5 %-pure 5 % a1 tail grew into a 44 % state, 64.5 % pure (a1 NMI .068 -> .051), still far above its
+         bar.
+       - The seed decides the axis. Rounds from different seeds land on mostly unrelated splits (50-66 % agreement). pc2lo,
+         rtail2 and site2hi share one axis (64-74 %), near the noise-model trees' roots.
+       - The fflex round reproduces the tree's own root split (94.3 % agreement with pp_off seed 2). It is the most
+         closed-enriched round: 23,381 particles, share .085, recall .64, honest .862 against .852. No latent tail beat it.
+       - Coordinator's read: the round as built (production stage A, K = 2) pulls any seed to about half the node, so a
+         minority seed does not survive it.
+         - Suspected cause: no class-size prior in the assignment. With equal priors, a 7 % state gains about 2 nats per
+           particle.
+         - Running: the fixed-pose rounds (site2hi, rtail1); a per-iteration readout of each seed group's size and closed
+           share; and a code check for a class prior in stage A.
 10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
     at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
     - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).
@@ -1585,7 +1657,7 @@ Waiting for the user:
 - decision 9 (the r131 gate's honest readout): DECIDED 2026-11-08, honest re-read (section 8 item 9; thread 8);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. The call now waits on the seed table's honest re-read (thread 8).
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8): seeds 1-2 split one-all with narrow passes; the call waits on seeds 3-4 (running).
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.

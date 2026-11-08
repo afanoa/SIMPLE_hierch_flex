@@ -36,3 +36,17 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - The gate tree runs on X1; the corner leaf is chosen on its X1 map and read on X2.
   - Bar: the 95th percentile of matched-N random tails and random subsets, read on X2.
   - extremes-repro builds it (guide 7.10 thread 8) and applies it first to the noise-model seed table.
+- 2026-11-08 afternoon, honest gate seeds 1-2 (guide 7.10 thread 8; `$H/handoff/extremes/GATE.md`):
+  - Results: pp_off .893 vs bar .892 (PASS) and .870 vs .883 (FAIL); noise model .843 vs .856 (FAIL) and .864 vs .855 (PASS).
+    The arms split one-all with narrow passes.
+  - Every corner loses .04-.18 of closed occupancy from X1 to X2.
+  - The stricter null is the latent tail along the parent's own X1 latent.
+  - Root splits reproduce within an arm (77-79 %) but not across arms (50-56 %).
+  - Seeds 3-4 (55084993-96) decide the noise default.
+- 2026-11-08, tail-seed refinement rounds at r131 (thread 9):
+  - Every round ends near a half split (~19k of 44k) at about the base closed share, whatever the seed.
+  - Random seeds clear the bar 3 / 4, latent tails 1 / 3. rsub2 (both halves at the base share) still clears it.
+  - IgM a1: a 97.5 %-pure 5 % tail grew to a 44 % state at 64.5 % purity.
+  - The production fflex round (94 % = the tree's root split) is the most closed-enriched, at .085.
+  - Rule: clearing the honest bar after a round shows non-random selection, not closed enrichment. Judge rounds by closed share
+    and recall.
