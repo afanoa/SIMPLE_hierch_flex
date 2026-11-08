@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:02 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:06 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -746,10 +746,17 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
       there was a sensitivity miss: the criterion is "no discreteness", not "0 sites".
     - qtoyflex: closed / holo .901 / .929. qtoynull: 0 sites. 10 % null: running.
     Departure: under flex's noise model the solvent controls' held-out gains are negative (-1.6 to -2.9; Python +0.5 to +4.6),
-    so near-dead blocks (0.3-2.2 nats, SE <= 0.4) pass "2 SE and every control" and widen arm masks. Fix (approved; build b3): a
-    grown block must keep the evidence that admitted it, i.e. its held-out gain may not fall below its seed's by more than 2 SE
-    of the paired difference. Real blocks end at 1.04-16x their seed and weak ones at 0.07-0.6x. A block that is strong when
-    added and redundant later stays inside its arm's site, and GAPw rejects such blocks (Part 4b).
+    so near-dead blocks (0.3-2.2 nats, SE <= 0.4) pass "2 SE and every control" and widen arm masks.
+    Fix, as delivered: a grown block must keep at least its seed's held-out gain (strict; the 2-SE tolerance was asked for but
+    not built). Real blocks end at 1.04-16x their seed and weak ones at 0.07-0.67x. The floor removes the near-dead blocks
+    (four on the 5 % null, one on the 5 % fix) and no real block on any fixture. A block that is strong when added and redundant
+    later stays inside its arm's site, and GAPw rejects such blocks (Part 4b).
+    COMMITTED on `hetero-tree-wip` as `b3ced0021` (build b3, fast gate 15/15; `$H/handoff/sparse-ppca/PORT.md`):
+    - every readout within .01 of the prototype;
+    - 10 % null: 5 arm sites, no discreteness;
+    - 18-40 min and 13.6 GB per 100k IgM particles (prototype 46-125 min, 30.7 GB); request 24 GB per 100k at box 70.
+    Real-data test running on b3: r131 roots on both seeds (55039094_1-2) and the 692k root (55039095_3, 64 GB). They report
+    closed AUROC / d' and the closed share of the top-N tail per block, and list every block the strict floor drops.
   - Side finding: a converged zero-penalty whole-molecule fit reads a1 / a3 (span LDA NMI .18 / .19) where flex's whole-molecule
     basis reads <= .02; flex's basis stays near its data-free start (2 + 1 iterations).
 - `spectrum-stop`: a stopping rule from each node's flex spectrum (directions above a noise edge set by the node's N, after the
