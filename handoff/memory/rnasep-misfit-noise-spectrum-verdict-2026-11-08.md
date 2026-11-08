@@ -55,3 +55,8 @@ rnasep-misfit session, 2026-11-07/08 (batch2 `hetero_tree_20261028/handoff/rnase
 **How to apply:** any real-data latent / site / fission work on the RNase P stacks needs per-particle band-wise noise first; draw
 fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026-11-07]], [[band-must-be-data-derived]], [[tree-latent-verdict-2026-11-07]], [[extremes-fission-verdict-2026-11-07]],
 [[rnasep-denoised-stacks-are-phase-flipped]].
+- DECIDED 2026-11-08 (user: "Yes, default on"): the noise model becomes the default on wip, with SIMPLE_FLEX_NOISE_VAR=no to turn
+  it off.
+  - Basis: the honest 4-seed r131 gate does not separate the arms (1/4 off vs 2/4 on). The noise model shrinks the own-data
+    imprint (.04-.06 vs .11-.18) and removes the misfit floor.
+  - rnasep-misfit flips it, builds (nvon_<hash>), fast-gates and smoke-tests it; then cherry-pick to wip.

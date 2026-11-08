@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:03 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:24 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1522,6 +1522,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              After that it goes on wip.
            - Cap jobs need x6342 nodes (USE_ARCHOPT builds). The parent sets `SBATCH_CONSTRAINT=x6342`, and tree launches need
              the same. SIMPLE's template mail line (`--mail-type=FAIL --mail-user=nil`) reaches nobody.
+           - Revised to `eb1d99ede`: cap 2's side job had crashed on restoring the saved random state, so earlier checks
+             passed only through the in-process fallback. It passes the fast gate (15/15).
+             - All four box-36 fixtures reproduce the ladder exactly with cap 2 as its own job. qtoyflex's wall drops from 297
+               to 176 s.
+             - The IgM and r131 checks (55087717-19) are running.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
@@ -1717,7 +1722,7 @@ Waiting for the user:
 - decision 9 (the r131 gate's honest readout): DECIDED 2026-11-08, honest re-read (section 8 item 9; thread 8);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8, 4 seeds): not separated (honest passes 1 / 4 off vs 2 / 4 on, all within ~1 null sd); the noise model shrinks the own-data imprint (.04-.06 vs .11-.18). Waiting for the user.
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8, 4 seeds): not separated (honest passes 1 / 4 off vs 2 / 4 on, all within ~1 null sd); the noise model shrinks the own-data imprint (.04-.06 vs .11-.18). DECIDED 2026-11-08 (user: "Yes, default on"): on by default on wip, `SIMPLE_FLEX_NOISE_VAR=no` turns it off. rnasep-misfit flips it, then builds (`$H/wip_builds/nvon_<hash>`), runs the fast gate and a smoke check with the variable unset before it goes on wip. The ladder's r131 pick under the noise model is already re-read: ring 15, 9 blocks, span .765.
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
