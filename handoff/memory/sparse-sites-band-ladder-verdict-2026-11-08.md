@@ -59,3 +59,5 @@ Side session sparse-ppca, 2026-11-08. The coordinator's band rule built into fle
     then cherry-pick to wip.
   - TRAP: cap sub-jobs need x6342 (USE_ARCHOPT). The parent job sets SBATCH_CONSTRAINT=x6342, and tree launch scripts must
     set it too.
+- TRAP (IgM check, 2026-11-08 evening): eb1d99ede's cap-2 takeover renames a folder, and BeeGFS refuses the rename. The winning cap's
+  sites were lost (0 sites on IgM 10 %). Fixed in e4fbef54e (on wip cc4af8a10), now re-validating. Never push eb1d99ede.

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 17:44 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:13 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1527,6 +1527,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              - All four box-36 fixtures reproduce the ladder exactly with cap 2 as its own job. qtoyflex's wall drops from 297
                to 176 s.
              - The IgM and r131 checks (55087717-19) are running.
+           - `eb1d99ede` must NOT go on wip. On the IgM 10 % check cap 2 won, but BeeGFS refuses the folder rename, so its
+             sites were never taken over and both runs reported 0 sites. The fix is in `e4fbef54e` (on wip `cc4af8a10`):
+             build 55088875, then six validation runs.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
