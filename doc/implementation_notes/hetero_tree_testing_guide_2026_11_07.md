@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:55 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1250,6 +1250,14 @@ Not to retry:
      - Stock twins (b2): the 10 % null is 1 leaf; the 10 % fix root splits 52.5k / 47.5k into two leaves, so the chain fires at
        r1 / r2.
      - On b5: IgM chain trees `sc5_*` (55046502-5) and the section-3 battery `sc5_*` (55046506-12).
+     Nuisance check (site-coupling trap):
+     - The seed coordinates (sparse PPCA's coords.txt) INTEGRATE the 12 nuisance latents under their fitted Gaussian prior
+       (`simple_flex_sites_fit.f90:426-449`); the port's design note said "profiled". The round profiles (amplitude only, flat
+       prior).
+     - Within one site's 2-D seed this is not the cross-site trap, but it may blur seeds, and it matters for any factorial
+       output.
+     - Asked of the sparse-ppca2 session: profiled coordinates beside the integrated ones, validated on the fixtures and r131 /
+       692k, as a follow-up patch to `b3ced0021`.
      SIDE FINDING to check: qtoyflex closed F1 .159 (holo .595) on this base's stock tree, against .47 for ports4 / ports7 at the
      same maxdepth, with no chain split involved. The pose profile (5f80720e0, default on) was never gated on qtoyflex. An A/B
      (profile on vs off, one binary, 2 seeds) has been asked of the pose-tangent2 session.
