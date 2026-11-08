@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:32 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -893,8 +893,12 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
       weak for X2's ~26 % of the information at tau 0.6, so the merge is lost power.
     - TRAP: re-reading groups selected on X on X2 is not honest, because X2 = S + N - Z/tau shares N with X. Only selection on
       X1 makes an X2 read honest.
-    - Next: tau 1 reruns of r131 on both seeds (55038926-7; the extremes session's tau 1 copies; projected z ~4.4 / 6.0) and
-      the gate nulls at tau 1. qtoy2 at tau 1 runs only if both pass.
+    - tau 1 (55038926-7; the extremes session's tau 1 copies, which pass the fake-map null; projected z ~4.4 / 6.0): r131 STILL
+      ends as one leaf of 44,334 on both seeds, so the hard gate fails at tau 1 too. qtoynull and micnull at tau 1 stay one leaf;
+      olenull at tau 1 is running.
+    - Reading: an honest split test cannot confirm r131's root split at 44k particles at either tau. That agrees with
+      extremes-repro: the corner passes partly on imprint. By the coordinator's rule the session stops here (no other tau or
+      knobs) and writes the verdict.
 - `extremes-repro` (runs `$L/extremes/`; notes to `$H/handoff/extremes/`): whether the extreme maps along a latent coordinate
   reproduce across fission copies. qtoyflex (first numbers): self-selected tail maps "reproduce" across halves (.13-.51 at
   39-10 A), but so do tails picked along a fake map no particle carries (.23-.45); honest tails (select on X1, rebuild from X2)
@@ -1070,8 +1074,11 @@ Not to retry:
    - With the guards off, fission merges qtoynull and micnull (self-selection) and keeps olenull's contrast split, which the
      locality guard merges.
    - The effect floor is redundant.
-   - The candidate rule is fission + the locality guard. qtoy2 keeps its states, but r131 fails the hard gate at tau 0.6 (the
-     root merges: lost power on a real but weak split). tau 1 reruns are running; not ready to adopt.
+   - The candidate rule is fission + the locality guard. qtoy2 keeps its states, but r131 fails the hard gate at tau 0.6 AND at
+     tau 1: the root merges on both seeds, a real but weak split lost to power.
+   - As it stands, fission cannot replace the guards without losing RNase P's closed corner.
+   - Options for the user: keep today's guards; recover power by cross-fitting both copies (data thinning); or accept that the
+     honest test makes r131's root a no-call and judge the closed lineage at 692k, where it has more particles.
    Fission removes
    noise-made splits, not carves of a real continuum (the IgM null twins' root split follows the arm angles); igm-refs Part 5's
    saturation test is the continuum check that would complete the rule.
