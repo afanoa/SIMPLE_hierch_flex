@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 04:16 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1282,6 +1282,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
    - DECIDED (user, 2026-11-08: "Yes, default off"): `4afe93b80` turns it off by default, and `SIMPLE_FLEX_POSE_PROFILE=yes`
      turns it on. Gate trees compared with earlier pp_on arms must set the key.
 5. Flex -> refinement priors (oracle, Part 7): the verdict when the chains finish.
+   - VERDICT (igm-refs VERDICT.md Part 7; `results/part7/`): a fixed latent prior helps only where the seed already carries
+     the arm.
+     - 10 % fix: α = 1 beats lever 3 on all five arms at every round (+.012-.053), and the labels freeze after round 1.
+     - 5 % fix: the old chain seed is a 1-3 % tail split, and α = 1 holds the chain there (-.011 to -.081 at round 3). It blocks
+       the rounds that rescued these arms in Part 3.
+     - Nulls: the prior does not stop round 1's carving.
+     - The held-out α stays > 0 on every null block (.125-.25), so it is no null detector, and the site test stays GAPw. The
+       held-out α is the safe weight: +.008-.049 over lever 3 at 10 %, within -.012 / +.004 at 5 %.
+     - Caveat: β* sits at its grid top in 39 of 45 null and 5 % rounds.
+   - Part 7b approved: the 10 % null and both 5 % fixtures, seeded from v7's sklearn tied refit, with no-prior / held-out α /
+     α = 1 arms from that one seed, and a wider β grid.
 6. Every verdict goes into this guide and memory, pushed to fork wip. New jobs go to norm. Nothing goes to production.
 7. The whole shared model (tree-latent; user: "what about the whole shared model").
    - Thread 1 decides RNase P. The model has two untested parts besides, and both run tonight.

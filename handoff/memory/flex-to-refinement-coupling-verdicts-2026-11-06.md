@@ -43,3 +43,8 @@ needs `SIMPLE_SPLIT_CONTRAST=maps` exported for the split step (`gates/<arm>/spl
 (launcher default 1; r131 ran at 2); fixture and child-node projects carry the parent's stacks, so `prg=selection` refuses
 them (`write_states` in merge_sm writes states tree-style). Related:
 [[flex-frozen-poses-only-no-woodbury-2026-11-06]], [[soft-multistate-fixed-pose-verdict-2026-10-30]], [[inode-prototype-2026-11-06]].
+
+2026-11-08 revisit with sparse-PPCA site posteriors (precision A) on IgM, in `state_eval`:
+- A fixed prior helps where the seed carries the arm (10 % +.01-.05 NMI) and anchors bad seeds.
+- Its held-out alpha stays > 0 on continuous-arm nulls.
+- See [[fixed-latent-prior-on-state-eval-verdict-2026-11-08]].
