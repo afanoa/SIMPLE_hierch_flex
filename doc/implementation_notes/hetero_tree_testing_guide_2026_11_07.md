@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:52 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1039,6 +1039,19 @@ quad-manifold VERDICT, half yes (`$H/handoff/quad-manifold/VERDICT.md`, tables.m
   - IgM fix a1: +2,059 +- 77, all of it density (curvature -9 +- 55).
   - qtoyflex: ~+4,000, about half each (log plateau only; its 2-D runs died of lattice growth).
   - The second dimension adds on every structured site, so none of them is 1-D.
+
+site-coupling VERDICT (`$H/handoff/site-coupling/VERDICT.md`): factorial across sites, joint within a site.
+- IgM product-form subset: per-site K comes out 2, 2, 2, 3, 3 (the truth's 72 cells). The five-arm product beats a free
+  72-cell table by 45 held-out nats (z -5.3) and a joint mixture by 2,057.
+- Full sets: the product beats the joint mixture by 2,030 nats (fix twin) and 1,651 (null twin).
+- Planted couplings are found: a1-a3 at z 15.6, coupled null angles at z 9.6. No false calls on 65 independent pairs.
+- qtoyflex's one site is coupled internally.
+- A covariance screen alone false-calls 6 / 90 null pairs, so it can shortlist but not decide.
+- TRAP: integrating nuisances under their fitted prior invents couplings; profile them.
+- Model shape: one tree per site (a particle's leaf = the product of its site leaves), a joint tree over each site's blocks; two
+  sites merge only when their free table beats the product by 2 SE held out. This is also why the joint hetero tree needs an
+  equivalence merge-up: it duplicates a site's states under other branches.
+- Sent to tree-latent (the port note builds on the forest) and site-chain (a factorial output-mode proposal after its tests).
 
 tree-latent, qtoy2 v2: the root split is DISCRETE (z 28.8, deconvolved d' 9.9), but the numpy code took 51 min for qtoy2's
 14-coordinate site; a compiled version is rerunning.
