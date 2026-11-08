@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:12 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:17 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1383,6 +1383,9 @@ Cluster and data:
 - `simple_exec` keys must follow `prg=`; a failed `chdir` does not abort (the run lands in the project root); finished trees prune
   split inputs.
 - Memory sizing from `sacct` MaxRSS; wall time sized to the job.
+- Partition (user 2026-11-08: "just use norm"): new jobs go to `-p norm`, submitted there directly so their QOS is norm, with
+  `-c` <= 36 and `qsys_partition=norm` in every SIMPLE call. csbdevel stays usable too (per-user caps ~642 csbdevel, 600 norm).
+  Running jobs are never moved.
 
 Git:
 - Push only to the fork; commits carry no Co-Authored-By trailer; build and fast-gate on batch2 before pushing code.

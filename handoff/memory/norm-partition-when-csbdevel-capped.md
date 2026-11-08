@@ -1,6 +1,6 @@
 ---
 name: norm-partition-when-csbdevel-capped
-description: "batch2 partitions 2026-10-23: DEFAULT stays csbdevel (jobs queue behind our 642 per-user cap); norm also has a 600-core per-user cap reserved for full-data picking/extraction (until ~17:00) -> use -p norm only when told norm is free (<= 36 cpus/job there)"
+description: "2026-11-08 USER: \"just use norm\" -> new jobs go to norm (QOS norm, -c <= 36, qsys_partition=norm). History: 2026-10-23 DEFAULT was csbdevel (jobs queue behind our 642 per-user cap); norm also has a 600-core per-user cap reserved for full-data picking/extraction (until ~17:00) -> use -p norm only when told norm is free (<= 36 cpus/job there)"
 metadata:
   node_type: memory
   type: feedback
@@ -37,3 +37,7 @@ Related: [[batch2-400-core-limit-and-worker-timeouts]], [[batch2-shared-account-
   partition (QOS 432 cpus/user, no time limit, nodes cn084-109/164-167, mostly idle) takes pending SIMPLE workers via
   `scontrol update JobId=<id> Partition=unlimited`; the master does not care where its workers run. New IgM runs may use
   qsys_partition=norm or unlimited.
+- 2026-11-08 USER ("umm just use norm lol"), when the coordinator reported 504 cpus on csbdevel near its ~642 cap: NEW jobs go to
+  `-p norm`, with QOS norm by submitting there directly, `-c` <= 36 per job, and `qsys_partition=norm` in every SIMPLE call
+  so workers land there too. csbdevel stays usable as well; running jobs are left where they are. Relayed to every active
+  session.
