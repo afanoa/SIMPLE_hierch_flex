@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:59 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:43 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1301,6 +1301,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        - The cause is the second-moment nuisance prior fitted on the noisier copy. Its centred low-frequency templates are
          under-absorbed (EM stops at its 200-iteration cap), and a central seed takes their variance.
        - RULE (PORT_DESIGN.md, fission step): anything fitted on a fission copy profiles the nuisances.
+   - Separability-ranked proposals, part 1 (`tl_tree10.py`, `--pp 1`).
+     - Design: a homoscedastic K = 2 XD per site on y1, i.e. a 1D unequal-weight split along the Fisher direction. Starts come
+       from the 10/90 % tails along each principal and coordinate axis. Fitted on even members, ranked by odd held-out gain,
+       proposed only above 2 SE. Sidak counts 2d tests per site.
+     - qtoyflex: unchanged (closed F1 .558).
+     - IgM 10 % twin: one leaf in all 5 trees. But on every arm the proposal finds a significant ~15 % minority (26-125 nats,
+       d' 3-4.6), and 4 of 5 pass z_mid above the Sidak bar. sat5's side test (r at the continuum bound) rejects them all. So
+       on continua the saturation test, not the multiplicity bar, prevents false splits.
+     - IgM 10 % fix: product .321 (frozen .322). a5's 40/40 pair is still unresolved: a minority search does not split a
+       balanced pair.
+     - qtoy2 and r131 with nvarB still running. r131's closed is a 7 % minority, the case this proposal targets.
+   - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
+     r131 hit an illegal instruction on a non-x6342 node and reruns pinned to x6342 (job 55059118). The IgM runs are going.
      - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.
 Waiting for the user:
 - decision 1 (depth_wiener default);
