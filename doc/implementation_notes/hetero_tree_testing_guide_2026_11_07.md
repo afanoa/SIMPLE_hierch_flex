@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:46 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:04 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1033,6 +1033,18 @@ tree-latent, IgM 10 % fix v2 (joint tree on y1, frozen poses):
 - 6 leaves; five-arm product .223 on y (.135 on y1), against the v2 forest's .208, lever 3's .338 and the hetero tree's .042.
 - Per arm: a1 .234, a3 .241, a4 .023, a5 .039.
 - So at half the information it beats the tree by far but stays below the masked-round chain. v3 (proposals on y) is pending.
+
+tree-latent VERDICT (`$H/handoff/tree-latent/VERDICT.md`). The candidate cohesive model is a tree grown in latent space over
+ONE tree-wide sparse site basis: deconvolved node Gaussians (a Bishop-Tipping soft hierarchy with XD, posterior precision A),
+growth by the saturation test, frozen poses. In v3, proposals and test labels are on y; memberships and child weights are on y1.
+- qtoyflex: 3 leaves (arm kept whole, holo, closed). Closed is its own depth-2 leaf (F1 .558, purity .63, recall .50); holo
+  .713; kind NMI .399. Gate trees: closed .39 / .47, holo .62, kind .255 / .265.
+- qtoy2: 8-9 leaves, NMI .752-.764, closed .84-.90, holo .95-.96. It loses the conformer 1 | 2 pair. pp_on .811.
+- IgM 10 % fix: five-arm product, joint .260 / forest .258 (tree .042, lever 3 .338). The 2-state arms reach lever-3 quality.
+- IgM 5 % fix: 1 leaf (root z_mid 2.2-2.8: fission's power cost at d' ~1).
+- Nulls: 1 leaf everywhere, including the IgM 10 % twin that the hetero tree splits. No null accept in any variant.
+- Forest = joint. Balanced K = 2 splits of a 3-state arm straddle and read continuous; lopsided ones pass.
+- Next (approved): K = 3 proposals with a pairwise saturation test in forest form (for a2 / a5 and the qtoy2 1 | 2 pair).
 
 Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
 searched 2026-11-07):
