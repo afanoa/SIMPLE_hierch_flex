@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:32 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:41 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1225,6 +1225,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        lp 20.
      - In the refined model a child's new blocks take the child's own band, so the frequency march lives inside one model.
    - Pose refinement per subset stays the port's job (stage A per product leaf).
+   - Part 1 (`tl_nested.py`; at every node of the frozen K3-Sidak forests, parent blocks fixed, the root pursuit's settings and
+     stop, on y2):
+     - qtoyflex: no block on any of the 4 nodes (best seeds 0.1-1.3 nats, SE 0.1-2.7), so closed F1 .558 holds.
+     - qtoynull root: no block. olenull and micnull have no root site.
+     - qtoy2 r12 and r1: a seed passes round 1 (8.2 nats, SE 1.3; 5.0, SE 2.1), then decays under the group penalty. That is a
+       power limit of y2.
+     - So the pursuit also runs on y with the parents and nuisances profiled. Every y1 selection reads y1 only through the
+       parent-and-nuisance span, so under white noise y's complement is untouched by selection. On real data this needs the
+       per-particle noise model.
+     - Leak checks: qtoyflex nodes, plus the IgM 10 % twin root and qtoynull root. The fitted-prior y variant is the contrast.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
