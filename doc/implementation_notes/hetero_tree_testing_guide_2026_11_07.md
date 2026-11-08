@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:20 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:21 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1360,6 +1360,17 @@ Not to retry:
      SIDE FINDING to check: qtoyflex closed F1 .159 (holo .595) on this base's stock tree, against .47 for ports4 / ports7 at the
      same maxdepth, with no chain split involved. The pose profile (5f80720e0, default on) was never gated on qtoyflex. An A/B
      (profile on vs off, one binary, 2 seeds) has been asked of the pose-tangent2 session.
+     A/B RESULT (`$H/handoff/pose-tangent/VERDICT.md`, qtoyflex section; build_poseprof, no chain code):
+     - Closed F1, on vs off: seed 1 .159 vs .474, seed 2 .413 vs .433. Holo ~equal. So the .159 is the profile at seed 1, not
+       the chain.
+     - Mechanism, a NEAR-TIE FLIP: the profile is a ~2 % perturbation of the root flex states. At seed 1 the root's pole rule
+       then keeps one site, so the root splits K = 2 instead of K = 3, and r1 (81 % of closed + 24 % of holo) is merged by the
+       P/N 2 effect floor at 1.45. Off kept r1 at 2.66.
+     - The profile does not remove closed signal: the closed map is 0.6 % in the tangent span, and the root latent's closed
+       AUROC is .746 vs .745.
+     - Next (on norm): seeds 3-5 per arm, mean +- SE closed / holo F1, plus a pose-share gate statistic at qtoyflex, qtoy2,
+       IgM and r131.
+     - Then a recommendation: keep on, gate on measured pose share (2 SE), or default off. Nothing reverted yet.
    The native port is in progress (user: port first); then the r131 / 692k global-coordinate test and the end-to-end chain.
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
