@@ -17,3 +17,9 @@ constant fails some molecule. This is the same principle as the knob-free rule (
 - the cap that maximises the leading seeds' held-out gain per node; or
 - per block, each block's modes taking the band with the best held-out gain (the nonuniform-filter analogy).
 Use a fixed geometric ladder of caps and 2 SE as the only constants. Never propose "use lp 20 for IgM" as the fix.
+- 2026-11-08, user, on the ladder's 1.6-4.7x cost: "couldnt you bake this into the latent variable model itself ... we know how
+  particles are related at this particular frequency and lets stick with that" (like sparse PPCA's regions of high variance).
+  - Preferred form: the band learned INSIDE one fit, not an outer search over caps.
+  - Either a per-site per-shell prior variance by marginal likelihood (ARD over shells), or the per-shell half-set agreement
+    of the modes as Wiener weights.
+  - Briefed to sparse-ppca2.

@@ -22,3 +22,6 @@ is the biologically important result. Gains in recall, resolution or reproducibi
   improve.
 - On toys (qtoy), the rare closed state's recall and purity are the first row.
 - Related: [[tree-runtime-goal-5-7h-at-700k]], [[full692-tree-vs-deposited-benchmark-2026-10-22]].
+- 2026-11-08: the r131 corner proxy is now read honestly (decision 9; [[extremes-fission-verdict-2026-11-07]]), and own-data corner
+  readouts no longer count. The 692k scorecard's closed recall is also read on the leaves' own data, so it needs the same honest
+  re-read before it is trusted.

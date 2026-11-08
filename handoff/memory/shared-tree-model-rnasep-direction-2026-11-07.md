@@ -36,3 +36,11 @@ the IgM-like fixtures and holds every null, but on RNase P its splits track per-
   ([[extremes-fission-verdict-2026-11-07]]).
 Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]],
 [[rnasep-closed-state-must-be-retained]].
+- 2026-11-08, user: "subsetting is necessary (with non random seeds derived from the latent) and refinement is necessary. I only
+  know this empirically". Coordinator's answer (guide 7.10 thread 9):
+  - Mixture-learning theory explains both: project to initialise, then iterate in the full space (Kumar & Kannan 2010).
+  - A 7 % minority is a local optimum beside the halving of the largest spread, so it needs a seed inside its basin.
+  - Subsetting raises the minority's variance share pi(1-pi).
+  - Design: latent proposals (incl. minority tails) -> a full-image round per subset (hard labels on X1) -> an honest fission
+    test against matched random groups, with carves as lookahead.
+  - Decisive test proposed (r131: tails vs random halves vs fflex seeds; round on X1, read on X2); waiting for the go-ahead.

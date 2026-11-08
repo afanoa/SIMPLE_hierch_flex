@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 6f195b76-225b-466c-a432-7fc8360148e8
-  modified: 2026-11-08T07:40:55.615Z
+  modified: 2026-11-08T15:20:57.224Z
 ---
 
 Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026-11-07]] into flex_pca.
@@ -79,4 +79,4 @@ Side session sparse-ppca, 2026-11-07. Port of [[sparse-ppca-pursuit-verdict-2026
   - Proposed: a quarter-octave ladder one octave down from the node's band, coarser until the first drop, keep the argmax.
   - Per-block leave-one-out from separate pursuits is unstable for overlapping blocks (qtoy).
 
-**Next:** the coordinator picks the band rule; then build it on aac135dfe (prof patch committed), then chain integration.
+**Next:** the band rule is built (band3 on wip 7ae8ba4b1, [[sparse-sites-band-ladder-verdict-2026-11-08]]); then chain integration.

@@ -28,3 +28,9 @@ which the user called close and "not worth a state" ([[close-closed-substates-no
 - Never fuse these four leaves; a merge rule that would fuse them is wrong.
 - Count all four as retained closed conformers when scoring closed-state retention. The scorecard's "closed corner"
   (>= 0.95 / <= 0.6) admits only r1311_s2, so it undercounts.
+- 2026-11-08 user: "I think we have to figure out why we get the close states at the nodes we do in the current tree." The lineage
+  attribution study runs in rnasep-misfit (guide 7.10 thread 10).
+  - It covers each split's axis (covariates, latent dimensions), reference closed share by depth, and honest reads of the leaves.
+  - Puzzle: the corner r1311_s2 holds 816 / 12,010 reference rows (6.8 %), no more than r131 (~7 %), yet reads 1.00 on its own
+    data.
+  - These four maps were judged on own data; the honest reads decide how much of each leaf is selection imprint.

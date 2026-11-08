@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-current
-description: "Topic index (44 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
+description: "Topic index (50 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
 metadata:
   node_type: memory
   type: reference
@@ -57,5 +57,6 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [r131-root-split-flips-with-openblas-variant-2026-11-07](r131-root-split-flips-with-openblas-variant-2026-11-07.md) — TRAP: r131 gate root split flips with libopenblas vs libopenblaso (BLA_VENDOR); binaries reproduce themselves; compare like with like
 - [sparse-ppca-pursuit-verdict-2026-11-07](sparse-ppca-pursuit-verdict-2026-11-07.md) — VERDICT YES lever 6: group-sparse PPCA pursuit learns IgM arm masks + coords (10 %: 5/5 arms = true-mask readouts; nulls 0 sites); knob-free stop (2 SE + controls + LOO + support components) replaces the 2 % cut; read states per block, not per site; traps inside
 - [sparse-sites-native-port-2026-11-07](sparse-sites-native-port-2026-11-07.md) — flex_pca sparse_sites=yes port (fork b3ced0021): native more sensitive than Python; seed-gain floor; RNase P 692k: one block = seam-free z_MAP on closed rows, span .85, closed pair rank 75/112 (seam-free 46); site-independent control floor trap; data-derived band = pursued-model gain, not seed gain
+- [sparse-sites-band-ladder-verdict-2026-11-08](sparse-sites-band-ladder-verdict-2026-11-08.md) — BUILT band ladder (band3 on wip 7ae8ba4b1, gate 15/15): IgM fix 18.2 A 5/5 arms, null 18.2 A plateau no disc, 5 % 25.2 A, qtoy/r131 full band; traps: cap = fresh run (raw samples + RNG reset), dropped rounds drift; cost 1.6-2.3x site node, 4-4.7x null
 - [flex-embedding-precision-is-map-sampling-precision](flex-embedding-precision-is-map-sampling-precision.md) — TRAP: embedding precision = MAP sampling precision Q = A G^+ A; flex deconv reads it as A, mest_charts as G; CONFIRMED, fix (store A) unapplied in handoff/flex-precision
 - [cross-half-test-needs-band-above-assignment-2026-11-07](cross-half-test-needs-band-above-assignment-2026-11-07.md) — KEY: cross-half map test of hard-assigned groups valid only above every assignment lowpass; in-band null z 53-56; band split -> null 1 leaf, qtoy2 kept

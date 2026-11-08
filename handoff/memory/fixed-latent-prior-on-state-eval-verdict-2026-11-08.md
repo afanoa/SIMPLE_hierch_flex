@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-08T12:48:51.016Z
+  modified: 2026-11-08T12:51:35.614Z
 ---
 
 Handoff `/mnt/beegfs/elmlund/afan/hetero_tree_20261028/handoff/igm-refs/VERDICT.md`, sections Part 7 and Part 7b; copies in
@@ -35,6 +35,7 @@ edges inside the run). Runs `math_reworks/latent/p7/` and `p7b/<fixture>/b<N>/{A
 gate ([[flex-frozen-poses-only-no-woodbury-2026-11-06]]); it revisits [[flex-to-refinement-coupling-verdicts-2026-11-06]].
 **How to apply:** a fixed prior is a polish, never an acceptance test: it buys as much NMI on a null continuum as on a weak arm.
 Use it only on a site GAPw accepted ([[per-site-discreteness-test-gapw-verdict-2026-11-07]]), seeded with the tied refit, at
-alpha = 1; never weight it by the held-out alpha. GAPw should test the split the prior will hold. Contrast
+alpha = 1; never weight it by the held-out alpha. GAPw after the round already rejects this seed's null carves (site chain v7:
+0 / 15 blocks on the 10 % null, 0 / 5 on the 5 % null; coordinator closed the check 2026-11-08). Contrast
 [[igm-arm-flex-prior-verdict-2026-11-07]] (focused flex prior: +.003-.006 over references from the same coordinate).
 Related: [[lever3-latent-refs-seeding-verdict-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]].

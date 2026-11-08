@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 07:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 10:43 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1418,8 +1418,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
      - DESIGN REVISION (done in PORT_DESIGN.md, section "The full-image round"): stage B is SEEDED by the latent proposals, not replaced by them. The forest's
        proposals and factorial states seed a full-image round on the node's subset, and an honest test (sat5 or GAPw) decides.
        This is the user's "refinements per subset are necessary".
-       - The round takes the node subset (X1 members, stage-A poses), seeds as hard MAP labels on X1 (or soft weights as a prior
-         with the held-out α, never α = 1), and the seeding site's support as a mask.
+       - The round takes the node subset (X1 members, stage-A poses), seeds as hard MAP labels on X1, and the seeding site's
+         support as a mask. Part 7b (thread 5) supersedes the design note's soft-weight option: the prior only polishes an
+         accepted site, at α = 1.
        - The test reads fission copies from the same draw under the per-particle noise model, or GAPw's own split. Seeds are
          tried in the forest's order, and Sidak counts the rounds tested.
        - It stays design-only until the site chain's r131 round reads honestly.
@@ -1450,19 +1451,87 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          passes .95 at r131: the shared model .81, the production corner leaf .93 (delivered tree), the chain's groups .89.
        - Tonight's own-data gate calls inherit this, e.g. the noise model's seed-1 .947 against the bar. This makes decision 9
          (the r131 gate's honest readout) the first decision for the user.
-     - Next, the decisive test: the site chain's worker at r131, seeded from the noise-model sparse fit (closed span .765), with
-       the corner gate read on the round's group maps, noise model on vs off.
+     - The r131 round test above was the planned decisive test (seeded from the noise-model sparse fit). It is negative because
+       its K = 2 seed halves the node. The next test seeds the round from minority tails instead (thread 9).
    - Band rule build: qtoyflex picks its full band (9,480 nats, as in the scan) and qtoynull keeps 0 sites at all five caps.
      r131 hit an illegal instruction on a non-x6342 node and reruns pinned to x6342 (job 55059118). The IgM runs are going.
      - Cost: 1.5-8 min per toy node, 10-19 min per IgM node, 8-36 GB.
+   - BAND LADDER DELIVERED (sparse-ppca2, 2026-11-08; `$H/handoff/sparse-ppca/band_ladder.md`):
+     - Patch `sparse_sites_band3.patch` (md5 b5d9c457) on `7ae8ba4b1`; build `$H/wip_builds/band3_7ae8ba4`, fast gate 15/15; run
+       jobs need `--constraint=x6342`. Not committed.
+     - The v1 / v2 builds (`band_5b17de8`, `band_7ae8ba4`, `band2_7ae8ba4`) are superseded.
+     - IgM 10 % fix: 18.2 A, 5 sites, one per arm (R^2 .523 .400 .485 .442 .400; the scan's best .523 .398 .485 .442 .401).
+     - IgM 10 % null: 18.2 A, 5 sites, none discrete. The ladder has no 20.4 A step, and the gain is flat there.
+     - IgM 5 % fix: 25.2 A, one site per arm (R^2 within .003 of the 20.4 A runs on four arms, a2 +.016).
+     - qtoyflex and r131: full band, with the scan's readouts (closed .901 / holo .929; r131 best block .659, span .711, and
+       .681 / .765 with the noise model).
+     - qtoynull: 0 sites at every cap.
+     - Cost: 1.6-2.3x one fit when a site is found, 4.0-4.7x when none is. 45-57 % of IgM time goes to bands that keep nothing.
+       IgM nodes take 2.2-3.2 h at 39 GB. The 692k root would take ~3.5-4.3 h, or ~130 min with the first two bands as separate
+       jobs.
+     - Flags:
+       - A dropped site is not undone, so the kept sites drift. This caused r131's 150-nat result at 18 A with the noise model
+         on, and it predates the ladder.
+       - Re-read r131's pick if the noise model becomes the default.
+     - Next (thread 3, briefed 2026-11-08 morning): site chain b10 + band3 in one build (b11, job 55069844), then the IgM chain
+       trees with stock twins and the gate battery.
+     - User (2026-11-08): "not sure why its so much compute ... couldnt you bake this into the latent variable model itself ...
+       we know how particles are related at this particular frequency and lets stick with that".
+       - Why it costs so much: each rung is a fresh full pursuit, a node with nothing to find runs every rung, and about half of
+         IgM's time goes to seeds that die while growing.
+       - Briefed to sparse-ppca2: a band learned inside one fit, either a per-site per-shell prior variance by marginal
+         likelihood (ARD over shells) or the per-shell half-set agreement of the modes as Wiener weights. It is compared with
+         the ladder on the same seven runs, at a target cost of ~1 fit.
+       - The ladder stays uncommitted until that reports.
+8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
+   - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
+     model), checked with the fake-map null.
+   - Each gate tree runs on X1. The corner leaf is the one whose X1 map reads most closed, and it is read on X2.
+   - The bar is the 95th percentile of matched-N random tails and random subsets from the corner's parent node, read on X2.
+   - First use: pp_off vs the noise model on seeds 1-2 (3-4 if close), which decides the noise-variance default. Then one script
+     for the battery's r131 arm.
+9. Making the shared model work (user, 2026-11-08: "subsetting is necessary (with non random seeds derived from the latent) and
+   refinement is necessary. I only know this empirically"). Proposed, waiting for the user's go-ahead.
+   - Why, from mixture-learning theory:
+     - A 2-class fit at r131 prefers to halve the largest continuous spread. A 7 % minority is therefore a local optimum,
+       reached only from a start inside its basin: the latent seeds.
+     - Provable mixture algorithms initialise in a low-dimensional projection and then iterate in the full space (Kumar &
+       Kannan 2010). The latent is the projection. Refinement (free 3D references, all bands, poses) is the full-space
+       iteration that recovers what the projection lost.
+     - Subsetting raises the minority's share of the variance, pi(1-pi) (7 % -> 30 % triples it), and removes competing spread.
+     - Full-space iterations on the same data also create imprint, hence the honest test.
+   - Overnight, each RNase P failure lacked one ingredient:
+     - the shared tree had no full-space refinement;
+     - the chain's r131 round started from balanced K = 2 halves;
+     - the production corner has all three (the root halving with closed recall .80, fflex seeds, iterated full-image
+       assignment) but is read on its own data.
+   - Design:
+     - The latent is the proposal layer. The shared basis is kept, with minority tail proposals beside the XD K = 2/3.
+     - Each proposal seeds a full-image round on the node subset: hard MAP labels on X1, the site's support mask, fixed poses
+       then local search, and the noise model in the likelihood.
+     - An honest fission test against matched random groups accepts; sat5 / GAPw type the result (discrete state or
+       reproducible extreme).
+     - Exploratory carves act as lookahead and are merged back unless a child passes honestly.
+   - Decisive test (proposed): at r131, a full-image round on X1 from the best latent tails, from random halves and from the
+     production fflex groups, read on X2 against matched random tails, with the IgM nulls as the false-call guard.
+10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
+    at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
+    - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).
+    - Closed paths: root -> r1 -> r13 -> r131 -> r1311 -> r1311_s2 / r1311_s1, r131 -> r1312, and r2 -> ... -> r2322. Own-data
+      closed readouts along the main path: .45 -> .67 -> .87 -> .90 -> 1.00.
+    - Per split: the route and seed source; what each side tracked (reference closed share / recall, and the AUROC of noise level
+      v, amplitude, defocus, micrograph / FoilHole, view, pose change and the parent's latent dimensions); and the closed AUROC of
+      each node's own latent by depth.
+    - The puzzle: r131 holds ~7 % reference closed rows (~1.3 % at the root), but the corner r1311_s2 holds 816 of 12,010 (6.8 %),
+      no more than r131, while its own-data map reads 1.00. Honest reads of r131's leaves come from thread 8's fission pair.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
 - decision 6 (fission split test: no as it stands);
-- decision 9 (the r131 gate's honest readout) — FIRST: the own-data corner readout is largely selection imprint (7.10 thread 7);
+- decision 9 (the r131 gate's honest readout): DECIDED 2026-11-08, honest re-read (section 8 item 9; thread 8);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on.
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. The call now waits on the seed table's honest re-read (thread 8).
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
@@ -1721,6 +1790,9 @@ Waiting for the user:
 9. The r131 closed-corner gate: its readout passes on own-data imprint (corner leaf 1.03 / .54 own vs .93 / .59 on a fission
    re-read; random 5 % tails .87-.90). Options: keep the gate as is (it still separates arms consistently), or re-read every
    gate leaf on a fission copy with a threshold calibrated on honest readouts (e.g. against random tails of matched N).
+   - DECIDED 2026-11-08 (user: "Yes, honest re-read"): the gate is read on a held-out fission copy, with the pass bar set from
+     random tails of the same size. extremes-repro builds it (7.10 thread 8). Until it lands, own-data r131 corner readouts are
+     provisional.
 
 ## 9. Standing rules and traps
 

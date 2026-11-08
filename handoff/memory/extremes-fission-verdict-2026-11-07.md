@@ -32,3 +32,7 @@ gate is read.
 **How to apply:** any own-data map readout (tails, leaves, the r131 corner gate) needs a fission re-read before it counts; an
 honest gate needs fission readouts and a threshold calibrated on them (decision for the user). Related:
 [[rnasep-closed-state-must-be-retained]], [[cross-half-test-needs-band-above-assignment-2026-11-07]], [[sparse-ppca-pursuit-verdict-2026-11-07]].
+- DECIDED 2026-11-08 (user: "Yes, honest re-read", decision 9): the r131 corner gate is read on a held-out fission copy.
+  - The gate tree runs on X1; the corner leaf is chosen on its X1 map and read on X2.
+  - Bar: the 95th percentile of matched-N random tails and random subsets, read on X2.
+  - extremes-repro builds it (guide 7.10 thread 8) and applies it first to the noise-model seed table.
