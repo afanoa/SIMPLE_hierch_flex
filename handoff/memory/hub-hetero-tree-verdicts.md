@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-verdicts
-description: "Topic index (72 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
+description: "Topic index (78 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
 metadata:
   node_type: memory
   type: reference
@@ -91,3 +91,11 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [tree-latent-shared-basis-verdict-2026-11-07](tree-latent-shared-basis-verdict-2026-11-07.md) — VERDICT: shared-basis latent tree passes every null, isolates qtoyflex closed (.558), IgM 10 % .26; IgM 5 % one leaf
 - [site-coupling-factorial-verdict-2026-11-07](site-coupling-factorial-verdict-2026-11-07.md) — VERDICT: sites factorial across, joint within; product beats joint by ~2,000 held-out nats on IgM; profile nuisances
 - [site-chain-verdict-2026-11-08](site-chain-verdict-2026-11-08.md) — VERDICT: site chain recovers IgM's balanced arms (.348/.148) but not r131's 7 % closed (near-half groups, maps = node mean); v8 table built
+
+Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
+- [data-fission-merge-test-verdict-2026-11-07](data-fission-merge-test-verdict-2026-11-07.md) — VERDICT: data fission (labels X1, maps X2) removes the merge test's self-selection: null merges 4 -> 1, qtoy2 keeps real states; cost -.08/-.02 accuracy at tau 1/0.6; TRAP: purity splits (5 % conformer admixture) stay kept by any map-level test
+- [extremes-fission-verdict-2026-11-07](extremes-fission-verdict-2026-11-07.md) — VERDICT: own-data extremes 1.3-3.1x inflated; r131 corner gate passes only on imprint (1.03 own vs .93 honest); focused site coordinates find IgM extremes; honest gate (4 seeds) cannot separate pp_off / noise var; stage A has no class prior (rounds absorb seeds), prior + site mask works on IgM only
+- [tree-latent-verdict-2026-11-07](tree-latent-verdict-2026-11-07.md) — VERDICT: shared site basis + XD tree + sat5 splits: fixtures good (IgM10 .322 with K=3 vs lever3 .338), RNase P finds only misfit; port on hold
+- [nested-basis-refinement-verdict-2026-11-08](nested-basis-refinement-verdict-2026-11-08.md) — VERDICT: per-subtree refit of the site basis adds no block anywhere; misses are proposal/test-limited; frozen root basis stands
+- [separability-proposals-verdict-2026-11-08](separability-proposals-verdict-2026-11-08.md) — VERDICT: 1D projection-pursuit proposals find pure tails, not the missing states; no miss resolved; nulls held by sat5's side test
+- [fission-select-members-on-y1-labels-may-read-y](fission-select-members-on-y1-labels-may-read-y.md) — RULE: fission tree selects members on X1; proposals and sat5 labels may read y

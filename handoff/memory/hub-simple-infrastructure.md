@@ -1,6 +1,6 @@
 ---
 name: hub-simple-infrastructure
-description: "Topic index (52 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
+description: "Topic index (55 memories): SIMPLE build/cluster facts and code traps (batch2 nodes, box, remote GPU box, sigma2, star import, args generator, branch states)"
 metadata:
   type: reference
 ---
@@ -62,3 +62,8 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [refine3d-auto-ref-pose-init-only-for-foreign-vol1](refine3d-auto-ref-pose-init-only-for-foreign-vol1.md) — TRAP: ref_pose_init=cc di…
 - [simple-nlines-skips-comment-lines-trap](simple-nlines-skips-comment-lines-trap.md) — TRAP: nlines() skips '#' lines; nlines(f) - 1 drops the last row (hit twice)
 - [batch2-memory-not-enforced](batch2-memory-not-enforced.md) — batch2 never kills over --mem (ConstrainRAMSpace=no, NoOverMemoryKill); size from MaxRSS anyway
+
+Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
+- [numba-parallel-before-fork-deadlocks](numba-parallel-before-fork-deadlocks.md) — TRAP: numba threads launched before a fork hang the pool; use NUMBA_NUM_THREADS
+- [latent-framework-lp-sets-lattice-overwrites-cache](latent-framework-lp-sets-lattice-overwrites-cache.md) — TRAP: another lp changes latent_states_v4's lattice and overwrites the shared plane cache; use prep_guard
+- [relion-reconstruct-maps-need-fsc-weighting](relion-reconstruct-maps-need-fsc-weighting.md) — "look like noise": deliver postprocess default (FSC-weighted, B=0), never raw relion_reconstruct

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:18 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:03 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1541,7 +1541,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
        the time.
      - Root splits reproduce within an arm (79 % / 77 % agreement across seeds) but not across arms (50-56 %). The noise model
        moves the root split onto a different axis.
-     - Seeds 3-4 are running (jobs 55084993-96), each with its own readout. Cost so far: 126.9 core-h for the four arm-seeds.
+     - FINAL, 4 seeds (`$H/handoff/extremes/GATE.md`):
+       - Seeds 3-4: pp_off .873 against .877 and .862 against .871 (both fail); noise model .857 against .861 (fail) and
+         .851 against .844 (pass, but the corner sits at the base closed share .071).
+       - Honest passes: pp_off 1 / 4, noise model 2 / 4. Own-data passes on the old gate: 4 / 4 and 0 / 4.
+       - Not separated: every call is within about one null sd of its bar, and the corners' closed excess over their parent
+         is the same in both arms (+.005).
+       - The noise model shrinks the own-data imprint: its corners lose .04-.06 from X1 to X2, pp_off's lose .11-.18.
+       - The r131 corner gate cannot decide the noise default; pp_off's own-data lead was imprint.
+       - Battery script `scripts/ext_gate_tree.sbatch` (ARM, BUILD, SEED; ARMENV or ARMKEYS exported). Cost 209.7 core-h
+         plus 10.1 for the pair.
 9. Making the shared model work (user, 2026-11-08: "subsetting is necessary (with non random seeds derived from the latent) and
    refinement is necessary. I only know this empirically"). Both tests approved 2026-11-08 (user: "Yes, run both").
    - Why, from mixture-learning theory:
@@ -1635,8 +1644,22 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
            - Stage A needs a class prior, but at r131 the prior alone does not concentrate closed.
          - IgM a1 with the prior ends at 29,371 (purity .651, NMI .068 -> .031). a1's true state is half the node, so this
            waits on its zero-prior control.
-         - Next (briefed): the design's full round, the EM prior plus the site mask at fixed poses (r131 site2hi with the
-           closed-block mask; IgM a1 with the a1 mask).
+         - FULL DESIGN ROUND, EM prior plus the seed's own site mask at fixed poses (`$H/handoff/extremes/ROUNDS.md`; 294.4
+           core-h for all rounds):
+           - IgM a1: 30,619 at .875 purity, keeping 96 % of the seed, a1 NMI .068 -> .210. Production's round gives .051,
+             the prior alone .031, and the site chain's own EM round .448. It was still growing at the last iteration.
+           - r131 site2hi with site 2's mask: it holds 1.8-2.4k but churns at the seed's closed share (.091), honest .918
+             against .931.
+           - r131 blockhi with block 2's mask: 5,046 at closed share .128 (2x base, recall .21, 70 % of the seed kept). Its
+             maps read below random sets of the same size (.883 against .891; bar .926).
+           - My first brief paired site2hi's seed with block 2's mask. The two share no voxel (87 A apart), and that round
+             collapsed. A seed must use its own site's mask.
+           - IgM guards: the unmasked round fails both; the masked fix round passes (.095).
+         - VERDICT: at r131 no full-image round, from any latent seed, concentrates closed in a way the honest maps can see.
+           - The class prior is needed, and the mask makes the round work on IgM, but neither finds RNase P's closed state.
+           - Open question: at r131 the closed reference rows and the arm-occupancy maps disagree (blockhi as seed and after
+             its round). That needs explaining before closed share can judge rounds there.
+           - The carve test at 692k (r692 table) is the remaining half of this thread.
 10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
     at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
     - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).
@@ -1694,7 +1717,7 @@ Waiting for the user:
 - decision 9 (the r131 gate's honest readout): DECIDED 2026-11-08, honest re-read (section 8 item 9; thread 8);
 - the held precision fix;
 - a production candidate;
-- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8): seeds 1-2 split one-all with narrow passes; the call waits on seeds 3-4 (running).
+- the noise-variance default (flex): committed off as `03506060d`. Seed table in 7.10 thread 1: own-data corner 3 / 4 vs 4 / 4, but closed-reference purity higher on 4 / 4 (.099 vs .079). Recommended: on. Honest re-read (thread 8, 4 seeds): not separated (honest passes 1 / 4 off vs 2 / 4 on, all within ~1 null sd); the noise model shrinks the own-data imprint (.04-.06 vs .11-.18). Waiting for the user.
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.

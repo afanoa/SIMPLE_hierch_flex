@@ -78,3 +78,8 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
     round, so the missing prior causes the absorption.
   - But members churn (39 % of the seed kept), and closed stays at about .09, honest .910 against a bar of .927.
   - Prior = necessary, not sufficient. The next round (briefed) adds the site mask.
+- 2026-11-08 evening, refinement test VERDICT (ROUNDS.md; also [[extremes-fission-verdict-2026-11-07]]): the design's full round
+  (EM prior + the seed's own site mask, fixed poses) works on IgM (a1 .068 -> .210) but finds nothing at r131.
+  - At r131 the closed reference rows and the arm-occupancy maps disagree (blockhi: 2x closed rows, maps below random). That must
+    be explained before closed share can judge rounds there.
+  - What remains of thread 9 is the 692k carve table.

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: cc23038c-fea9-4b5f-b321-d58eb2942350
-  modified: 2026-11-07T20:53:54.099Z
+  modified: 2026-11-08T21:00:37.476Z
 ---
 
 extremes-repro session (user asked "Run it": can the latent cut out extremes that reproduce?). Write-up
@@ -42,7 +42,10 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - Every corner loses .04-.18 of closed occupancy from X1 to X2.
   - The stricter null is the latent tail along the parent's own X1 latent.
   - Root splits reproduce within an arm (77-79 %) but not across arms (50-56 %).
-  - Seeds 3-4 (55084993-96) decide the noise default.
+  - Seeds 3-4: pp_off .873 vs .877 and .862 vs .871 (both FAIL); noise model .857 vs .861 (FAIL) and .851 vs .844 (PASS).
+  - VERDICT over four seeds: honest passes 1/4 (pp_off) vs 2/4, every call within ~1 null sd of its bar, so the honest gate does
+    not separate the arms; pp_off's own-data 4/4 vs 0/4 is imprint. The r131 corner cannot decide the noise default.
+  - Readout trap: a leaf can be a whole unsplit node (r2_g1_2); the bar's parent is the smallest node strictly containing it.
 - 2026-11-08, tail-seed refinement rounds at r131 (thread 9):
   - Every round ends near a half split (~19k of 44k) at about the base closed share, whatever the seed.
   - Random seeds clear the bar 3 / 4, latent tails 1 / 3. rsub2 (both halves at the base share) still clears it.
@@ -50,3 +53,9 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - The production fflex round (94 % = the tree's root split) is the most closed-enriched, at .085.
   - Rule: clearing the honest bar after a round shows non-random selection, not closed enrichment. Judge rounds by closed share
     and recall.
+  - Cause: stage A's state assignment has no class prior (prob_neigh: bare argmin, `eul_prob_tab%assign_rows`). An EM class prior
+    (state_eval's SIMPLE_STATE_PRIOR, re-estimated per iteration) holds r131's minority at 7 % (zero-prior control: 20k, exactly
+    the old fixed-pose round) but does not concentrate closed.
+  - Prior + site mask at fixed poses: IgM a1 NMI .068 -> .210 at .875 purity (production .051; site chain EM .448); r131 nothing
+    (site2hi + site 2 churns at .091; blockhi + block 2 holds 2x base closed rows, maps read below random: .883 vs .891).
+  - Trap: the mm2 tree's site 2 and sparse block 2 share no voxel (87 A apart); pair a seed with its own site's mask.

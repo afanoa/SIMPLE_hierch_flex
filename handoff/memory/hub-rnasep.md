@@ -1,6 +1,6 @@
 ---
 name: hub-rnasep
-description: "Topic index (39 memories): RNase P dataset: inputs, traps, 2D/3D state findings, landscapes"
+description: "Topic index (42 memories): RNase P dataset: inputs, traps, 2D/3D state findings, landscapes"
 metadata:
   node_type: memory
   type: reference
@@ -52,3 +52,8 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [rnasep-relion-polish-pilot-2026-11-03](rnasep-relion-polish-pilot-2026-11-03.md) — RNase P RELION pilot + union (15 leaves) + REST chain 54939918 (other 51 leaves); solvent mask; raw poses e1/e2/e3 +shift
 - [rnasep-relion-maps-are-mirror-of-tree-frame-2026-11-04](rnasep-relion-maps-are-mirror-of-tree-frame-2026-11-04.md) — RELION leafd maps = mirror+165deg of tree frame; rel_xform.json registers all; RELION hand = deposited
 - [relion-small-state-local-refine-blurs](relion-small-state-local-refine-blurs.md) — per-state RELION local refine <10k ptcls worse than consensus poses (SSNR<1 stall)
+
+Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
+- [real-data-fission-needs-misfit-model-2026-11-08](real-data-fission-needs-misfit-model-2026-11-08.md) — TRAP: sat5 accepts RNase P misfit splits even profiled + stratified; needs per-particle band-wise sigma2 in whitening and fission draw
+- [rnasep-misfit-noise-spectrum-verdict-2026-11-08](rnasep-misfit-noise-spectrum-verdict-2026-11-08.md) — VERDICT: RNase P misfit = per-particle noise spectrum (sd 29 %, ice, CTF-shaped; not registration); band-wise EB noise variance kills the floor, r131 closed block .70-.74; committed default-off 03506060d; corner 3/4 seeds on vs 4/4 off
+- [r17d-closed-lineage-attribution-2026-11-08](r17d-closed-lineage-attribution-2026-11-08.md) — VERDICT: r17d closed nodes come from selection along one node-latent dimension; noise/ice/micrograph flat; corner = imprint pattern

@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-current
-description: "Topic index (51 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
+description: "Topic index (52 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
 metadata:
   node_type: memory
   type: reference
@@ -61,3 +61,6 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [sparse-sites-inband-band-verdict-2026-11-08](sparse-sites-inband-band-verdict-2026-11-08.md) — VERDICT: no in-model band (per-site ARD, per-block observation band, node covariance-FSC weights) recovers IgM 10 % fix; seeds need the band from their first iteration; ladder stays
 - [flex-embedding-precision-is-map-sampling-precision](flex-embedding-precision-is-map-sampling-precision.md) — TRAP: embedding precision = MAP sampling precision Q = A G^+ A; flex deconv reads it as A, mest_charts as G; CONFIRMED, fix (store A) unapplied in handoff/flex-precision
 - [cross-half-test-needs-band-above-assignment-2026-11-07](cross-half-test-needs-band-above-assignment-2026-11-07.md) — KEY: cross-half map test of hard-assigned groups valid only above every assignment lowpass; in-band null z 53-56; band split -> null 1 leaf, qtoy2 kept
+
+Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
+- [hetero-tree-paper-plan-2026-11-06](hetero-tree-paper-plan-2026-11-06.md) — 3D tree paper started; integration of latent model + refinement is the gap; 2D stays in flex2D draft
