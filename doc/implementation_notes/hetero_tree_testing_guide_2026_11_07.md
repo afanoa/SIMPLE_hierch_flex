@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:16 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:20 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -635,6 +635,17 @@ Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and r
       score's ordering noise blurs the gradient; a sharper score would bring the limit back (true-s1 steps .66).
     - Reading: the saturation test fixes GAPw's qtoyflex failures only with true groups. It is a check for curved continua,
       not a replacement for GAPw.
+  - Part 6 (FINAL; VERDICT.md "Part 6", `results/part6/`; jobs 55038086-89): both tests on the same round-1 groups.
+    - Power on IgM arm blocks: GAPw 14/14, saturation 6/14 (10 % p2 3/5, 5 % p2 0/4, 10 % p3 3/5).
+    - False accepts: 0/25 for each (10 % null p2 0/8, 5 % non-arm 0/1, p3 extras 0/3, null p3 0/13).
+    - The saturation test loses power in two ways. Fission halves each particle's information, so at 5 % the four groups'
+      composition is a ramp (a1: .78 / .57 / .41 / .21) that reads like a continuum. And a K = 2 split of a 3-state arm leaves
+      the middle state straddling the boundary.
+    - GAPw's margins: arms up to .27, nearest reject .36 (p3 extra b7), null blocks from .47.
+    - qtoyflex: neither test calls closed from round-1 labels, so the site layer will not confirm RNase P's closed corner; the
+      tree's own splits must carry it.
+    - The end-peaked controls give no call or not discrete (qtoyflex subsets are too small to reach z 3).
+    - Decision 8: the site layer uses GAPw.
 - `oversplit` (lever 4, the f2r session): over-split (K+2 to 2K from the latent, plus a junk component), assign at fixed poses,
   merge by a cross-half map test; qtoy2 root and r1 first, then qtoyflex, r131 (hard gate), qtoynull.
   VERDICT (`$H/handoff/oversplit/VERDICT.md`): the best stage-B variant measured. Over-split (2K seeds from the node's deconvolved
@@ -902,6 +913,17 @@ and the mixture over it is tree-structured. Tests 1-3, re-aimed and started as s
 - `site-coupling`: factorial (a product of per-site trees) vs one joint tree, from the cross-site coupling. Notes to
   `$H/handoff/site-coupling/`.
 - `quad-manifold`: one curved coordinate per site. Notes to `$H/handoff/quad-manifold/`.
+
+tree-latent interim (19:20). The tree grows on fission copy y1, since membership is a selection too, and splits are accepted by
+the saturation test.
+- qtoyflex: 2 leaves. The root split pulls closed and holo away from the arm continuum (DISCRETE, z 5.2). Closed's best node
+  is r1, a depth-1 leaf shared with holo: purity .21 / .24 and recall .34 / .54 (y1 / y).
+- qtoyflex, closed vs holo below r1: the split was proposed correctly but gets no call at 5.8k particles.
+- qtoyflex scores: kind NMI .325 on y vs the gate trees' .255 / .265; the arm stays one leaf. So the latent XD split supplies
+  the minority direction that round-1 labels lacked.
+- IgM 5 % fix: one leaf (joint tree and forest alike). On y1 alone the deconvolution cannot resolve d' ~1 arms: the same
+  fission power cost as Part 6.
+- Running: IgM 10 % fix / null and qtoy2, the forests, and a v3 with proposals and labels on y and membership on y1.
 
 Prior art for one shared tree model (user: "our current approach lacks elegance ... surely other people have done this before";
 searched 2026-11-07):

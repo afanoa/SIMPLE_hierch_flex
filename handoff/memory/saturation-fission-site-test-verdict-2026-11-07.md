@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 77c8a7fa-5cd0-4244-b81c-f308ec6cd639
-  modified: 2026-11-08T00:03:20.203Z
+  modified: 2026-11-08T00:19:52.209Z
 ---
 
 Handoff `/mnt/beegfs/elmlund/afan/hetero_tree_20261028/handoff/igm-refs/VERDICT.md` section Part 5; outputs in results/part5/.
@@ -36,6 +36,11 @@ framework's cached planes (sparse_ppca/cache, read only; a guard refuses to rebu
   - qtoyflex holo / closed: no call, because round 1's groups (31 %, 42 %) put the jump inside a side.
   - End-peaked control (IgM null a1, 20x keep-probability fall): dense side r 1.04 / 1.08 +- .4, not discrete.
   - So it complements GAPw; it does not replace it.
+- Part 6 (19:19, the full panel, both tests on the same round-1 groups):
+  - IgM power 6 / 14 vs GAPw 14 / 14. At 5 % it gets 0 / 4: fission leaves a weak score (labels on the score sides .71-.74), and
+    the composition becomes a ramp across the four groups.
+  - False accepts: 0 / 25 for both tests.
+  - DECISION 8 = GAPw for the site layer.
 
 **Why:** the tree needs a site acceptance test without GAPw's calibrated .28. It must also handle curved continua and minorities
 next to a continuum (RNase P's closed corner).
