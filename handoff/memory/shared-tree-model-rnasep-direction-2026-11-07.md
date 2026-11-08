@@ -65,3 +65,11 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - r692 root: honest K = 3 (601k / 82k / 8.8k); the table is due ~19:00-20:00 EST.
   - Refinement: production stage A pulls every seed to about half the node, so a minority seed does not survive the round. The
     suspected cause is no class-size prior in the assignment; a per-iteration readout and a code check are running.
+- 2026-11-08 ~15:00 (guide 7.10 thread 9):
+  - The tree-wide bar alpha (n_node / n_root) / (maxdepth + 1) removes the IgM null's false pass (z 3.33 against 4.11). It keeps
+    qtoyflex's root (3.98 against 3.75) and all 6 honest r692 splits through level 2 (tightest r23: 5.93 against 4.62).
+  - Stage A has NO class-size prior: prob_neigh labels by a bare argmin over states, and state_eval by an argmax unless
+    SIMPLE_STATE_PRIOR is set.
+    - Every seed grows to 43-48 % by iteration 6, with poses fixed or free, on r131 and on IgM.
+    - The test that separates the missing prior from the small state's noisier reference is one fixed-pose round with log class
+      fractions as SIMPLE_STATE_PRIOR (briefed).

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:44 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1509,6 +1509,8 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
              null screen at box 36), confirm the picks, build, run the fast gate and commit to wip.
          - Flag unchanged in every version: the dropped-round drift (v3 r131 with the noise model: LL/ptcl .244 -> .170 over 12
            rounds).
+         - v5 (the seed-ball band) is building. If it loses, the concurrent caps run as separate processes (one sub-job per cap,
+           then a pick step), so the pursuit's shared state needs no refactor.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
@@ -1578,8 +1580,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          - Briefed: re-read every pass against a size-and-depth Bonferroni split, alpha_node = alpha (n_node / n_root) /
            (maxdepth + 1), then Sidak within the node. The shares come from the X1 tree.
          - That bounds the false-pass rate over the whole tree.
-       - r692 (job 55076637): the root split honestly, K = 3 into 601k / 82k / 8.8k. Level 1 runs at about 30 min per node, and
-         the table comes at about 19:00-20:00 EST.
+         - RESULT (a re-read of the recorded tests, `bar_reread.py`):
+           - Under the tree-wide bar the IgM null's pass goes away: z_mid 3.33 against 4.11 at node share .216. The null
+             tested 74 nodes, not 73.
+           - qtoyflex's root still passes (3.98 against 3.75), so its F1 .571 stands.
+           - The r692 root and all 6 honest splits through level 2 pass both bars. The tightest is r23: z_mid 5.93 against
+             4.62.
+       - r692 (job 55076637): the root split honestly, K = 3 into 601k / 82k / 8.8k. The tree is on level 3, and the table with
+         both bars comes at about 18:30-19:30 EST.
      - REFINEMENT TEST SO FAR (r131, honest pair):
        - Every round ends in a near-half split (about 19k of 44k), whatever the seed. The round's state stays near the base
          closed share (.069).
@@ -1596,10 +1604,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          closed-enriched round: 23,381 particles, share .085, recall .64, honest .862 against .852. No latent tail beat it.
        - Coordinator's read: the round as built (production stage A, K = 2) pulls any seed to about half the node, so a
          minority seed does not survive it.
-         - Suspected cause: no class-size prior in the assignment. With equal priors, a 7 % state gains about 2 nats per
-           particle.
-         - Running: the fixed-pose rounds (site2hi, rtail1); a per-iteration readout of each seed group's size and closed
-           share; and a code check for a class prior in stage A.
+         - CONFIRMED in code: neither stage-A path has a class-size prior.
+           - The production round (prob_neigh) labels by a bare argmin of the distance over states
+             (`eul_prob_tab%assign_rows`).
+           - The fixed-pose round (state_eval) labels by an argmax, with a log-prior only if `SIMPLE_STATE_PRIOR` is set.
+         - Trajectories: every coherent seed keeps 80-97 % of its particles while its state grows about x4 in iteration 1, to
+           ~40 % by iteration 3 and 43-48 % by iteration 6, on r131 and IgM alike.
+           - The fixed-pose round absorbs as much, so the pull comes from the assignment rule, not pose refinement.
+           - The trajectories cannot separate the missing prior (~2 nats per particle at 7 %) from the small state's noisier
+             reference.
+         - Briefed: one fixed-pose round with `SIMPLE_STATE_PRIOR` = log class fractions re-estimated each iteration, from the
+           IgM a1 tail and from r131's site2hi.
 10. Why the current tree finds closed where it does (user, 2026-11-08: "I think we have to figure out why we get the close states
     at the nodes we do in the current tree"; rnasep-misfit, briefed 2026-11-08; notes `$H/handoff/rnasep-misfit/lineage/`).
     - Tree: the 692k integration tree (recipe17d, `$H/integration/f692_r17d_s1`).
