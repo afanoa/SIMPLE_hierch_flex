@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:03 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:05 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1130,6 +1130,38 @@ Not to retry:
 - VB/ARD mixtures.
 
 ### 7.10 Overnight plan, 2026-11-07 (user: "please work autonomously on the stuff overnight")
+
+REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordinator applies without asking):
+1. RNase P noise model (rnasep-misfit; the critical path). It tests a per-particle band-wise noise variance (empirical Bayes),
+   an off-mask estimate and per-micrograph sigma2 groups. Each is scored on the r131 solvent floor (109.5 nats now), the
+   y1-y2 correlation by noise decile, closed AUROC kept, and IgM as the regression.
+   - If one wins on r131: run 692k.
+   - Then tree-latent reruns its decisive RNase P test, with the noise model in the whitening AND the fission draw, and
+     sparse-ppca2 reruns r131 / 692k.
+   - If the shared model then finds the closed lineage honestly, the forest port starts (`handoff/tree-latent/PORT_DESIGN.md`).
+2. Data-derived band (sparse-ppca2). The IgM scan rows land, then the rule: gain above the solvent controls, per node or per
+   block. Raw gain is out, since it follows the misfit floor on r131.
+   - The rule is built into sparse_sites together with the profiled coordinates, validated on the six fixtures, and committed
+     to wip after the fast gate.
+   - That lets the site chain fire on IgM inside the tree.
+3. Site chain (site-chain). v7 (sklearn-parity tied seed, b6, 15/15) worker tests run on norm. The b5 battery table goes into
+   STATUS.
+   - If v7 is better at 5 % with nulls at 0, it is the chain.
+   - Once the band rule lands, the IgM chain trees rerun. If IgM gains in the tree and the gates pass, site_chain is committed
+     to wip.
+   - Then the factorial-output proposal (no build).
+4. Pose-profile default (pose-tangent2). Seeds 3-5 per arm finish, then a recommendation: keep on, gate on the removed
+   evidence share, or off. The committed default changes only with the user.
+5. Flex -> refinement priors (oracle, Part 7): the verdict when the chains finish.
+6. Every verdict goes into this guide and memory, pushed to fork wip. New jobs go to norm. Nothing goes to production.
+Waiting for the user:
+- decision 1 (depth_wiener default);
+- decision 3 (state_eval port; not needed by the chain);
+- decision 6 (fission split test: no as it stands);
+- decision 9 (the r131 gate's honest readout);
+- the pose-profile default;
+- the held precision fix;
+- a production candidate.
 
 - tree-latent (shared model, RNase P tests):
   - Runs on the r131 and 692k sparse fits, plus the port design note.
