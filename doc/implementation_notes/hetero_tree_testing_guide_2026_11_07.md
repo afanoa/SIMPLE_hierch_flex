@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:06 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1097,6 +1097,20 @@ Not to retry:
 - latent density basins / kNN connectivity (no power at d' 1-2);
 - a deformation field replacing the basis (falsified; composition);
 - VB/ARD mixtures.
+
+### 7.10 Overnight plan, 2026-11-07 (user: "please work autonomously on the stuff overnight")
+
+- tree-latent (shared model, RNase P tests):
+  - Runs on the r131 and 692k sparse fits, plus the port design note.
+  - If it keeps the r131 corner on honest maps, or isolates the closed lineage at 692k without tracking nuisances, the Fortran
+    port starts (user: "port it if it's useful"). Otherwise the failure is written up.
+- site-chain:
+  - Variants of the round: no round, and refine3D's state_eval round. The 11 b3 trees run, then the section-3 battery.
+  - A variant that passes the IgM worker tests and the gates is committed to `hetero-tree-wip` only, never to `hetero-tree`.
+    If it needs the state_eval port (decision 3), that is flagged in the morning summary.
+- site-coupling (factorial vs joint) and the 692k sparse PPCA result are folded in when they land.
+- Nothing is promoted to production (`hetero-tree`) without the user. Every verdict goes into this guide and memory, pushed to
+  the fork.
 
 ## 8. Decisions waiting for the user
 
