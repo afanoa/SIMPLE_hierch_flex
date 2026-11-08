@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:38 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 16:46 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1739,6 +1739,32 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         or wall past 7 h.
     - It is one seed, and the maps are the tree's own data, so any call is provisional. The closed reference rows lead. A clear
       result needs a second seed to confirm it, and a 692k twin on the production tip (`merge_master2`) to attribute it.
+12. Master's multi-state development (user, 2026-11-08: "look on master for new developments regarding multi state ... I think
+    poses matter a lot but if multi state is scrambling membership too much it may be detrimental").
+    - origin/master has 9 commits since our merge base `6634307d9`. One concerns states: `cac010e40` (2026-11-08), "multistate
+      solve3D: draw the state from the posterior, final assignment at beta 1". Report:
+      `doc/implementation_notes/completed/multistate_posterior_state_draw_report.md` on master.
+      - The state is one draw from the tempered joint posterior over state and direction, p ~ exp(-T (L - L_min)), in place of
+        the closest state. Labels stay hard.
+      - Multi-state runs end with a final assignment at prob_beta = 1. The fill's budget and the annealing stall are per state.
+        nstates = 1 is bit for bit unchanged.
+      - There is NO population (class-size) term: every state has the same prior, as in our stage A.
+    - Its own benchmark (20k simulated ribosome assemblies, 30 / 60 / 10 %) bears out the user's worry:
+      - The 10 % state is never isolated, and the 60 % state splits over two.
+      - At the low-resolution stages (22.6 / 20.2 A) about half the labels change every iteration, and the state posterior
+        spreads over 2.2-2.7 of the 3 states.
+      - Labels only organise at the end of stage 4 and in the 6 A stage.
+    - For the tree:
+      - Do not merge `cac010e40` into stage A/B without the gates. Its draw re-assigns membership even more than an argmin,
+        it has no class prior, and a tree-wide prob_beta = 1 is the one arm on record that lost the r131 corner. The final
+        assignment at beta 1 is not that arm, but it needs the same check.
+      - It agrees with thread 9: multi-state re-assignment at low resolution scrambles membership and drains minorities.
+    - Lever that follows (proposed): refine poses per group with membership HELD (single-state refine3D on each group). Compare
+      at r131, on the honest pair, against the same groups at the parent's poses and against the multi-state round from the same
+      seed.
+      - Groups: the latent's label-free tail, blockhi (upper bound), the fflex group, and matched random groups.
+      - Readout: the validated contrast readout.
+      - Poses refined on X1, maps on X2.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

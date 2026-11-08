@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 1ca67e82-4d15-4725-b95d-0ee5719be9f4
-  modified: 2026-11-08T21:38:26.448Z
+  modified: 2026-11-08T21:38:41.149Z
 ---
 
 Submit new batch2 work to csbdevel as before, even when it is at our per-user cap: jobs queue behind the 642-core QOS cap.
@@ -50,4 +50,4 @@ Related: [[batch2-400-core-limit-and-worker-timeouts]], [[batch2-shared-account-
   - Rule: full-size trees go wherever our cap has room, lf-comparable on csbdevel; small diagnostics stay on norm.
 - 2026-11-08 ~17:00 STANDING (user): "also feel free to use both norm and csbdevel". New jobs may go to either partition; stay
   under each cap (csbdevel 642, norm 600), -c <= 36 per job on norm, qsys_partition matching the master. Relayed to rnasep-misfit,
-  sparse-ppca2 and site-chain.
+  sparse-ppca2 and site-chain. Supersedes "just use norm" as the default.

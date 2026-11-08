@@ -83,3 +83,6 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - At r131 the closed reference rows and the arm-occupancy maps disagree (blockhi: 2x closed rows, maps below random). That must
     be explained before closed share can judge rounds there.
   - What remains of thread 9 is the 692k carve table.
+- 2026-11-08 user: "I think poses matter a lot but if multi state is scrambling membership too much it may be detrimental".
+  Master's own multi-state benchmark agrees on scrambling ([[master-multistate-posterior-draw-2026-11-08]]). Proposed lever: hold
+  membership fixed while single-state refine3D refines the poses per group (guide 7.10 thread 12).
