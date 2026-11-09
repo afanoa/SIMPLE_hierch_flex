@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-verdicts
-description: "Topic index (79 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
+description: "Topic index (87 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
 metadata:
   node_type: memory
   type: reference
@@ -101,3 +101,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [fission-select-members-on-y1-labels-may-read-y](fission-select-members-on-y1-labels-may-read-y.md) — RULE: fission tree selects members on X1; proposals and sat5 labels may read y
 - [joint-seeding-igm-verdict-2026-11-08](joint-seeding-igm-verdict-2026-11-08.md) — VERDICT: IgM-root joint seeding: K* 6 on the 5 % null under every Gaussian null; refined through the root's calls, nulls 1 leaf but fixes lose the stock split; cross-seed ARI .27-.39
 - [xd-repro-verdict-2026-11-09](xd-repro-verdict-2026-11-09.md) — VERDICT: XD of the latent reproduces, but so do its hard partitions; flattening is not the gap; the split's seed dependence is downstream; Gaussian-null K not null-safe
+- [ole-panel-joint-seeding-verdict-2026-11-09](ole-panel-joint-seeding-verdict-2026-11-09.md) — VERDICT: OLE root diverges (XD K flips); depth-1 seeding deterministic on same rows; joint seeding no gain; TRAP coordinates numbered 1..n

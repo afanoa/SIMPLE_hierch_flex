@@ -91,3 +91,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - Root tied pairs are less duplicate than r1's: seed 1's region-8 masks Jaccard .549 (centroids 12.8 A apart), seed 2's region-9
   masks .365 (29.3 A); r1's pair .67-.68 at ~6 A. OLE depth 1: same-row replays reproduce the single-site split almost exactly,
   so OLE's cross-tree disagreement comes from the root's divergence.
+- OLE PANEL FINAL (244 core-h): root XD K flips (4 / 6 / 5 / 5, gaps <= .0007) change the pole seeds; depth-1 nodes replay
+  exactly on the same rows, so OLE diverges at the root. Joint seeding: root .34-.67 vs single-site .49-.95; depth 1 no gain.
+- PANEL VERDICT 2026-11-09: joint seeding + RNase P r1, + qtoy2; - qtoyflex, - IgM, - OLE. Not general: don't adopt it or run
+  the r1 subtree with it. Common cause: flat (near-tied) discrete choices at the top (site choice, XD K).

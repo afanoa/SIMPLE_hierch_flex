@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:23 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:27 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2409,6 +2409,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - SAME ROWS: the single-site splits replay almost exactly (r1 12,112 / 11,452 vs 12,088 / 11,476; r2 14,344 / 6,503
               vs 14,293 / 6,554). OLE's depth-1 disagreement comes from the root's divergence, not from the node's seeding.
               The same-row comparison of all arms (`ole_samerows.py`) is pending.
+          - OLE PANEL FINAL (sparse-ppca2, 244 core-h, `$H/handoff/ole-panel/OLE_PANEL.md`): joint seeding does not fix OLE.
+            - Root: four-way in every seed, but XD's K flips (4 / 6 / 5 / 5, runner-up gaps <= .0007) and changes the pole
+              seeds. Seeds 1 and 4 share identical fflex coordinates yet seed differently. Root split ARI .65-.77; seeds that
+              agree at .95 still drift to .75 through stage A / B.
+            - Depth 1: same-row replays reproduce XD K, fflex states and seeds exactly, so the divergence is inherited from
+              the root.
+            - Joint seeding: root .34-.67 (single-site .49-.95; raw-latent variant .15-.55); depth 1 same rows .76 vs .77,
+              across trees .20 vs .21.
+          - PANEL VERDICT, joint seeding: + RNase P r1, + qtoy2; - qtoyflex, - IgM, - OLE. It does not generalize, so the r1
+            subtree run with joint seeding at every node (~450 core-h) is not justified.
+            - The common cause is a near-tied discrete choice at the top of the tree: RNase P's site choice (root margins
+              1.6-2.4, a different region per seed) and OLE's XD K (gaps <= .0007). Each choice is deterministic given its
+              inputs but flat, so seeds and upstream noise decide it.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry
