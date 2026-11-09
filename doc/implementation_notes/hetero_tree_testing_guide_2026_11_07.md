@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:25 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1845,6 +1845,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
     - Readouts: the node latent's closed AUROC; each child's closed share, recall and concentration factor against
       production's own children (1.94 / 4.11 / 6.94 / 8.34 %); at r131 also the honest contrast on the fission pair.
     - Priced before the root (ask if over ~600 core-h). The class prior goes to the gate battery only if it wins.
+    - Class-prior build `84d4bb75d`: fast gate 15/15. Production's pruning had removed the parents' recB0 halves and recB maps,
+      so they are regenerated for r13, r1 and r (recB maps rebuilt from the stage-B project, a documented stand-in).
+    - INCIDENT 19:13: the second replay harness reused a root holding a symlink into production. It wrote 1,599 self-links
+      into f692_r17d_s1, and its rm -rf deleted the contents of production's node_r13/recB0 and node_r13/recB.
+      - Restored: recB0/b.simple from a 19:10 copy, and both hetero_step.sh. The coordinator verified 0 links left.
+      - Lost: the step logs, exit files, node_rows bookkeeping, and the pcg_support and RESOLUTION files in those two
+        directories. No result, split, map, site or coordinate file was touched.
+      - The harness now refuses symlinked or reused destinations and never removes through a link. Production goes
+        read-only.
+      - The first four r131 arms ran with the parent's mask; they are kept as a variant, and the corrected arms run in fresh
+        roots.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

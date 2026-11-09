@@ -20,3 +20,12 @@ transcript's Write call, the only copy: Slurm keeps no batch scripts here). Scri
 2026-10-27 (coordinator, after a stray `rm -f /dev/null` in an ad-hoc ssh command): NO rm of any kind on the cluster, not even
 scratch or one-liners; grep scripts for rm/unlink/os.remove/rmtree before upload. Related:
 [[never-overwrite-scripts-under-running-jobs]], [[say-upfront-when-i-cannot-do-the-ask]].
+- INCIDENT 2026-11-08 19:13 (node-lever replay harness, session flex-refine-flex-weights):
+  - What happened: a reused replay root held a symlink (node_r13 -> production). The mirror step wrote 1,599 self-referential
+    symlinks into production's node dirs. The harness's rm -rf then deleted production's node_r13/recB0 and node_r13/recB contents
+    through the link.
+  - Restored: recB0/b.simple from a 19:10 copy, hetero_step.sh rebuilt; all links moved out (coordinator verified 0 links left).
+  - Lost for good: step logs, exit files, node_rows bookkeeping, pcg_support and RESOLUTION files there. Results, splits, maps,
+    sites and coordinates were untouched.
+  - RULE: harnesses never rm (not even rm -rf in scratch roots) and never write through symlinks or into reused roots. Replay
+    roots are fresh dirs outside production, and production trees go read-only before any replay.
