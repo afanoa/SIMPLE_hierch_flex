@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 18:42 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1626,6 +1626,8 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
            50k) before the bulk is carved, and maxlev 4 stops at production's depth-1 equivalent.
          - Honest maps: r1223 reads .44 against a random maximum of .35, and r1212 .34 against .29. The closed signal is real
            but thin.
+         - Formal table in `$H/handoff/rnasep-misfit/carves/`. The tree-wide bar refuses only r221's honest split. The job's
+           remaining step adds a lookahead for each production node.
        - USER (2026-11-08): "yeah dont think we can get out of refitting at each node". The shared-basis tree is closed as a
          replacement for the tree's per-node refits on RNase P. Production's edge is its K-way root and per-node latent refits,
          which make closed lead where the tree cuts. It is not refinement (pose test) and not one global basis (this tree).
