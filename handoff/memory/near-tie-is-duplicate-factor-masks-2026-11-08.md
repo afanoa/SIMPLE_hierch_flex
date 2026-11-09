@@ -63,3 +63,10 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   (the 5 % null gets K* 6). The split test returns one group only through its effect floor.
   - Panel: qtoy2 +, qtoyflex -, IgM -; RNase P r1 and OLE pending.
   - Joint seeding is not yet a general method.
+- r1 REFINED FROM JOINT SEEDS (decisive, seeds 1-3): POSITIVE.
+  - Six children with sizes within 1 % across seeds, all passing the tree's own tests.
+  - 3 / 3 closed hits (x2.34-2.47, recall .23-.24); single-site seeding gave 1 / 3 at the same seeds.
+  - Cross-seed ARI .68 (single-site .31 across basins); the three closed children share 35k at .052 (x2.68).
+  - Refinement converges on the same 6-way partition from every seed.
+  - Costs: closed spreads over 3 children (lower top-child recall than production's r13); on the toys it loses the holo.
+  - Next: the panel (IgM and OLE refined from joint seeds), then a subtree method test.

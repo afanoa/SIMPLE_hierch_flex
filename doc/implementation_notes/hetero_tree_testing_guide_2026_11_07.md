@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:36 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:42 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2246,6 +2246,24 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             reproducible than the hard labels.
           - Read: cheap, deterministic and slightly sharper, but it does not touch the seeding basins. It's part 4 of the
             design.
+        - r1 REFINED FROM JOINT SEEDS (the decisive test; seeds 1-3; K* 6 joint seeds, identical across seeds; ~60 core-h).
+          A POSITIVE result:
+          - Every seed keeps SIX children, with sizes within 1 % across seeds (48.6k / 45.8k / 44.7k / 41.4k / 40.0k / 32.1k).
+            All pass the split test (weakest pair z 28-32), the locality guard and the effect floor.
+          - 3 / 3 HITS: the closed-leaning child is 44.4-45.0k at .045-.048 (x2.34-2.47), recall .23-.24. Single-site seeding
+            at the same seeds: miss, hit, miss.
+          - Replication: cross-seed ARI .67-.69 (single-site: .31 across basins); matched children agree at Jaccard
+            .70-.79. The three closed-leaning children share 35,061 particles at .052 (x2.68), recall .209.
+          - Refinement does not keep the seed groups (each spreads over all six children) but lands on the same 6-way
+            partition from every seed. That partition is unrelated to single-site (ARI .08) and production (.12) splits.
+          - Costs:
+            - closed spreads over three children (.23 / .13 / .12 of the reference), so the top child is purer than
+              production's r13 (x2.12, recall .38) but smaller;
+            - on the toys, qtoy2 gains conformers but loses holo, and qtoyflex is worse;
+            - micnull passes only through the locality guard.
+          - Against the user's rules: it REPLICATES where single-site seeding does not, and gives the most diverse r1
+            partition seen.
+        - r13 subtree: seed 1's r1311 splits into r1311_s1 (11,618) and r1311_s2 (11,645), mirroring production's corner.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
