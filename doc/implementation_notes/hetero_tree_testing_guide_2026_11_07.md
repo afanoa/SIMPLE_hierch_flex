@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:37 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:39 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1964,6 +1964,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - EMPIAR-10076 (deposited assembly classes).
       - Metrics: seed reproducibility, the number of honestly distinct conformations, deposited-state recall, nulls at one
         leaf.
+    - User (2026-11-08): "I would adress the source of the instability at its core. I assume its the refinement swithcing
+      memberships."
+      - Evidence so far points at seeding: the October OLE node trace found all 7 depth-1 divergences starting at the
+        seed-site / pole choice, and with similar seeds stage A / B agreed (split ARI .79-.98). At RNase P r1 the latent is
+        identical across builds while the seed site differs at a near-tie.
+      - Refinement's switching is real, though: it grows a seed x4-9 and relabels most of the node. It may turn a coin flip
+        into a whole different partition.
+      - Briefed first: a node trace on the r1 replays (cross-run agreement at each step, sites -> seed site -> stage-A seeds ->
+        stage-A labels -> stage-B labels -> split; plus each run's switch rate from seed to stage B, overall and for the
+        closed rows). It shows whether agreement drops at seeding or after refinement.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
