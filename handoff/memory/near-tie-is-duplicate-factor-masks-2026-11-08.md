@@ -41,3 +41,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   - TRAP: not null-safe. On qtoynull, K 2 wins by .003 nats per particle and passes the split test (z 4.97). K needs a
     null-calibrated floor or an effect-size gate.
   - Next: a null-safe K, then refinement (stage A / B) seeded from the joint groups, across seeds plus qtoy2 and the nulls.
+- 2026-11-08 user "Yes, run it": refined joint-seeding test (~120 core-h, f2r session, guide 7.10 thread 14).
+  - Null-safe K: held-out gain above the 95th percentile of a Gaussian null with per-particle noise, plus the effect gate.
+  - Stage A / B seeded from the joint groups at r1 (seeds 1-3), qtoy2, qtoyflex and the nulls, against single-site seeding.

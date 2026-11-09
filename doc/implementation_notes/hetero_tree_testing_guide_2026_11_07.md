@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:03 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:11 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2063,6 +2063,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         or Gaussian null) or the tree's RHOMIN-type effect gate.
       - Read: joint seeding in the latent axes fixes r1's coin flip reproducibly and adds distinct states (r1 4 vs 2, qtoy2
         6 vs 5 conformers). It needs a null-safe K and has to be shown through refinement.
+      - APPROVED 2026-11-08 (user: "Yes, run it"), ~120 core-h, f2r session, seeded through the replay harness from label
+        files with no Fortran:
+        1. Null-safe K: accept K only if its held-out gain beats the 95th percentile of the same fit on Gaussian-null data
+           (the node's covariance, each particle's own posterior noise), plus the tree's effect gate. The qtoynull, olenull and
+           micnull roots must give K = 1.
+        2. Stage A / B seeded from the joint groups at r1 (seeds 1-3), the qtoy2 and qtoyflex roots, and the null roots,
+           compared with single-site seeding.
+        - Readouts: r1's closed hit rate (1.5x), refined concentration and recall, cross-seed ARI of the refined splits; the
+          number of distinct children kept; per-child purity; nulls at one leaf.
+        - If it holds, the panel continues with the IgM fix root and an OLE rerun.
     - User (2026-11-08): "you can [get] probability distributions out of the refinement. so basically you can just refine
       the pdf and get responsibilities out."
       - The probabilistic search already holds each particle's distribution over (state, direction); master's `cac010e40` even
