@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-verdicts
-description: "Topic index (90 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
+description: "Topic index (91 memories): hetero_tree tested-and-closed verdicts (rejected rules, replays, old tree results)"
 metadata:
   node_type: memory
   type: reference
@@ -105,3 +105,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [near-tie-rule-verdict-2026-11-09](near-tie-rule-verdict-2026-11-09.md) — VERDICT: 2 SE rule leaves top choices unaligned; four-start XD makes RNase P root K 6/6/6, not OLE
 - [two-run-consensus-verdict-2026-11-09](two-run-consensus-verdict-2026-11-09.md) — VERDICT: consensus = confidence filter, purer only after the same choice; null-safe only post-split; IgM null twin splits at seed 2
 - [factor-mask-split-is-state-set-region-2026-11-09](factor-mask-split-is-state-set-region-2026-11-09.md) — VERDICT: root f1/f2 split = whether the 8-state set puts f2 into the region; f2 ~40 A from the r131 closed block; flex basis finds f2 in all 7 seeds; region needs restarts (~80-105 core-h)
+- [root-sparse-sites-seed-test-2026-11-09](root-sparse-sites-seed-test-2026-11-09.md) — VERDICT: 50k root pursuit x7 seeds: regions reproducible (F1/F2/F4 top three 7/7), one site, F1 vs F2 flips 4/3 (near-tie); closed in F1 = old site 1; f2 no pursuit block

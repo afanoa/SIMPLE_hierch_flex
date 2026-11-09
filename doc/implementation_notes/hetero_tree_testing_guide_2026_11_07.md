@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:23 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2553,6 +2553,24 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   own seed spread (3 pursuit seeds on one fit).
                 - Bar: the leading site matches in >= 6 / 7 seeds (Jaccard >= .5), and its split carries closed at least as
                   well as the f2 starting groups (x1.3).
+                - RESULT (`$H/handoff/ole-panel/ROOT_SPARSE_SITES.md`, 67.6 core-h; same 50k subsample in all 7 seeds, 645
+                  closed rows): FAILS the bar. The leading block matches in 4 / 7.
+                  - The CANDIDATE SET IS REPRODUCIBLE: the top three blocks fall in the same three regions in all 7 seeds.
+                    - F1 (lower, (30, -43, -41) A): the old layer's site 1, which site_rank never chose.
+                    - F2 (upper, (3, -21, 42) A): the old region 9, 9-10 A from the r131 closed block.
+                    - F4 (central): third in every seed.
+                  - Every seed puts all 16-20 blocks into one site, so the site bar is met only trivially.
+                  - The leading block flips, F1 in 4 seeds and F2 in 3; the gap is .7-1.5 SE in four seeds, a near-tie.
+                  - The old layer's f2 is not a pursuit block (late and weak, or absent).
+                  - CLOSED LIVES IN F1: the best closed block is in the lower region in 7 / 7 seeds (full 692k: AUROC .802).
+                    When F1 leads, its label-free pole reaches x1.34-1.59; when F2 leads, x1.13-1.17. The one-site
+                    coordinate scores .82-.85 (LDA).
+                  - Traps: `sparse_sites=yes` skips the embedding; SIMPLE_SEED drives both data preparation and the pursuit;
+                    subsets need `pindfile=`; the ladder's band jobs need SIMPLE_PATH exported.
+                  - Read: the pursuit fixes the old layer's seed-dependent part (which candidates exist). The F1 / F2 choice is
+                    a near-tie, and neither ordering reliably puts the closed-carrying F1 first.
+                  - If F1 and F2 are factorial (as IgM's sites are), the split order should not matter: the depth-2 product
+                    partition can reproduce even when the root's choice flips. That is the next read.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):
@@ -2619,6 +2637,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   reproducibility (hard: .22-.39), with an honest X2 read if the soft arm leads;
                 - qtoyflex at the node where closed leaves an open parent, against truth; the nulls must stay one leaf.
               - Bar is relative to the hard arm on the same nodes.
+              - SOFT CARRY ON FIXTURES, FINAL (`$H/handoff/node-levers/SOFT_CARRY_FIXTURES.md`, 70 core-h): no gain on truth or
+                reproducibility on either toy, so IgM is skipped by the rule.
+                - qtoyflex (3 seeds): responsibilities are softer than RNase P's (deep nodes .81-.88, 21-30 % below .7), but
+                  the strict path arg-max equals the hard leaves exactly. Completing the missing factors moves 8-9 % of
+                  particles.
+                - On combo 18 that raises recall (.61-.69 -> .68-.78) but drops purity (.40-.46 -> .29-.33), so F1 falls
+                  (.49-.52 -> .40-.45). NMI and cross-seed ARI fall slightly.
+                - Cut losses are confident (2 : 1; apo loses 43-50 % at the root at R .02-.03). The one uncertain cut
+                  (r1 -> r12, combo 18) gives back 120-140 particles per seed, at more purity cost than recall gain.
+                - VERDICT: responsibilities are for ranking and selection (r13 >= .9 cores), not for carrying labels down a
+                  hard tree.
+              - The soft-loop run (weighted flex refit at the child) is a separate test and still running. qtoyflex r12's hard
+                arm stays one leaf in 3 / 3. The soft fits need hard members floored at the epsilon and are being rerun.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG

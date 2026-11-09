@@ -130,3 +130,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - EVIDENCE-ACCUMULATION CONSENSUS over the 8 root runs (2026-11-09): FAILS the x3 bar (0 / 35 half splits). The lifetime cut's
   closed cluster (146k, x2.25, recall .47) reproduces across disjoint halves (Jaccard .505 vs a .003 floor), better than
   production's r1 (x1.54); the majority cut's x4 cluster doesn't reproduce. Mixing f1 / whole-region runs dilutes it.
+- ROOT SPARSE SITES (2026-11-09, 50k subsample, 7 seeds, `handoff/ole-panel/ROOT_SPARSE_SITES.md`): the candidate set IS
+  reproducible (top 3 blocks in the same 3 regions every seed), but the leading block flips F1 / F2 (4 / 3, .7-1.5 SE). Closed
+  lives in F1 (the lower region, old site 1, never chosen by site_rank; AUROC .80 at 692k). Old f2 is not a pursuit block.
+  Next idea: factorial F1 x F2 product, where split order shouldn't matter.

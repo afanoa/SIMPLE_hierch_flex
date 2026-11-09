@@ -79,3 +79,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   soft, 3 seeds, <= 300 core-h).
 - FEEDBACK: bars are relative to production or the hard arm on the same node, never an absolute xN copied from a best case
   (the user questioned the x3 consensus bar).
+- SOFT CARRY FIXTURES FINAL: no gain on qtoy2 or qtoyflex, even with qtoyflex's softer responsibilities (deep nodes 21-30 % below
+  .7). Completing factors trades purity for recall (combo 18 F1 .49-.52 -> .40-.45). IgM skipped. Responsibilities: rank and
+  select, don't carry. The soft-LOOP test (weighted flex refit) is separate and still running.
