@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:45 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:51 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2014,6 +2014,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Part 2 is running at seed 1 (jobs 55093342-3, ~8 core-h): a joint mixture on sites 2f1 + 2f2's endpoint posteriors
         and on the z1 / z3 axes, with K <= 6 by cross-half held-out likelihood, the groups' fixed-pose maps, the split test
         and the arm readout.
+    - NODE TRACE VERDICT (the user's question: is refinement's switching the source?): NO. Divergence starts at seeding.
+      Cross-run agreement (ARI):
+      | step | hit vs miss | hit vs hit | miss vs miss |
+      | --- | --- | --- | --- |
+      | the chosen site's poles and seed labels | .20-.34 | .72-.95 | .68 |
+      | stage-A states | .49-.54 | .66-.77 | .73 |
+      | split children | .29-.31 | .63-.74 | .70 |
+      - Refinement keeps each run in its seed's basin, and matching seeds give matching splits, as on OLE.
+      - Stage A pulls the two basins part-way together (.2 -> .5), but the split separates them again.
+      - With part 1, the core is site discovery: near-duplicate factor masks with different pole sets, chosen at a near-tie.
+        That is where the fix goes.
+      - The stage-B column and per-run switch rates are being recomputed after a dump fix.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

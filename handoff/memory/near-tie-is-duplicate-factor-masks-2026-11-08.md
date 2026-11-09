@@ -20,3 +20,9 @@ the same pole almost identically, and the pick between them decides whether the 
 **How to apply:** treat near-duplicate factor masks of one region as one site, with the union of their poles, before ranking.
 That is the candidate deterministic fix, and it adds states rather than choosing; test it across the panel
 ([[methods-must-generalize-across-datasets-2026-11-08]]). Part 2, a joint mixture on z1 / z3 at r1, is running.
+- NODE TRACE (r1 replays): divergence starts at SEEDING. Hit vs miss runs share seeds at ARI .20-.34; within a basin the seeds
+  agree at .68-.95. Stage A pulls the two basins to ~.5, and the split separates them again (.3). Matching seeds give matching
+  splits (.63-.74).
+  - Refinement's membership switching is not the source of run-to-run instability (the user's hypothesis); it keeps each run in
+    its seed's basin.
+  - The fix belongs in site discovery and pole selection.
