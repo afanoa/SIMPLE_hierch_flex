@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:54 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:55 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2155,6 +2155,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Final settling pass approved (user: "Yes, test it"): one argmax stage-B iteration at the end, on a test build with the
         evidence writer, at r1 over arm b's 6 seeds. Readouts: pose stability (r17d ~5 % vs wip 72 %), label and
         responsibility reproducibility, hit / miss unchanged, and the closed child's contrast.
+      - NULL-SAFE K, f2r construction, which PASSES the plain nulls:
+        - The null is one Gaussian with the node's covariance, each particle's deviation scaled by its own noise level
+          (predicted from residual and contrast, mean s^2 = 1), refitted cross-half, 40 replicates. K is accepted stepwise
+          while K's gain over K-1 beats the null's 95th percentile.
+        - qtoynull K* = 1 (uncalibrated 5); olenull K* = 1.
+        - micnull K* = 3: the PfCRT micelle's real variability (a contrast split), not protein states. The tree's own path
+          keeps one leaf there; whether the split test rejects it after refinement is being run (55095904).
+        - qtoy2 K* = 6 (the cap; 8 true combinations); qtoyflex K* = 2 (holo plus apo; the tree split apo twice). Their
+          refinements are running (55095905-6). r1 seeds 1-3 are computing.
+        - sparse-ppca2 (OLE) and site-chain (IgM) are told to use this null so the whole panel shares one rule.
+        - Test build `nodelevers 2e4b50a24` (evidence writer plus importer, env-gated) is compiling.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
