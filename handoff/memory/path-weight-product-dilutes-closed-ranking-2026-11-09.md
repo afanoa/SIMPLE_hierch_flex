@@ -10,7 +10,9 @@ stage-B responsibilities along the lineage; at matched core sizes vs the one-lev
 at the .9 / .95 / .99 sizes (the root factor excludes closed-rich particles of median R_{r1|r} .61); r131 -201 / -271 / -355 (r1
 and r13 factors); r1312 +180 / +119 / +70 (x1.51 -> x1.78 at .9); r1311 and r132 "gain" only through leakage of the upstream
 closed factors. Subtree seeds at r131: path cores purer on every run and cross-run Jaccard .132 -> .184 (shared 158 -> 352).
-One-level closed AUROC by level: root .63, r1 .75, r13 .80, r131 .58.
+One-level closed AUROC by level: root .63, r1 .75, r13 .80, r131 .58. Soft carry (nl_softcarry.py): the closed rows lost at the
+root (3,826) and r1 (1,577) cuts are confidently assigned elsewhere (74 % / 63 % at R < .2; soft recall .531 vs hard .561, .364
+vs .380; destinations r2 at the root's average closed share), so softening the cut recovers only 1.5-2 %.
 
 **Why:** the coordinator asked whether the hierarchy's path weight beats the node's own responsibility for confident cores.
 

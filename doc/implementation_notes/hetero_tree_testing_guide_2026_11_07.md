@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:17 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:19 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2403,9 +2403,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - Read: the closed information sits at the r13 split (one-level closed AUROC .80, against .63 at the root and .75 at
             r1). Upstream the closed state is a minority with uncertain membership, so a plain product dilutes the ranking.
             Rank by the most informative level, or weight the factors by a label-free measure of their information.
-          - CORRECTION to "soft carry changes little": that holds only at r13 -> r131 (93 % of closed rows kept). The hard cuts
-            keep .56 of the closed rows at the root -> r1 cut, .68 at r1 -> r13 and .59 at r131 -> r1312. If the rows lost at the root are
-            uncertain rather than confidently elsewhere, a soft carry rescues them. f2r is checking (zero compute).
+          - SOFT CARRY AT THE TOP CUTS (f2r, zero compute, `node_levers/path/softcarry.txt`): it recovers nothing.
+            - The hard cuts keep .56 of the closed rows at the root -> r1 cut and .68 at r1 -> r13. Soft recall is LOWER: .531 vs
+              .561 at the root, .364 vs .380 at r1. At matched mass a soft ranking gains 1.5-2 %.
+            - The rows that leave are confidently elsewhere: at the root 2,842 of 3,826 have R_{r1} < .2 (913 uncertain); at r1
+              997 of 1,577 (546 uncertain).
+            - Most root leavers sit in r2 (2,516, R toward r2 median .91) at the root's average closed share (.013). The root
+              split is not aligned with closed / open (AUROC .63), so nothing carried down from it brings them back.
+            - Recovering them needs a split axis that sees closed at the root, or a partition like joint seeding's six-way r1
+              (recall .49 over three children).
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

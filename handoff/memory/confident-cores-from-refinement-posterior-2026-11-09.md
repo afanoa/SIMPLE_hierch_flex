@@ -61,5 +61,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - PATH-WEIGHT READ (f2r, `handoff/node-levers/PATH_WEIGHTS.md`): the plain Bishop-Tipping product ranks WORSE at r13 / r131
   (-8 to -28 %; it drops closed-rich particles sure at their level but uncertain upstream, root factor ~.61) and better below
   r131 (+18-43 %, seeds' Jaccard .13 -> .18). Closed AUROC by level: root .63, r1 .75, r13 .80. Rank by the informative level.
-  - Hard cuts keep .56 of closed rows at the root, .68 at r1, .93 at r13 -> r131, .59 at r131. Whether a soft carry rescues
-    the root's losses (uncertain vs confidently elsewhere) is being checked by f2r.
+  - Hard cuts keep .56 of closed rows at the root, .68 at r1, .93 at r13 -> r131, .59 at r131. SOFT CARRY RECOVERS NOTHING:
+    the leavers are confidently elsewhere (root: 2,842 of 3,826 at R < .2; soft recall .531 < hard .561; +1.5-2 % at matched
+    mass). They sit in r2 at the root's average closed share: the root split is not aligned with closed.
