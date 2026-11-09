@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:54 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:01 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2042,6 +2042,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         closed child, unless the latent mixture forms that group itself. Part 2 (a joint mixture on z1 / z3) answers this.
       - OLE's October outputs are gone from scratch (only recipe4, recipe9, site_states and tools_backup remain). Tracing
         OLE needs a rerun.
+    - User (2026-11-08): "you can [get] probability distributions out of the refinement. so basically you can just refine
+      the pdf and get responsibilities out."
+      - The probabilistic search already holds each particle's distribution over (state, direction); master's `cac010e40` even
+        reads out each state's posterior mass.
+      - Earlier tests of soft states as a SEPARATION lever found no gain: `prob_state_marg` was parked, soft multi-state at
+        fixed poses rescued no minority, and soft M-estimation weights diluted maps.
+      - The new question is whether refinement's state PDF is a better BRIDGE to flex than hard labels: sharper, more
+        informative about closed, and more reproducible.
+      - Cheap test queued (f2r session, ~20 core-h): on the six finished r1 replays, one fixed-pose state pass against each
+        run's stage-B maps gives per-particle state scores, turned into responsibilities at the physical temperature.
+        - Readouts: sharpness; the closed-child responsibility's AUROC on the closed rows against its hard purity and
+          recall; responsibility correlation across runs against the hard-label ARIs; soft against hard maps.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
