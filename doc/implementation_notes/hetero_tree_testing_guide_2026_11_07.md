@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:27 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2607,6 +2607,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     sides across branches: a shared F1 direction within every F2 branch, then pooling across branches (a
                     cross-branch merge-up).
                   - TRAP: lineage checks need site masks kept at run time; production prunes them.
+                - CONDITIONAL F1, POOLED (user: "Yes, test it"; sparse-ppca2, zero compute, 7 seeds): F2 split first, then F1
+                  within each F2 side along one shared direction (labels not used), then the F1 closed sides pooled across
+                  branches.
+                  - Bar: F1 | F2 carries closed in >= 6 / 7 seeds, and the gathered group reproduces better than the
+                    unconditioned F1 closed side.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):
