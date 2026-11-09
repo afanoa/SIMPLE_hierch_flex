@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:01 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:03 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2265,6 +2265,8 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             partition seen.
         - r13 subtree: seed 1's r1311 splits into r1311_s1 (11,618) and r1311_s2 (11,645), mirroring production's corner.
           Seed 3's does too (13,629 / 15,122); all three seeds' r1311 nodes are done.
+          - All three seeds split r1321 into two leaves of ~9-10k; production kept r1321 whole. r1322 is the last node,
+            and each seed's readout follows it.
         - USER (2026-11-09): "Panel first". The r1 subtree method test (joint seeding at every node, three seeds, ~450 core-h)
           waits on the IgM and OLE refinement-from-joint-seeds results.
           - OLE: all four roots split four ways (r1-r4). Depth-1 nodes run one at a time (~4 h more), a root-level trace is
@@ -2279,8 +2281,10 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - OLE JOINT SEEDING at the root: it reproduces WORSE across seeds than single-site seeding.
             - Joint groups agree at ARI .34-.67, against .49-.95 for the single-site seeds and .65-.77 for the splits; at a
               fixed K, seed 3 still cuts elsewhere.
-            - Suspected cause: OLE's per-run latent axes. RNase P r1's node latent is identical across seeds, but OLE's
-              fflex is not. A short job is testing per-run axes against single-start fits.
+            - Cause: mostly XD's K choice, not the mixture. Seeds 1 and 4 have identical fflex embeddings (latents r 1.00),
+              but XD picked K 4 vs 5 (runner-up gap .0000). The joint mixture reads XD's posterior means, so they agree at
+              only .89-.91. Seed 3's latent does differ (z3 r .83-.85), and more starts don't help.
+            - Running (job 55099370): f2r's rule on fflex's raw latents, before XD. Seeds 1 and 4 should then agree exactly.
           - XD-REPRO interim (corrected K start and acceptance rule):
             - At r1, K = 3 in both arms, with weights identical to 3 decimals across seeds and builds and MAP sizes within
               0.3-1 %.

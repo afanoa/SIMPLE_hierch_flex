@@ -70,7 +70,8 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   - Refinement converges on the same 6-way partition from every seed.
   - Costs: closed spreads over 3 children (lower top-child recall than production's r13); on the toys it loses the holo.
   - Next: the panel (IgM and OLE refined from joint seeds), then a subtree method test.
-- OLE panel (root): joint seeding reproduces WORSE than single-site seeding (ARI .34-.67 vs .49-.95). Suspected cause: OLE's
-  per-run latent axes (its fflex varies by run; RNase P r1's latent doesn't).
+- OLE panel (root): joint seeding reproduces WORSE than single-site seeding (ARI .34-.67 vs .49-.95). Cause: mostly XD's K
+  choice carried into the mixture (seeds 1 / 4: identical latents, r 1.00, but XD K 4 vs 5); seed 3's latent does differ.
+  A raw-latent (pre-XD) variant of f2r's rule is running.
 - XD (tree-latent): reproducible within an arm, but its components are soft (responsibility .5-.67). Every null splits under the
   Gaussian-null rule (non-Gaussianity, not discreteness).
