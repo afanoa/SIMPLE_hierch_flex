@@ -27,3 +27,5 @@ late iteration) is not the source of cross-run label disagreement (see [[node-le
   - Stage 1 at r131: draws median 2.92 deg from the TEMPERED posterior (beta .3, N_eff 5.3 vs 2.3 at beta 1). Early stage 2:
     the equal-weight 8-draw latent is far weaker than single pose. TRAP: pose weights must be the beta-1 posterior,
     not the search temperature's draws. A draw-1 control decides between redrawing at beta 1 and finishing.
+  - CONTROL (case b): a single tempered draw's poses fit as well as the settled poses at ring 16; the 8-draw average cuts the
+    round-1 seed gain ~200 -> ~30 nats. Pose precision is not the latent's bottleneck at r131; averaging over poses hurts.

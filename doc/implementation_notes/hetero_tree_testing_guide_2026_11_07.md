@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:40 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:45 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2515,6 +2515,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               nats vs ~200). Likely the tempered draws are poor poses, averaged.
               - A control (single pose at draw 1, ring 16) decides the next step. If the draws are worse poses, redraw at beta 1
                 (refinement's actual posterior) and run rings 16 and 19 only; otherwise finish stage 2 at 16 and 19.
+              - CONTROL: case (b). Draw 1's poses alone match or beat the settled poses at ring 16, but averaging 8 draws cuts
+                the round-1 seed gain from ~200 to ~30 nats. Any single plausible pose works; the average over poses loses the
+                signal. Stage 2 finishes (rings 22 / 26 had started) for the table against the bar.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
