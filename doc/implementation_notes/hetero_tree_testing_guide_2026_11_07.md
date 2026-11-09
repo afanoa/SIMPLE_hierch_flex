@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:01 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2320,10 +2320,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - pi_{j|i} is estimated from soft responsibilities. Soft EM keeps a small supported state where hard MAP with
               a class prior drained it, so the draining we saw is a hard-assignment artefact.
             - Leaves: confident cores for contrast, weights for SNR.
-          - Cheap prototype, the Bishop-Tipping step at the node where the hard descent fails (r13 -> r131): a weighted
-            PPCA refit of the r131 child on r13's flex caches, with each seed's R_{r131} as weights; then a deterministic
-            XD on the weighted latent. Compare component reproducibility across the 3 seeds and production (hard r131
-            splits: .33) and the weighted closed share.
+          - The proposed r13 -> r131 prototype (a weighted refit of the r131 child, then XD) is WITHDRAWN: it cannot be
+            informative.
+            - The hard r13 -> r131 cut keeps 93 % of r13's closed rows (recall .380 -> .353), so a soft carry from r13
+              changes little. The loss is at r131's own split (.353 -> .209 into r1312), the split that does not reproduce.
+            - A frozen-pose XD at r131 returns one component on every basis under the noise model (rnasep-misfit: closed
+              d' ~.9).
+          - What Bishop-Tipping adds to the design:
+            - the path weight (the product of node responsibilities) ranks the confident cores;
+            - pi_{j|i} from soft responsibilities keeps small states;
+            - weighted child fits only below an uncertain parent cut.
+            - Zero-compute read, offered: path-product cores vs one-level cores, from production's evidence files.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:

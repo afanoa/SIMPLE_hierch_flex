@@ -49,3 +49,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   - The closed child rises slightly (x1.96 vs 1.90), contrast +.05; label ARI +.03 within a basin and none across.
   - Responsibilities correlate at r .95 within basins.
   - Cheap and deterministic, so it's part 4 of the design. It does not touch the seeding basins.
+- Bishop-Tipping carry (2026-11-09): the path weight (product of node responsibilities) is the ranking for cores.
+  - The r13 -> r131 soft-refit prototype was withdrawn: the hard cut keeps 93 % of r13's closed rows (.380 -> .353), and a
+    frozen-pose XD at r131 gives one component under the noise model. The closed loss is at r131's own split (.353 -> .209).
