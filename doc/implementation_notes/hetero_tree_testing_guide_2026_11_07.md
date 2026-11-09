@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:36 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2261,6 +2261,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - Panel so far for joint seeding: qtoy2 + (6 vs 4 conformers); qtoyflex - (holo lost); IgM - (nothing, not
             null-safe). RNase P r1 refinements and OLE are pending.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
+          - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
+            K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry
+            real continuous heterogeneity (micelle bins; arm motions).
+          - A Gaussian null tests non-Gaussianity, not discreteness, so any continuum passes. A state finder in the latent
+            needs a discreteness test (sat5 / GAPw / the locality guard), not a Gaussian floor. The same lesson holds for
+            joint seeding's K.
         - Validation briefed:
           - f2r: reproducibility of the confident cores across seeds at r131, where the hard halves overlap at .22-.39, and
             at r1 (settle + evidence passes on the test install);
