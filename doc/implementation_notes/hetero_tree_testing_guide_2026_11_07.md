@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:36 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2465,6 +2465,23 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Stage B, if they do: implement the rule (local branch or harness hook; build plus fast gate) and replay the
               OLE root at 4 seeds and RNase P r1 on the same rows at 3 or more. Bar: cross-seed split ARI rises where choices
               tied, the nulls stay one leaf, and the fixtures are no worse than stock. Up to ~300 core-h approved.
+            - STAGE A VERDICT (`$H/handoff/ole-panel/NEAR_TIES.md`): the 2-SE rule does NOT make the choices agree, so
+              stage B is dropped.
+              - K (an exact numpy replica of flex's XD selection, 24 nodes): OLE root 4 / 5 / 5 / 4 by the rule (logged 4 / 6 /
+                5 / 5); RNase P root 8 / 7 / 9 (logged 8 / 11 / 11); r1 5 everywhere. The curves rise only 1-3 SE per K near
+                the top, and single-K fits land on worse EM optima, so the curves aren't monotone.
+              - Site: the REGION already agrees in every replay pair (OLE root 6 / 6, RNase P root 3 / 3, r1 28 / 28), and
+                discovery is stable (every tied candidate appears in every replay's table). The tie is between one region's
+                f1 / f2 masks.
+              - The replication tie-break would pick f2 in all three root replays, but it decides on reliability differences of
+                .005-.01. At r1 it moves one seed to another region.
+              - Most of the disagreement sits outside the discrete choices: in the seed set (XD's K changes the extra pole
+                seeds) and in refinement (~.4 ARI at the RNase P root).
+              - A four-start XD check (are the non-monotone curves optimization noise?) is running.
+            - NEXT (coordinator, overnight):
+              - the root consensus core's pair-to-pair reproducibility: root seeds 4 and 5 with the f2 mask (rnasep-misfit,
+                <= 400 core-h; bar Jaccard >= .5 at >= x3);
+              - a panel read of 2-run consensus children against truth and nulls (sparse-ppca2, zero compute or <= 100 core-h).
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry

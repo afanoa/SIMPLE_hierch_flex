@@ -105,3 +105,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - ROOT CONSENSUS (zero compute): seeds 2 and 3's closed children intersect in 110k at 4.13 % (x3.28), recall .52, purer than
   either (x2.91 / x2.71); the one-run-only particles sit at x1.47. At the root this matches production's r13 (4.11 %, .38).
   Candidate: stable site choice + two replicate refinements + consensus. Pair-to-pair reproducibility is untested.
+- TIE-ROBUST RULE, STAGE A (sparse-ppca2, `handoff/ole-panel/NEAR_TIES.md`): NEGATIVE. A 2-SE parsimony rule leaves K
+  disagreeing (OLE root 4 / 5 / 5 / 4, RNase P root 8 / 7 / 9: shallow, non-monotone curves). The site REGION already agrees
+  in every replay, and discovery is stable; only the f1 / f2 masks tie. Most disagreement sits in the pole seed set (via XD K)
+  and in refinement. Next: consensus of replicate refinements (pair-to-pair test, panel read).

@@ -26,3 +26,5 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
   - Root replay final: no reproduction (ARI .08-.37), and the site choice and stage A / B both move.
   - Root refinement: it concentrates closed (seeds x1.3 -> x2.7-2.9) and reshuffles the rest. The two-run consensus core
     is 110k at x3.28, recall .52, matching production's r13 at the root. Two more root replays wait on stage A's choice rule.
+  - Tie-robust rule stage A: NEGATIVE (dropped). Launched: root seeds 4 / 5 for consensus pair-to-pair reproducibility
+    (rnasep-misfit, <= 400 core-h) and a panel read of 2-run consensus (sparse-ppca2, <= 100 core-h).
