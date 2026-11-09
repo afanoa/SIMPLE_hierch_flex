@@ -74,3 +74,8 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - SOFT CARRY ON FIXTURES, interim (qtoy2, ten trees with evidence): beats hard on nothing even where nodes are softer than
   RNase P (medians .83-.89). NMI is identical; the expected soft recall is .3-1.2 % below hard; cut losses are confident (2 : 1,
   biggest at the root); carry keeps .08-.22 of the leavers' mass; ARI identical. qtoyflex x3 pending.
+- 2026-11-09 user: "build the soft flex fit and test the full soft loop ... deep in the tree where a parent is open but a child
+  closed". Briefed to f2r (weighted flex E- / M-step, child flex on path weights, opt-in; RNase P r13 -> r131 and qtoyflex, hard vs
+  soft, 3 seeds, <= 300 core-h).
+- FEEDBACK: bars are relative to production or the hard arm on the same node, never an absolute xN copied from a best case
+  (the user questioned the x3 consensus bar).

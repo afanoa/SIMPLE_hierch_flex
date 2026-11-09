@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:57 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:00 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2605,7 +2605,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               - Against production's root (r1 252k at x1.54, recall .56), the lifetime cluster is a reproducible gain in
                 concentration at a slightly lower recall. It is still below the f2 cores. Caveat: heavy distance ties, so the
                 dendrogram isn't unique.
+              - BAR CORRECTED (user: "not sure why we have a 3x bar"). The x3 copied the f2 cores; the right baseline is
+                production. Read that way, the lifetime cluster is a REPRODUCIBLE improvement on production's root: x2.3 at
+                recall .47 across independent halves, against x1.54 at .56. Future bars are relative to production or the
+                hard arm on the same node, not absolute xN.
             - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
+            - FULL SOFT LOOP, APPROVED (user: "build the soft flex fit and test the full soft loop ... test this deep in the
+              tree where ... a parent that is open but a child that is closed"; f2r, <= 300 core-h).
+              - Code: per-particle weights in flex's E- / M-step (unset = bit for bit); the child's flex on the parent's
+                particles with path weights (opt-in). Built on the evidence-writer build; local branch, build plus fast gate.
+              - Tests, hard vs soft, 3 seeds each:
+                - RNase P r13 (4.1 % closed) -> r131: the latent closed AUROC, the closed child, and its cross-seed
+                  reproducibility (hard: .22-.39), with an honest X2 read if the soft arm leads;
+                - qtoyflex at the node where closed leaves an open parent, against truth; the nulls must stay one leaf.
+              - Bar is relative to the hard arm on the same nodes.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").
             - On RNase P, no: five readouts (hard XD labels .98-.99 vs soft; cores replicate as the split does; responsibilities
