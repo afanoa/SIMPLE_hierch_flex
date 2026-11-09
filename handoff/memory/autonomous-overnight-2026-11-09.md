@@ -32,3 +32,4 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
     the core-h. It is being prepared as an OPT-IN wip commit (default off) for coordinator review; default-on is the user's call.
   - Consensus panel interim: a filter. It helps only when runs made the same choice and loses states when they didn't.
   - f2r's turn hit an API error (ENOTFOUND); nudged to resume the X1 honest contrast.
+  - f2r X1 honest contrast at r131: the split separates nothing closed on honest maps (imprint); node-levers thread closed.

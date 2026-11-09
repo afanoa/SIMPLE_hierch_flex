@@ -24,6 +24,9 @@ table at the node's production depth (parent maps regenerated: recB0 halves exac
   children / six conformers, but splits the qtoynull root (not null-safe as designed).
 - Responsibilities: production's own prob_state_evidence.txt at every node, sharper and more closed-informative than hard labels
   ([[production-tree-has-per-node-state-evidence-files]]); not readable for wip ([[wip-refine3d-redraws-poses-each-iteration-2026-11-08]]).
+- X1 honest contrast at r131 (2026-11-09): arms a/b on the fission copy MISS (x1.09 / 1.06; latent AUROC .51 vs .61 on X); the
+  children's own-data closed-arm difference (.084) vanishes on the honest X2 maps (.000): self-selection on the real lineage.
+  The X1 arms cost ~48 core-h each (the flex fit runs 15x slower on the noisier copy).
 - Cost: r131 ~5 core-h per arm, r13 ~8, r1 ~25 (production's node steps 11 / 19 / 72 with their fuller site layer); X1 arms at
   r131 run ~15x slower in the flex fit (paired PCG probe on the noisier copy, ~50 min per probe iteration).
 
@@ -35,3 +38,6 @@ node whose pole margins tie within ~0.2) as a reproducibility risk and test it w
 null-safe joint seeding, not a prior inside refinement. Replay vehicle and
 traps: [[never-mirror-into-reused-roots-with-production-symlinks]]; related [[stageb-oracle-references-limit-2026-11-07]],
 [[oversplit-junk-ref-merge-verdict-2026-11-07]].
+- r131 X1 HONEST CONTRAST (2026-11-09, ~110 core-h): splits selected on X1 (arms a / b) miss closed (x1.09 / x0.89; x0.95 / x1.06).
+  Rebuilt on X2, the children's closed-arm occupancy is identical (difference .000 / .002) where X1's own maps showed .084 / .011.
+  The r131 split's own-data closed contrast is imprint. Caveat: X1's latent carries less closed signal (AUROC .51-.63 vs .61-.70).

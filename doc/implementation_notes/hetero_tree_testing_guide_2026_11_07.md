@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:22 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:23 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2172,6 +2172,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           ranges x1.54 (production) to x2.91 at similar recall (.56-.62): production's r1 was not the best this root gives.
         - THE INSTABILITY STARTS AT THE ROOT: both wip seeds choose between one region's two factor masks at a near-tie, as
           at r1. Production's root had a dominant site (63.3 vs 43.0). Seed 3 is pending.
+      - r131 X1 HONEST CONTRAST (f2r, ~110 core-h; closes the node-levers thread): the r131 split separates nothing closed
+        on honest maps.
+        - Labels were selected on X1 = X + Z (tau 1), where the latent's closed AUROC drops from .606 / .699 to .513 / .63.
+        - Arm a (noise model off): 23.9k / 20.4k at x1.09 / x0.89, split z 11.3. Arm b (on): x0.95 / x1.06, z 5.8. Both pass the
+          split test and miss closed.
+        - Maps rebuilt on X2, the independent copy (closed-arm / open-arm occupancy): arm a's children .897 / .579 and .897 /
+          .606 (closed difference .000); on X1's own data the difference was .084. Arm b: .002 on X2 vs .011 on X1.
+        - So the r131 children's own-data closed / open contrast is selection imprint. Caveat: X1 carries less closed signal
+          than X.
       - 692k ROOT REPLAY FINAL (rnasep-misfit, `$H/handoff/root-repro/ROOTREPRO.md`, ~300 core-h): the root split does NOT
         reproduce.
         - Seed 3 chose 9f2 at 23.9 vs 9f1 at 15.8. Its closed child: 149.5k at 3.42 % (x2.71), recall .59.
