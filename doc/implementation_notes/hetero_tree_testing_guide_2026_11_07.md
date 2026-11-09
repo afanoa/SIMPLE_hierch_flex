@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:55 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2289,6 +2289,29 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             to the child; uncertain ones stay in a parent-level boundary pool.
           - Test: replay r131 with the r13 >= .9 core as the node, at 3 seeds. Does r131's split then reproduce (hard: .33)
             and concentrate closed?
+          - User (2026-11-09): "look back at literature, and see what bishop or tipping does for his hierarchical pca".
+            Bishop & Tipping 1998 (IEEE TPAMI 20(3), sections 3-5):
+            - The hierarchy is a mixture of mixtures, p(t) = sum_i pi_i sum_{j in G_i} pi_{j|i} p(t|i,j) (eq. 24).
+            - Each level is fitted top down with the parent's responsibilities R_ni held FIXED, as constants in the
+              expected log likelihood (eq. 27).
+            - Responsibilities multiply down the path: R_{ni,j} = R_ni R_{nj|i} (eq. 28), and the children partition the
+              parent's responsibility (eq. 30).
+            - Child M-steps are ordinary PPCA updates on ALL points, each weighted by R_{ni,j}: pi_{j|i} = sum_n R_{ni,j} /
+              sum_n R_ni; the means and W / sigma^2 come from responsibility-weighted covariances (eqs. 31-39).
+            - An unsplit node is copied down unchanged. Children are seeded interactively at chosen centres; only the
+              initialisation uses nearest-mean hard labels, and EM runs soft.
+          - Mapping onto the tree:
+            - R_{nj|i} is the node's refinement state posterior (prob_state_evidence). A particle's path weight is the
+              product along its path.
+            - Each child's flex fit and maps use the parent's particles weighted by the path weight, truncated at a small
+              epsilon for cost. Most particles are sharp: median maximum responsibility .86-.92.
+            - pi_{j|i} is estimated from soft responsibilities. Soft EM keeps a small supported state where hard MAP with
+              a class prior drained it, so the draining we saw is a hard-assignment artefact.
+            - Leaves: confident cores for contrast, weights for SNR.
+          - Cheap prototype, the Bishop-Tipping step at the node where the hard descent fails (r13 -> r131): a weighted
+            PPCA refit of the r131 child on r13's flex caches, with each seed's R_{r131} as weights; then a deterministic
+            XD on the weighted latent. Compare component reproducibility across the 3 seeds and production (hard r131
+            splits: .33) and the weighted closed share.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
