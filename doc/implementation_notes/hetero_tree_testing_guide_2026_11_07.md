@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:00 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:11 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2619,6 +2619,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   reproducibility (hard: .22-.39), with an honest X2 read if the soft arm leads;
                 - qtoyflex at the node where closed leaves an open parent, against truth; the nulls must stay one leaf.
               - Bar is relative to the hard arm on the same nodes.
+              - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
+                - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
+                  point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG
+                  right-hand side and probe sum then carries the particle with weight w. The noise-variance estimate stays
+                  unweighted.
+                - Deviation from Bishop-Tipping: the E-step is tempered too (precision wA + I; the flex mixture's
+                  responsibilities flatten for low w), a power-likelihood weighting, more conservative than theirs.
+                - Validations: unset = weights 1 exactly; 1 / 0 weights reproduce the hard child's fit.
+                - r13 -> r131 weights, from production's r13 evidence: at epsilon .01 the soft child holds 74,665 of 80,775
+                  particles (44,334 hard members plus 30,331 others with weight sum 5,448: 12 % extra mass, median weight .14).
+                - Price ~115 core-h: r131 hard vs soft x3 seeds ~36, X2 ~12, qtoyflex ~60.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").
             - On RNase P, no: five readouts (hard XD labels .98-.99 vs soft; cores replicate as the split does; responsibilities
