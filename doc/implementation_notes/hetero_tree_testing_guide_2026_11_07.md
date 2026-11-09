@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:51 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:05 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2674,6 +2674,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   - Reported next to hard, soft, and the weight-1 control (which is running).
                   - Bar: about x1.4 and Jaccard >= .8 without weighting, which would make "seed from confident members" the
                     lever.
+                  - Implemented as a placement-rows switch in the fit's own k-center (`a86b61e20`, test branch, install4).
+                - USER (2026-11-09: "Could you try the textbook weighting in the meantime?"): the M-step-only weighting is
+                  built IN PARALLEL.
+                  - Weights go only in the M-step accumulations; the E-step posteriors stay untempered and the plane cache
+                    unweighted.
+                  - Validations repeated, plus a no-shrinkage check on a low-weight particle.
+                  - Then r131 and qtoyflex at 3 seeds each, with all five r131 versions read side by side. ~40 core-h more.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG
