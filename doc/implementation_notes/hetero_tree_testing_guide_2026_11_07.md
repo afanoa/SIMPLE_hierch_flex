@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:17 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1923,6 +1923,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
     considering the model itself how can we make it more robust").
     - Reliability test at r1, briefed: arms a / b at SIMPLE_SEED 3-6, 8 runs, ~225 core-h. HIT = a child at >= 1.5x r1's
       closed share. So far a 1 / 2, b 2 / 2.
+    - RELIABILITY VERDICT (12 runs): NEITHER IS RELIABLE.
+      - Arm a (noise off): 2 / 6 seeds. Arm b (noise on, the wip default): 4 / 6. Fisher p .57, so they are
+        indistinguishable.
+      - Production's r17d seed-1 run was a hit; its binary replayed at seed 1 was a miss.
+      - Arm b: every hit found 5 candidate sites with site 4 winning; both misses found only 3. Arm a: the winning site does
+        not decide it. A node trace over all 14 runs (job 55094636) will place the divergence.
+      - Upside: arm a seed 6 split 4-way, and its closed child (58,372 particles, 4,057 closed rows = 6.95 %, x3.59, recall
+        .465) matches what production reached only at r131. r1 can concentrate closed far more in one step when seeding
+        catches the right directions.
+      - Per the user's rule, single-site seeding is not replicable, so the redesign is required. The joint-seeding refined
+        test (thread 14) is that candidate.
     - Diagnosis: every split rests on hard, greedy, single-choice decisions taken from one noisy statistic:
       - the seed site (r1: 9.48 vs 9.47);
       - one site's poles as the seeds;

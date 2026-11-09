@@ -44,3 +44,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - 2026-11-08 user "Yes, run it": refined joint-seeding test (~120 core-h, f2r session, guide 7.10 thread 14).
   - Null-safe K: held-out gain above the 95th percentile of a Gaussian null with per-particle noise, plus the effect gate.
   - Stage A / B seeded from the joint groups at r1 (seeds 1-3), qtoy2, qtoyflex and the nulls, against single-site seeding.
+- RELIABILITY VERDICT (r1, 12 runs, hit = closed child >= 1.5x): noise off 2 / 6, noise on 4 / 6 (Fisher p .57). Neither is
+  reliable, so single-site seeding must be redesigned (user rule [[replicate-or-redesign-positives-only-2026-11-08]]).
+  - Upside: one seed split 4-way with a 58k child at 6.95 % closed (x3.59, recall .47), r131-level in one step.
+  - A trace over all 14 runs (55094636) places the divergence.

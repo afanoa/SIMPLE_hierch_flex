@@ -68,3 +68,5 @@ fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026
   this, revert the default to opt-in.
 - r13 replay: noise model x1.71 vs baseline x1.74 (r131's parent-mask variant: x1.36 / x1.36). r131's x1.00 does not repeat, so
   there is no stable closed-alignment effect either way. The default stays on pending r1.
+- r1 reliability (6 seeds each): noise on 4 / 6 closed-split hits vs noise off 2 / 6 (Fisher p .57): no significant reliability
+  gain. The default stays on; there's no evidence of harm.
