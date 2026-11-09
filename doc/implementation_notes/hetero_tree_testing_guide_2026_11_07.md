@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:43 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:51 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2668,6 +2668,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 - qtoyflex r1 -> r12: one leaf in all six runs (level). The weighted latent is worse for combo 18 (AUROC .645
                   vs .691). No honest X2 read: labels selected on full data.
                 - f2r's question: build M-step-only weights (about a day) and rerun (~36 core-h), or stop?
+                - USER DECISION (2026-11-09: "Test confident seeding"): the M-step-only build is held.
+                  - Test at r131: the ordinary hard child fit (unweighted), but stA0's flex states are placed only on members
+                    with R_{r131|r13} >= .9, and the rest are assigned to the nearest state. Seeds 1-3.
+                  - Reported next to hard, soft, and the weight-1 control (which is running).
+                  - Bar: about x1.4 and Jaccard >= .8 without weighting, which would make "seed from confident members" the
+                    lever.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG
