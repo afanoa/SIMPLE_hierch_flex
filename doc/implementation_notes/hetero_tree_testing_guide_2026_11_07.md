@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:25 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:27 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2211,6 +2211,26 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             (12,010) read 1.004 / .577 at recall .094: corner-level occupancy at 2.8x the recall.
           - r1: the contrast c rises with the threshold, +.107 (hard) -> +.285 (.9) -> +.335 (.95) -> +.423 (.99).
           - The halves agree to +- .004; resolution drops 6.3 -> 7.6 A (r13) and 5.7 -> 7.8 A (r1) as the sets shrink.
+        - CORE REPRODUCIBILITY (3 r13-subtree seeds plus production; settled pass, then an evidence pass; ~4 core-h):
+          - The settling pass works: the first cold pass moves 53-56 % of directions by one grid step, the second 3-4 %
+            (a fixed point).
+          - r13 level: the hard closed-leaning halves agree at Jaccard .91 across seeds (.83 against production).
+            - >= .9 cores: 18.8k at .117-.118 (x2.86), recall .25, Jaccard .88-.89. 16,858 particles are shared by all
+              four runs, at .1245 (x3.03).
+            - >= .99 cores: 5.8k at .16 (recall .108), Jaccard .86. 5,180 are shared, at .166 (x4.0).
+            - So the cores REPLICATE as well as the hard halves and are 1.6-2.2x purer at 72 % of the recall. The
+              shared >= .9 core (16.9k at 12.5 % closed) is about 1.8x purer than production's corner leaf (12k at
+              6.8 %).
+          - r131 level: hard halves Jaccard .25-.42 (mean .33); >= .9 cores .07-.21 (mean .13); only 158 particles shared
+            by all four runs. Each seed's r131 split is a different partition, and the cores inherit that.
+          - VERDICT: confidence selection adds PURITY, not reproducibility. Cores replicate exactly where the split
+            replicates.
+        - EMERGING DESIGN, to be confirmed at r1 and on the panel:
+          1. Joint seeding in the latent axes (reproducible seeds).
+          2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
+             r131's passes at z 13. This stops the descent at r131.
+          3. The deliverable at accepted nodes: confident cores, with responsibilities.
+          4. A settling pass for deterministic poses and labels.
         - IgM panel for joint seeding (site-chain), nulls A (per-particle noise) and B (bin-wise): K* 6 at every root that
           fires, the 5 % null included. The groups carry no arm (NMI 0), and the split test returns one group only through
           its effect floor. Joint seeding in the root latent gains nothing on IgM; the null-C (f2r null) runs are pending.

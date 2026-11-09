@@ -70,6 +70,7 @@
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
 - [wip-refine3d-redraws-poses-each-iteration-2026-11-08](wip-refine3d-redraws-poses-each-iteration-2026-11-08.md) — wip refine3D samples poses (72 % re-drawn per iteration), r17d settles; cross-build evidence pass invalid
+- [confident-cores-replicate-with-the-split-2026-11-09](confident-cores-replicate-with-the-split-2026-11-09.md) — cores Jaccard .88 at r13 (halves .91) but .13 at r131 (halves .33): selection adds purity, not reproducibility
 - [responsibility-selection-beats-hard-child-2026-11-09](responsibility-selection-beats-hard-child-2026-11-09.md) — confidence selection on production evidence: r13 >= .9 gives x2.47 at recall .295, beating the hard child and the next level
 - [wip-settling-pass-prob-beta-cold](wip-settling-pass-prob-beta-cold.md) — settle wip poses/labels with one maxits=1 prob_beta=1e9 stage-B iteration (n_eff 1.00); no code change
 - [production-tree-has-per-node-state-evidence-files](production-tree-has-per-node-state-evidence-files.md) — production nodes keep prob_state_evidence.txt: responsibilities sharp, closed AUROC above the hard labels

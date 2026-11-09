@@ -28,3 +28,14 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   - r1: contrast c rises with the threshold: hard child +.107, >= .9 +.285, >= .95 +.335, >= .99 +.423 (resolution 5.7 -> 7.8 A).
   - The confident cores are closed-enriched MAPS, consistent with the reference-row curve. Honest X2 read and cross-seed
     reproducibility are pending.
+- CORE REPRODUCIBILITY (3 r13-subtree seeds plus production):
+  - r13: the >= .9 cores replicate at Jaccard .88-.89 (the hard halves at .91). 16,858 particles are shared by all four runs at
+    12.5 % closed (x3.03), about 1.8x purer than production's corner leaf; >= .99 gives 5,180 shared at 16.6 %.
+  - r131: cores .07-.21 (the halves .25-.42); only 158 shared. The split is not reproducible, so neither are its cores.
+  - VERDICT: confidence adds purity, not reproducibility.
+  - Emerging design:
+    - joint seeding in the latent axes;
+    - accept a split only if it replicates across seeds or half-sets, which stops the descent at r131;
+    - confident cores with responsibilities as the deliverable;
+    - a settling pass.
+  - The settling pass reaches a fixed point after 2 cold passes (3-4 % of directions moving).
