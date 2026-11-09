@@ -44,7 +44,7 @@ real,     parameter :: LPD = 10.
 integer,  parameter :: S_QUEUED = 0, S_MEAN = 1, S_FLEX = 2, S_CHEAP = 3, S_FFLEX = 4, S_STA0 = 5, S_RECB0 = 6, S_SITE = 7, &
                      & S_SEEDS = 8, S_STAGEA = 9, S_RECB = 10, S_STAGEB = 11, S_SPLIT = 12, S_DONE = 13, S_FAILED = -1
 integer,  parameter :: S_SUBTREE = 14, SUB_NTHR = 48, S_SBATCH = 18
-integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000, S_SITESPLIT = 21
+integer,  parameter :: S_SDISC = 20, SDISC_MEM = 64000, S_SITESPLIT = 21, S_SITESPARSE = 22, SPARSE_NTHR = 32
 real(dp), parameter :: SLOW_FACT = 3._dp, SLOW_FIRST = 14400._dp
 character(len=6), parameter :: STEP_DIRS(S_SPLIT) = [character(len=6) :: 'mean', 'flex', 'cheap', 'fflex', 'stA0', &
                                                      & 'recB0', 'site', 'seeds', 'stageA', 'recB', 'stageB', 'split']
@@ -94,7 +94,7 @@ type :: hetero_tree
     character(len=:), allocatable :: subroot, ntab, ltab
     type(qsys_env) :: qsub
     type(cmdline), allocatable :: cl0
-    real(dp) :: srate(S_SITESPLIT) = 0._dp
+    real(dp) :: srate(S_SITESPARSE) = 0._dp
   contains
     procedure :: new
     procedure :: run
@@ -189,6 +189,7 @@ contains
             self%cl0 = cline
         endif
         if( params%site_states .eq. 'yes' .and. params%site_layer .ne. 'yes' ) THROW_HARD('site_states=yes needs site_layer=yes')
+        if( params%site_chain .eq. 'yes' .and. params%site_split .eq. 'yes' ) THROW_HARD('site_chain=yes and site_split=yes are exclusive')
         self%l_oneflex = params%oneflex .eq. 'yes'
         self%l_strong  = params%strongest_pole .eq. 'yes'
         self%l_twopole = params%two_poles .eq. 'yes'
@@ -852,7 +853,7 @@ contains
                     call write_ints(d//'/split/split_children.txt', merge(1, 0, st > 0))
                     call write_ints(d//'/split/split_junk.txt', [integer ::])
                     call self%decide(i)
-                    if( self%nodes(i)%step /= S_SITESPLIT ) self%nodes(i)%step = S_DONE
+                    if( all(self%nodes(i)%step /= [S_SITESPLIT, S_SITESPARSE]) ) self%nodes(i)%step = S_DONE
                     return
                 endif
                 fdif = variance_spread(d, st, pres, self%p%mskdiam)
@@ -870,9 +871,9 @@ contains
                 if( self%p%merge_insert_reuse == 'yes' ) call cl%set('merge_insert_reuse', 'yes')
                 call cl%set('nthr',        max(self%p%nthr, min(SITE_NTHR, ceiling(real(count(st > 0)) / real(PTCLS_PER_PART)))))
                 call self%submit(i, S_SPLIT, cl, count(st > 0))
-            case(S_SPLIT, S_SITESPLIT)
+            case(S_SPLIT, S_SITESPLIT, S_SITESPARSE)
                 call self%decide(i)
-                if( self%nodes(i)%step /= S_SITESPLIT ) self%nodes(i)%step = S_DONE
+                if( all(self%nodes(i)%step /= [S_SITESPLIT, S_SITESPARSE]) ) self%nodes(i)%step = S_DONE
         end select
 
     contains
@@ -1073,7 +1074,7 @@ contains
                 prev_step = merge(S_SDISC, S_FFLEX, self%p%site_disc .eq. 'yes')
             case(S_SDISC)
                 prev_step = S_RECB0
-            case(S_SITESPLIT)
+            case(S_SITESPLIT, S_SITESPARSE)
                 prev_step = S_SPLIT
             case(S_SBATCH)
                 prev_step = merge(S_SDISC, S_SITE, self%l_strong .or. &
@@ -2793,7 +2794,7 @@ contains
         integer, allocatable :: rows(:), lab(:), ch(:), junk(:), states(:), to(:), pop(:), mem(:)
         type(tnode), allocatable :: tmp(:)
         type(cmdline) :: cl
-        character(len=:), allocatable :: d, name, comp
+        character(len=:), allocatable :: d, name, comp, sparse
         logical :: l_split, l_sited
         integer :: s, g, ng, n, fg, big, j, nlive
         d      = self%ndir(i)
@@ -2838,15 +2839,26 @@ contains
             l_sited = .false.
             nlive   = count([(lab(j) > 0 .and. .not. any(junk == lab(j)), j=1,size(lab))])
             ! a node about to be filed as one leaf above the depth cap waits for the per-site split (site_split=yes)
-            if( ng == 1 .and. self%p%site_split .eq. 'yes' .and. self%nodes(i)%depth < self%p%maxdepth .and. &
-                &nlive >= 2 * self%p%minpop )then
-                if( self%nodes(i)%step /= S_SITESPLIT .and. .not. file_exists(string(d//'/xsplit/summary.txt')) )then
-                    call submit_site_split
-                    return
+            if( ng == 1 .and. (self%p%site_split .eq. 'yes' .or. (self%p%site_chain .eq. 'yes' .and. nlive <= SITE_NFIT)) .and. &
+                &self%nodes(i)%depth < self%p%maxdepth .and. nlive >= 2 * self%p%minpop )then
+                if( .not. file_exists(string(d//'/xsplit/summary.txt')) )then
+                    if( self%p%site_chain .eq. 'yes' )then
+                        sparse = lineage_sparse(self, i)
+                        if( len(sparse) == 0 .and. .not. file_exists(string(d//'/xsplit/sparse/'//STEP_EXIT)) )then
+                            call submit_sparse_sites
+                            return
+                        endif
+                        if( len(sparse) == 0 ) sparse = d//'/xsplit/sparse'
+                    endif
+                    if( self%nodes(i)%step /= S_SITESPLIT )then
+                        call submit_site_split
+                        return
+                    endif
                 endif
                 ! the worker has returned: the step goes back to the split's so the caller files the node once
                 self%nodes(i)%step = S_SPLIT
                 if( file_exists(string(d//'/xsplit/summary.txt')) )then
+                    if( self%p%site_chain .eq. 'yes' ) call chain_table
                     l_sited = site_children()
                 else
                     write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': the per-site split left no summary; filed as one leaf'
@@ -2896,18 +2908,56 @@ contains
         ! the per-site split worker on the node's stage-B project; its summary decides the leaf when it returns
         subroutine submit_site_split
             call simple_mkdir(string(d//'/xsplit'))
-            call simple_copy_file(string(d//'/stageB/b.simple'), string(d//'/xsplit/x.simple'))
             call cl%set('prg',      'site_split')
             call cl%set('projfile', 'x.simple')
-            call cl%set('dir',      d)
+            if( self%p%site_chain .eq. 'yes' )then
+                call write_states(d//'/'//NODE_PROJ, d//'/xsplit/x.simple', [(merge(1, 0, lab(j) > 0 .and. &
+                    &.not. any(junk == lab(j))), j=1,size(lab))])
+                call write_ints(d//'/xsplit/used_blocks.txt', path_blocks(self, i))
+                call cl%set('dir',        sparse)
+                call cl%set('site_chain', 'yes')
+                write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': its site blocks are '//sparse//'/sites'
+            else
+                call simple_copy_file(string(d//'/stageB/b.simple'), string(d//'/xsplit/x.simple'))
+                call cl%set('dir',        d)
+            endif
             call cl%set('mskdiam',  self%p%mskdiam)
             call cl%set('pgrp',     trim(self%p%pgrp))
             call cl%set('nthr',     max(self%p%nthr, min(SITE_NTHR, ceiling(real(nlive) / real(PTCLS_PER_PART)))))
-            call self%submit_in(d//'/xsplit', cl, nlive)
+            if( self%p%site_chain .eq. 'yes' )then
+                call self%submit_in(d//'/xsplit', cl, memmb=1000 + nint(0.14 * real(nlive)))
+            else
+                call self%submit_in(d//'/xsplit', cl, nlive)
+            endif
             self%nodes(i)%step = S_SITESPLIT
             write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': would be one leaf ('//int2str(nlive)//&
                 &' particles); the per-site split submitted'
         end subroutine submit_site_split
+
+        subroutine submit_sparse_sites
+            character(len=:), allocatable :: sd, vmean
+            integer :: bw
+            sd = d//'/xsplit/sparse'
+            call simple_mkdir(string(d//'/xsplit'))
+            call simple_mkdir(string(sd))
+            call write_states(d//'/'//NODE_PROJ, sd//'/f.simple', [(merge(1, 0, lab(j) > 0 .and. .not. any(junk == lab(j))), &
+                &j=1,size(lab))])
+            vmean = d//'/mean/recvol_state01.mrc'
+            if( file_exists(string(d//'/pmean.mrc')) ) vmean = d//'/pmean.mrc'
+            bw = min(self%box, max(26, 2 * nint(real(self%box) * self%smpd / LPF) + 4))
+            call cl%set('prg',          'flex_pca')
+            call cl%set('projfile',     'f.simple')
+            call cl%set('vol1',         vmean)
+            call cl%set('lp',           LPF)
+            call cl%set('mskdiam',      self%p%mskdiam)
+            call cl%set('pgrp',         trim(self%p%pgrp))
+            call cl%set('nthr',         SPARSE_NTHR)
+            call cl%set('sparse_sites', 'yes')
+            call self%submit_in(sd, cl, memmb=4000 + nint((real(bw) / 70.)**3 * (11150. + 0.06 * real(nlive))))
+            self%nodes(i)%step = S_SITESPARSE
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': would be one leaf ('//int2str(nlive)//&
+                &' particles); its sparse sites submitted (working box '//int2str(bw)//')'
+        end subroutine submit_sparse_sites
 
         ! a DISCRETE site (the lowest GAPw of several) splits the node into its two groups, both at least minpop
         logical function site_children()
@@ -2957,12 +3007,25 @@ contains
             endif
             write(logfhandle,'(A,F6.3,A,F5.1,A,F5.1,A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': site '//trim(best)//&
                 &' discrete (GAPw ', gbest, ', z1 ', zbest, ', lobes ', lbest, ' A apart)'
+            if( self%p%site_chain .eq. 'yes' ) call write_ints(d//'/xsplit/chosen_block.txt', [str2int(trim(best(2:)))])
             do gg = 1, 2
                 call add_child([(xl(j) == gg .and. .not. any(junk == lab(j)), j=1,size(lab))], 'site '//trim(best)//' group '//int2str(gg)//' ('//&
                     &int2str(count(xl == gg))//' particles)')
             end do
             site_children = .true.
         end function site_children
+
+        subroutine chain_table
+            character(len=:), allocatable :: fd
+            fd = self%root//'/factorial_chain/node_'//self%nodes(i)%id
+            if( .not. file_exists(string(d//'/xsplit/sparse/sites/sites.txt')) .or. file_exists(string(fd)) .or. &
+                &.not. file_exists(string(d//'/xsplit/factorial/sites.txt')) ) return
+            call simple_mkdir(string(self%root//'/factorial_chain'))
+            call simple_rename(string(d//'/xsplit/factorial'), string(fd))
+            if( local_rows(d) ) call simple_copy_file(string(d//'/rows.txt'), string(fd//'/rows.txt'))
+            write(logfhandle,'(A)') '>>> HETERO_TREE node '//self%nodes(i)%id//': its per-site table ('//&
+                &int2str(nlines(string(fd//'/sites.txt')))//' sites with a discrete block) is '//fd
+        end subroutine chain_table
 
     end subroutine decide
 
@@ -3639,6 +3702,49 @@ contains
         pd = pproj(1:index(pproj, '/', back=.true.)-1)
         pd = pd(1:index(pd, '/', back=.true.)-1)
     end function parent_dir
+
+    integer function parent_node( self, j )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: j
+        character(len=:), allocatable :: pd
+        integer :: m
+        pd = parent_dir(self%nodes(j)%pproj)
+        parent_node = 0
+        do m = 1, size(self%nodes)
+            if( m /= j .and. self%ndir(m) == pd ) parent_node = m
+        end do
+    end function parent_node
+
+    function lineage_sparse( self, i ) result( sd )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: i
+        character(len=:), allocatable :: sd
+        integer :: j
+        sd = ''
+        j  = i
+        do while( j > 0 )
+            if( file_exists(string(self%ndir(j)//'/xsplit/sparse/sites/sites.txt')) )then
+                sd = self%ndir(j)//'/xsplit/sparse'
+                return
+            endif
+            if( local_rows(self%ndir(i)) ) return
+            j = parent_node(self, j)
+        end do
+    end function lineage_sparse
+
+    function path_blocks( self, i ) result( used )
+        class(hetero_tree), intent(in) :: self
+        integer,            intent(in) :: i
+        integer, allocatable :: used(:)
+        integer :: j
+        allocate(used(0))
+        j = parent_node(self, i)
+        do while( j > 0 )
+            if( file_exists(string(self%ndir(j)//'/xsplit/chosen_block.txt')) ) &
+                &used = [used, read_ints(self%ndir(j)//'/xsplit/chosen_block.txt')]
+            j = parent_node(self, j)
+        end do
+    end function path_blocks
 
     subroutine cheap_children( self, i, child )
         class(hetero_tree),   intent(inout) :: self
@@ -5665,7 +5771,8 @@ contains
 
     logical function live_step( s )
         integer, intent(in) :: s
-        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_SBATCH .or. s == S_SDISC .or. s == S_SITESPLIT
+        live_step = (s >= S_MEAN .and. s <= S_SPLIT) .or. s == S_SBATCH .or. s == S_SDISC .or. s == S_SITESPLIT .or. &
+            &s == S_SITESPARSE
     end function live_step
 
     function step_label( s ) result( lb )
@@ -5680,6 +5787,8 @@ contains
                 lb = 'site discovery'
             case(S_SITESPLIT)
                 lb = 'site split'
+            case(S_SITESPARSE)
+                lb = 'sparse sites'
             case default
                 lb = 'step '//int2str(s)
         end select
@@ -5696,6 +5805,8 @@ contains
                 sd = self%ndir(i)//'/sites'
             case(S_SITESPLIT)
                 sd = self%ndir(i)//'/xsplit'
+            case(S_SITESPARSE)
+                sd = self%ndir(i)//'/xsplit/sparse'
             case(S_MEAN:S_RECB0, S_SEEDS:S_SPLIT)
                 sd = self%ndir(i)//'/'//trim(STEP_DIRS(s))
             case default

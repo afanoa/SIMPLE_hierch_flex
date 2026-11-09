@@ -86,6 +86,7 @@ contains
         call reg%add_yesno('site_states', self%site_states)
         call reg%add_yesno('depth_wiener', self%depth_wiener)
         call reg%add_yesno('site_split', self%site_split)
+        call reg%add_yesno('site_chain', self%site_chain)
         call reg%add_yesno('node_rows', self%node_rows)
         call reg%add_yesno('node_subset_io', self%node_subset_io)
         call reg%add_yesno('node_worker_pool', self%node_worker_pool)

@@ -370,12 +370,13 @@ contains
     !> the site split's cross-validated classification: per-half random starts, each half scored against the other
     !! half's site-masked references for niter iterations; labels over the node's rows (0 = in no half) and the
     !! groups' unmasked half maps from the final labels (k + 1: the groups, then every particle)
-    subroutine site_split_em( self, k, niter, seed, labels, ma, mb )
+    subroutine site_split_em( self, k, niter, seed, labels, ma, mb, start )
         use simple_rnd, only: seed_rnd_fixed, ran3
         class(state_mergeup), intent(inout) :: self
         integer,              intent(in)    :: k, niter, seed
         integer, allocatable, intent(out)   :: labels(:)
         complex, allocatable, intent(out)   :: ma(:,:,:,:), mb(:,:,:,:)
+        integer, optional,    intent(in)    :: start(:)
         complex, allocatable :: cons(:,:,:,:)
         integer, allocatable :: ia(:), ib(:), la(:), lb(:), starta(:), startb(:)
         real,    allocatable :: eps(:), wa(:,:), wb(:,:)
@@ -384,14 +385,20 @@ contains
         ib = pack([(ii, ii=1,self%n)], self%eo == 1)
         allocate(la(size(ia)), lb(size(ib)), source=1)
         call self%consensus(ia, ib, la, lb, 1, neq, eps, cons)
-        call seed_rnd_fixed(seed)
-        allocate(starta(size(ia)), startb(size(ib)))
-        do i = 1, size(ia)
-            starta(i) = min(k, 1 + int(ran3() * real(k)))
-        end do
-        do i = 1, size(ib)
-            startb(i) = min(k, 1 + int(ran3() * real(k)))
-        end do
+        if( present(start) )then
+            if( size(start) /= self%n ) THROW_HARD('one start label per particle of the node; site_split_em')
+            starta = start(ia)
+            startb = start(ib)
+        else
+            call seed_rnd_fixed(seed)
+            allocate(starta(size(ia)), startb(size(ib)))
+            do i = 1, size(ia)
+                starta(i) = min(k, 1 + int(ran3() * real(k)))
+            end do
+            do i = 1, size(ib)
+                startb(i) = min(k, 1 + int(ran3() * real(k)))
+            end do
+        endif
         call self%cross_em(ia, ib, starta, startb, k, eps, neq, la, lb, l_full=.true., niter=niter, l_site=.true.)
         allocate(wa(size(ia),k), wb(size(ib),k), source=0.)
         do i = 1, size(ia)

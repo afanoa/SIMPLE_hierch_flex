@@ -738,6 +738,14 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
         &GAPw when several) splits the node into two children that run the full pipeline, else the leaf is filed as &
         &before. The tree''s own splits, sites and seeds never change(yes|no){no}', '', &
         &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
+        call hetero_tree%add_input(UI_PARM, 'site_chain', 'binary', 'Sparse-site split of would-be leaves', &
+        &'A node the tree would file as one leaf above the depth cap, holding 2 x minpop to 100,000 particles, is first &
+        &tested per site block learned from its own data (flex_pca sparse_sites=yes): each block''s coordinates seed two &
+        &groups, one assignment round against the block-masked references at fixed poses refines them, and the GAPw call &
+        &tests them; a DISCRETE block (the lowest GAPw when several) splits the node into two children that run the full &
+        &pipeline, else the leaf is filed as before. The tree''s own splits, sites and seeds never change; exclusive with &
+        &site_split(yes|no){no}', '', &
+        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call hetero_tree%add_input(UI_PARM, 'kway_maxdepth', 'num', 'Depth of K-way seeding', &
         &'A node deeper than this seeds at most two states, the two ends of its seeding site''s pole (else its two largest &
         &seed states), and adds no site-pole states; -1 = every node, the root included; 99 = no limit{99}', 'depth{99}', &
@@ -882,6 +890,11 @@ call flex_pca%add_input(UI_FILT, 'min_state_frac', 'num', &
         call site_split%add_input(UI_PARM, 'box_crop', 'num', 'Working box (override)', &
         &'Fourier-cropped box of the classification; by default the smallest even box whose Nyquist reaches lp', 'pixels', &
         &.false., 0., visibility=UI_VIS_DEVELOPER, preserve_default=.true.)
+        call site_split%add_input(UI_PARM, 'site_chain', 'binary', 'Sparse-site blocks', &
+        &'Test the site blocks of flex_pca sparse_sites=yes under dir/sites instead of the sites and islands: per block, &
+        &the block''s support with a soft edge is the mask, a two-component Gaussian mixture on its coordinates seeds the &
+        &groups and one assignment round refines them before the GAPw call(yes|no){no}', '', &
+        &.false., 'no', visibility=UI_VIS_ADVANCED, choices=ui_choices([character(len=3) :: 'yes', 'no']))
         call site_split%add_input(UI_SRCH, pgrp, required_override=.false., group='search', visibility=UI_VIS_ADVANCED)
         call site_split%add_input(UI_MASK, mskdiam, group='mask', visibility=UI_VIS_STANDARD)
         call site_split%add_input(UI_COMP, nthr, group='compute', visibility=UI_VIS_STANDARD)

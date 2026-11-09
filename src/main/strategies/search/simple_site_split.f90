@@ -10,6 +10,10 @@ use simple_string,        only: string
 use simple_string_utils,  only: int2str
 use simple_fileio,        only: fopen, fclose, fileiochk, nlines
 use simple_syslib,        only: file_exists, simple_mkdir
+use simple_imghead,       only: find_ldim_nptcls, find_img_smpd
+use simple_rnd,           only: seed_rnd_fixed, ran3
+use simple_linalg,        only: matinv
+use simple_stat,          only: logsumexp
 use simple_parameters,    only: parameters
 use simple_builder,       only: builder
 use simple_cmdline,       only: cmdline
@@ -25,7 +29,9 @@ private
 
 integer, parameter :: KSPLIT = 2, NITER = 30, SEED0 = 1, LOBE_MIN = 4
 real,    parameter :: LPG = 15., TAU = 0.5, DIL_A = 10., B_A3 = 1330., GRID_A = 5.11, LSEP_MIN = 10., ANG_MAX = 30., Z1_MIN = 3., &
-    &R1_MIN = 0.5, GAP_THR = 0.28
+    &R1_MIN = 0.5, GAP_THR = 0.28, MDIL_A = 3., MSIG_A = 6.
+integer,  parameter :: NINIT = 5, NTRIAL = 2, KM_MAXIT = 300, GMM_MAXIT = 100
+real(dp), parameter :: KM_TOL = 1.d-4, GMM_TOL = 1.d-3, GMM_REG = 1.d-6
 
 type :: gap_stats
     real    :: z1 = 0., r1 = 0., lsep = 0., ang = 0., gapw = -1., gape = -1., gapo = -1.
@@ -45,15 +51,17 @@ contains
         type(sp_project)     :: spproj
         type(state_mergeup)  :: split
         type(string), allocatable :: masks(:), tags(:)
-        integer, allocatable :: labels(:), rows(:), out(:)
+        integer, allocatable :: labels(:), rows(:), out(:), seeds(:,:), bsite(:), bl(:,:)
         complex, allocatable :: ma(:,:,:,:), mb(:,:,:,:)
-        real,    allocatable :: e1(:,:,:), e2(:,:,:), o1(:,:,:), o2(:,:,:), sm(:,:,:)
+        real,    allocatable :: e1(:,:,:), e2(:,:,:), o1(:,:,:), o2(:,:,:), sm(:,:,:), hm(:,:,:,:,:)
+        type(gap_stats), allocatable :: sts(:)
         type(gap_stats) :: st
         type(image)     :: vol
         character(len=:), allocatable :: d, fl
         character(len=8) :: envv
         real    :: smpd, smpd_g
         integer :: box, bg, j, i, funit, ios, n1, n2
+        logical :: l_chain
         if( .not. cline%defined('mkdir') ) call cline%set('mkdir', 'yes')
         if( .not. cline%defined('hp')    ) call cline%set('hp',    40.)
         if( .not. cline%defined('lp')    ) call cline%set('lp',    12.)
@@ -70,7 +78,13 @@ contains
         call build%init_params_and_build_general_tbox(cline, params, do3d=.false.)
         call ensure_field_halves(build%spproj, params%oritype, params%projfile)
         d = params%dir%to_char()
-        call site_masks(d, masks, tags)
+        l_chain = params%site_chain .eq. 'yes'
+        if( l_chain )then
+            call chain_blocks(params, d, [(build%spproj_field%get_state(i) > 0, i=1,build%spproj_field%get_noris())], masks, &
+                &tags, seeds, bsite)
+        else
+            call site_masks(d, masks, tags)
+        endif
         ! the call's grid: the even box nearest GRID_A per voxel, where its constants were set
         bg     = 2 * nint(real(params%box) * params%smpd / GRID_A / 2.)
         smpd_g = real(params%box) * params%smpd / real(bg)
@@ -78,8 +92,10 @@ contains
         call fopen(funit, string('summary.txt'), status='replace', action='write', iostat=ios)
         call fileiochk('site_split: cannot write summary.txt', ios)
         write(funit,'(A)') '# site n1 n2 z1 r1 lsep_A axis_deg nB GAPw GAPw_even GAPw_odd call fails'
+        if( l_chain ) allocate(bl(build%spproj_field%get_noris(),size(masks)), hm(bg,bg,bg,4,size(masks)), sts(size(masks)))
         if( size(masks) == 0 )then
             write(logfhandle,'(A)') '>>> SITE_SPLIT no site mask under '//d//'/sites; nothing to test'
+            if( l_chain ) call write_factorial(tags, bsite, sts, bl, hm, smpd_g)
             call fclose(funit)
             call build%kill_general_tbox()
             return
@@ -92,7 +108,11 @@ contains
         do j = 1, size(masks)
             write(logfhandle,'(A)') '>>> SITE_SPLIT site '//tags(j)%to_char()//': '//masks(j)%to_char()
             call split%site_focus(masks(j))
-            call split%site_split_em(KSPLIT, NITER, SEED0, labels, ma, mb)
+            if( l_chain )then
+                call split%site_split_em(KSPLIT, 1, SEED0, labels, ma, mb, start=seeds(rows,j))
+            else
+                call split%site_split_em(KSPLIT, NITER, SEED0, labels, ma, mb)
+            endif
             n1 = count(labels == 1)
             n2 = count(labels == 2)
             call to_real(ma(:,:,:,1), params%box_crop, bg, smpd_g, e1)
@@ -107,7 +127,13 @@ contains
             allocate(out(build%spproj_field%get_noris()), source=0)
             out(rows) = labels
             call write_ints(tags(j)%to_char()//'/labels.txt', out)
+            if( l_chain )then
+                bl(:,j) = out
+                hm(:,:,:,:,j) = reshape([e1, o1, e2, o2], [bg, bg, bg, 4])
+                sts(j) = st
+            endif
             deallocate(out)
+            if( l_chain ) call write_ints(tags(j)%to_char()//'/seed.txt', seeds(:,j))
             call write_stats(tags(j)%to_char()//'/stats.txt', st, n1, n2)
             fl = '-'
             if( len_trim(st%fails) > 0 ) fl = trim(st%fails)
@@ -121,6 +147,7 @@ contains
             deallocate(labels, ma, mb, e1, e2, o1, o2, sm)
         end do
         call fclose(funit)
+        if( l_chain ) call write_factorial(tags, bsite, sts, bl, hm, smpd_g)
         call split%kill
         call build%kill_general_tbox()
     end subroutine run_site_split
@@ -156,6 +183,318 @@ contains
             end subroutine read_table
 
     end subroutine site_masks
+
+    subroutine chain_blocks( params, d, live, masks, tags, seeds, bsite )
+        class(parameters), intent(in) :: params
+        character(len=*),  intent(in) :: d
+        logical,           intent(in) :: live(:)
+        type(string), allocatable, intent(out) :: masks(:), tags(:)
+        integer,      allocatable, intent(out) :: seeds(:,:), bsite(:)
+        type(string), allocatable :: hdr(:)
+        integer,  allocatable :: blks(:), mblk(:), col(:), prow(:), jb(:), lab(:), labs(:), used(:)
+        real(dp), allocatable :: cv(:,:), z(:,:)
+        character(len=16384) :: line
+        real(dp) :: zm, zs, llbest, ll
+        integer  :: funit, ios, ib, b, nm, np, i, q, nvox, nrows, s
+        nrows = size(live)
+        allocate(masks(0), tags(0), seeds(nrows,0), bsite(0))
+        if( .not. file_exists(string(d//'/sites/blocks.txt')) )then
+            write(logfhandle,'(A)') '>>> SITE_SPLIT no site block under '//d//'/sites'
+            return
+        endif
+        blks  = first_column(d//'/sites/blocks.txt', 1)
+        bsite = first_column(d//'/sites/blocks.txt', 2)
+        mblk  = first_column(d//'/sites/modes.txt', 2)
+        if( file_exists(string('used_blocks.txt')) )then
+            used = first_column('used_blocks.txt', 1)
+            if( size(used) > 0 ) write(logfhandle,'(A,*(1X,I0))') '>>> SITE_SPLIT blocks already used on the path:', used
+            bsite = pack(bsite, [(.not. any(used == blks(i)), i=1,size(blks))])
+            blks  = pack(blks,  [(.not. any(used == blks(i)), i=1,size(blks))])
+        endif
+        call fopen(funit, string(d//'/sites/coords.txt'), status='old', action='read', iostat=ios)
+        call fileiochk('site_split: cannot read '//d//'/sites/coords.txt', ios)
+        read(funit,'(A)') line
+        hdr = words(line)
+        np  = nlines(string(d//'/sites/coords.txt'))
+        allocate(cv(np,size(hdr)-1))
+        do i = 1, np
+            read(funit,*) cv(i,:)
+        end do
+        call fclose(funit)
+        prow = nint(cv(:,1))
+        cv   = cv(pack([(i, i=1,np)], [(prow(i) >= 1 .and. prow(i) <= nrows, i=1,np)]),:)
+        prow = nint(cv(:,1))
+        cv   = cv(pack([(i, i=1,size(prow))], live(prow)),:)
+        prow = nint(cv(:,1))
+        np   = size(prow)
+        if( np < 2 * KSPLIT ) THROW_HARD('site_split: under '//int2str(2 * KSPLIT)//' particles of the node in '//d//'/sites/coords.txt')
+        allocate(col(size(mblk)), source=0)
+        do q = 1, size(mblk)
+            do i = 2, size(hdr)
+                if( hdr(i)%to_char() == 's'//int2str(q) ) col(q) = i - 1
+            end do
+            if( col(q) == 0 ) THROW_HARD('site_split: no column s'//int2str(q)//' in '//d//'/sites/coords.txt')
+        end do
+        deallocate(seeds)
+        allocate(seeds(nrows,size(blks)), source=0)
+        do ib = 1, size(blks)
+            b  = blks(ib)
+            jb = pack([(q, q=1,size(mblk))], mblk == b)
+            nm = size(jb)
+            z  = cv(:,col(jb))
+            do q = 1, nm
+                zm = sum(z(:,q)) / real(np,dp)
+                zs = sqrt(sum((z(:,q) - zm)**2) / real(np,dp))
+                z(:,q) = (z(:,q) - zm) / max(zs, 1.e-30_dp)
+            end do
+            allocate(lab(np), labs(np), source=0)
+            llbest = -huge(1._dp)
+            do s = 1, NINIT
+                call seed_rnd_fixed(SEED0 + s)
+                call tied_em(z, kmeans_labels(z), labs, ll)
+                if( ll > llbest )then
+                    llbest = ll
+                    lab    = labs
+                endif
+            end do
+            seeds(prow,ib) = lab
+            call block_mask(d//'/sites/block_'//pad2(b)//'_support.mrc', params%box, params%smpd, params%mskdiam / 2., &
+                &'b'//pad2(b)//'_mask.mrc', nvox)
+            masks = [masks, string('b'//pad2(b)//'_mask.mrc')]
+            tags  = [tags,  string('b'//int2str(b))]
+            write(logfhandle,'(A)') '>>> SITE_SPLIT block '//int2str(b)//': '//int2str(nm)//' modes, seed groups '//&
+                &int2str(count(lab == 1))//' / '//int2str(count(lab == 2))//', mask '//int2str(nvox)//' voxels above 0.5'
+            deallocate(lab, labs)
+        end do
+
+        contains
+
+            function first_column( fname, ic ) result( v )
+                character(len=*), intent(in) :: fname
+                integer,          intent(in) :: ic
+                integer, allocatable :: v(:)
+                integer :: fu, io, vals(ic)
+                allocate(v(0))
+                call fopen(fu, string(fname), status='old', action='read', iostat=io)
+                call fileiochk('site_split: cannot read '//fname, io)
+                do
+                    read(fu,'(A)',iostat=io) line
+                    if( io /= 0 ) exit
+                    if( len_trim(line) == 0 .or. line(1:1) == '#' ) cycle
+                    read(line,*,iostat=io) vals
+                    if( io /= 0 ) cycle
+                    v = [v, vals(ic)]
+                end do
+                call fclose(fu)
+            end function first_column
+
+            function words( str ) result( w )
+                character(len=*), intent(in) :: str
+                type(string), allocatable :: w(:)
+                integer :: k0, k
+                allocate(w(0))
+                k0 = 0
+                do k = 1, len_trim(str) + 1
+                    if( k > len_trim(str) .or. str(k:k) == ' ' )then
+                        if( k0 > 0 ) w = [w, string(str(k0:k-1))]
+                        k0 = 0
+                    else if( k0 == 0 )then
+                        k0 = k
+                    endif
+                end do
+            end function words
+
+    end subroutine chain_blocks
+
+    function kmeans_labels( x ) result( kl )
+        real(dp), intent(in) :: x(:,:)
+        integer,  allocatable :: kl(:)
+        real(dp), allocatable :: c(:,:), cn(:,:), d2(:), dt(:)
+        real(dp) :: pot, best, u, acc, tolk
+        integer  :: n, nd, t, k, p, it, kk
+        n  = size(x,1)
+        nd = size(x,2)
+        allocate(c(nd,KSPLIT), cn(nd,KSPLIT), kl(n))
+        c(:,1) = x(min(n, 1 + int(ran3() * real(n))),:)
+        d2   = sum((x - spread(c(:,1), 1, n))**2, dim=2)
+        best = huge(1._dp)
+        do t = 1, NTRIAL
+            u   = real(ran3(), dp) * sum(d2)
+            acc = 0._dp
+            p   = n
+            do k = 1, n
+                acc = acc + d2(k)
+                if( acc >= u )then
+                    p = k
+                    exit
+                endif
+            end do
+            dt  = min(d2, sum((x - spread(x(p,:), 1, n))**2, dim=2))
+            pot = sum(dt)
+            if( pot < best )then
+                best   = pot
+                c(:,2) = x(p,:)
+            endif
+        end do
+        tolk = KM_TOL * sum([(sum((x(:,k) - sum(x(:,k)) / real(n,dp))**2) / real(n,dp), k=1,nd)]) / real(nd,dp)
+        do it = 1, KM_MAXIT
+            call assign_nearest
+            do kk = 1, KSPLIT
+                cn(:,kk) = c(:,kk)
+                if( count(kl == kk) > 0 ) cn(:,kk) = [(sum(x(:,k), mask=kl == kk), k=1,nd)] / real(count(kl == kk),dp)
+            end do
+            acc = sum((cn - c)**2)
+            c   = cn
+            if( acc <= tolk ) exit
+        end do
+        call assign_nearest
+
+        contains
+
+            subroutine assign_nearest
+                real(dp) :: e1, e2
+                integer  :: ii
+                do ii = 1, n
+                    e1 = sum((x(ii,:) - c(:,1))**2)
+                    e2 = sum((x(ii,:) - c(:,2))**2)
+                    kl(ii) = merge(1, 2, e1 <= e2)
+                end do
+            end subroutine assign_nearest
+
+    end function kmeans_labels
+
+    subroutine tied_em( x, kl, lb, llo )
+        real(dp), intent(in)  :: x(:,:)
+        integer,  intent(in)  :: kl(:)
+        integer,  intent(out) :: lb(:)
+        real(dp), intent(out) :: llo
+        real(dp), allocatable :: r(:,:), mu(:,:), sg(:,:), si(:,:), ch(:,:)
+        real(dp) :: nk(KSPLIT), lp(KSPLIT), ldet, llc, prev
+        integer  :: n, nd, it, ii, kk, ef
+        n  = size(x,1)
+        nd = size(x,2)
+        allocate(r(n,KSPLIT), source=0._dp)
+        allocate(si(nd,nd))
+        do ii = 1, n
+            r(ii,kl(ii)) = 1._dp
+        end do
+        call mstep
+        prev = -huge(1._dp)
+        llc  = prev
+        do it = 1, GMM_MAXIT
+            call estep
+            call mstep
+            if( abs(llc - prev) < GMM_TOL ) exit
+            prev = llc
+        end do
+        llo = llc
+        call estep
+        lb = maxloc(r, dim=2)
+
+        contains
+
+            subroutine mstep
+                nk = sum(r, dim=1) + 10._dp * epsilon(1._dp)
+                mu = matmul(transpose(r), x) / spread(nk, 2, nd)
+                sg = (matmul(transpose(x), x) - matmul(transpose(mu * spread(nk, 2, nd)), mu)) / sum(nk)
+                do kk = 1, nd
+                    sg(kk,kk) = sg(kk,kk) + GMM_REG
+                end do
+            end subroutine mstep
+
+            subroutine estep
+                call matinv(sg, si, nd, ef)
+                ch = sg
+                call dpotrf('U', nd, ch, nd, ef)
+                ldet = 2._dp * sum([(log(ch(kk,kk)), kk=1,nd)])
+                llc  = 0._dp
+                do ii = 1, n
+                    do kk = 1, KSPLIT
+                        lp(kk) = -0.5_dp * dot_product(x(ii,:) - mu(kk,:), matmul(si, x(ii,:) - mu(kk,:))) - 0.5_dp * ldet - &
+                            &0.5_dp * real(nd,dp) * log(2._dp * real(PI,dp)) + log(nk(kk) / real(n,dp))
+                    end do
+                    llc = llc + logsumexp(lp, r(ii,:))
+                end do
+                llc = llc / real(n,dp)
+            end subroutine estep
+
+    end subroutine tied_em
+
+    subroutine block_mask( fsup, box, smpd, rad, fout, nvox )
+        character(len=*), intent(in)  :: fsup, fout
+        integer,          intent(in)  :: box
+        real,             intent(in)  :: smpd, rad
+        integer,          intent(out) :: nvox
+        type(image) :: img
+        real,    allocatable :: sup(:,:,:), m(:,:,:)
+        logical, allocatable :: core(:,:,:)
+        real    :: sw, x(3), f(3)
+        integer :: ldim(3), ifoo, nw, i, j, k, i0(3)
+        call find_ldim_nptcls(string(fsup), ldim, ifoo)
+        sw = find_img_smpd(string(fsup))
+        call img%new(ldim, sw)
+        call img%read(string(fsup))
+        sup = merge(1., 0., img%get_rmat() > 0.)
+        call img%kill
+        nw = ldim(1)
+        allocate(core(box,box,box))
+        do k = 1, box
+            do j = 1, box
+                do i = 1, box
+                    x  = real([i, j, k] - 1 - box/2) * smpd / sw + real(nw/2)
+                    i0 = floor(x)
+                    f  = x - real(i0)
+                    core(i,j,k) = trilinear(i0, f) >= 0.5
+                end do
+            end do
+        end do
+        m = dist_a(core)
+        m = dist_a(m <= MDIL_A)
+        m = exp(-m**2 / (2. * MSIG_A**2))
+        do k = 1, box
+            do j = 1, box
+                do i = 1, box
+                    if( norm2(real([i, j, k] - 1 - box/2)) * smpd > rad ) m(i,j,k) = 0.
+                end do
+            end do
+        end do
+        call img%new([box,box,box], smpd)
+        call img%set_rmat(m, .false.)
+        call img%write(string(fout))
+        call img%kill
+        nvox = count(m > 0.5)
+
+        contains
+
+            real function trilinear( p0, w )
+                integer, intent(in) :: p0(3)
+                real,    intent(in) :: w(3)
+                integer :: a, bb, c, p(3)
+                trilinear = 0.
+                do c = 0, 1
+                    do bb = 0, 1
+                        do a = 0, 1
+                            p = p0 + [a, bb, c]
+                            if( any(p < 0) .or. any(p > nw - 1) ) cycle
+                            trilinear = trilinear + merge(w(1), 1. - w(1), a == 1) * merge(w(2), 1. - w(2), bb == 1) * &
+                                &merge(w(3), 1. - w(3), c == 1) * sup(p(1)+1, p(2)+1, p(3)+1)
+                        end do
+                    end do
+                end do
+            end function trilinear
+
+            function dist_a( mk ) result( dd )
+                logical, intent(in) :: mk(:,:,:)
+                real, allocatable :: dd(:,:,:)
+                type(image) :: dv
+                call dv%new([box,box,box], smpd)
+                call dv%set_rmat(merge(0., 1., mk), .false.)
+                call dv%distance_transform
+                dd = dv%get_rmat()
+                call dv%kill
+            end function dist_a
+
+    end subroutine block_mask
 
     function pad2( i ) result( str )
         integer, intent(in) :: i
@@ -234,6 +573,63 @@ contains
         write(funit,'(A)')      'fails='//trim(st%fails)
         call fclose(funit)
     end subroutine write_stats
+
+    !> chain mode: per site its DISCRETE block of lowest GAPw; labels, the call-grid half maps and their averages in factorial/
+    subroutine write_factorial( tags, bsite, sts, bl, hm, smpd )
+        type(string),    intent(in) :: tags(:)
+        integer,         intent(in) :: bsite(:), bl(:,:)
+        type(gap_stats), intent(in) :: sts(:)
+        real,            intent(in) :: hm(:,:,:,:,:), smpd
+        integer, allocatable :: pick(:)
+        character(len=:), allocatable :: sn
+        integer :: s, k, g, funit, ios, i
+        allocate(pick(0))
+        do s = 1, maxval([0, bsite])
+            k = minloc(sts%gapw, dim=1, mask=bsite == s .and. sts%call == 'DISCRETE')
+            if( k > 0 ) pick = [pick, k]
+        end do
+        call simple_mkdir('factorial')
+        call simple_mkdir('factorial/labels')
+        call simple_mkdir('factorial/maps')
+        call simple_mkdir('factorial/maps/halves')
+        call fopen(funit, string('factorial/sites.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_split: cannot write factorial/sites.txt', ios)
+        write(funit,'(A)') '# site block GAPw z1 lsep_A n1 n2 (per site its DISCRETE block of lowest GAPw)'
+        do k = 1, size(pick)
+            write(funit,'(I0,1X,A,3(1X,F7.3),2(1X,I0))') bsite(pick(k)), tags(pick(k))%to_char(), sts(pick(k))%gapw, &
+                &sts(pick(k))%z1, sts(pick(k))%lsep, count(bl(:,pick(k)) == 1), count(bl(:,pick(k)) == 2)
+            sn = 's'//pad2(bsite(pick(k)))
+            call write_ints('factorial/labels/'//sn//'.txt', bl(:,pick(k)))
+            do g = 1, 2
+                call write_vol(hm(:,:,:,2*g-1,pick(k)), smpd, 'factorial/maps/halves/'//sn//'_g'//int2str(g)//'_even.mrc')
+                call write_vol(hm(:,:,:,2*g,pick(k)),   smpd, 'factorial/maps/halves/'//sn//'_g'//int2str(g)//'_odd.mrc')
+                call write_vol(0.5 * (hm(:,:,:,2*g-1,pick(k)) + hm(:,:,:,2*g,pick(k))), smpd, &
+                    &'factorial/maps/'//sn//'_g'//int2str(g)//'.mrc')
+            end do
+        end do
+        call fclose(funit)
+        call fopen(funit, string('factorial/table.txt'), status='replace', action='write', iostat=ios)
+        call fileiochk('site_split: cannot write factorial/table.txt', ios)
+        write(funit,'(A,*(A))') '# one line per particle of the project, its group at each site (0 outside the node):', &
+            &(' s'//int2str(bsite(pick(k))), k=1,size(pick))
+        if( size(pick) > 0 )then
+            do i = 1, size(bl,1)
+                write(funit,'(*(I0,:,1X))') bl(i,pick)
+            end do
+        endif
+        call fclose(funit)
+        write(logfhandle,'(A,I0,A)') '>>> SITE_SPLIT per-site table: ', size(pick), ' sites with a DISCRETE block, in factorial/'
+    end subroutine write_factorial
+
+    subroutine write_vol( r, smpd, fname )
+        real,             intent(in) :: r(:,:,:), smpd
+        character(len=*), intent(in) :: fname
+        type(image) :: img
+        call img%new(shape(r), smpd)
+        call img%set_rmat(r, .false.)
+        call img%write(string(fname))
+        call img%kill
+    end subroutine write_vol
 
     ! ------------------------------------------------------------------ the GAPw call
 
