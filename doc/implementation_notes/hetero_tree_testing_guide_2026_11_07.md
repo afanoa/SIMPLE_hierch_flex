@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:36 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2598,6 +2598,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - FIXTURE TEST (user: "Yes, test datasets"; f2r, <= 150 core-h): qtoyflex, qtoy2, IgM 5 % and 10 % fix, and one
               null, at 2-3 seeds with the evidence-writer build. Readouts: sharpness; truth recovery (hard leaves, arg-max path
               weight, soft expected recall); cut losses (uncertain or confident); seed reproducibility, hard vs path.
+            - INTERIM, qtoy2 (ten r17d-era recipe-variant trees with evidence at every node; `$H/handoff/node-levers/
+              SOFT_CARRY_FIXTURES.md`): soft carrying beats hard on NOTHING.
+              - Sharpness: the root median is 1.000. The nodes holding overlapping states have medians .83-.89 with 20-26 %
+                below .7, softer than RNase P's .86-.92. qtoynull: .83, with 68 % below .9.
+              - Truth: NMI hard vs arg-max path is identical to +-.001 on all ten trees; the arg-max leaf differs for 0-.9 %
+                of particles. The expected soft recall is BELOW hard on every tree and state (-.3 to -1.2 %, worst -.025).
+              - Cut losses are confident: confident leavers outnumber uncertain ones about 2 : 1. The big losses are at the
+                root (combo 43 loses 46 %, 85 % of them confident at median R .01). A carry would keep .08-.22 of the leavers'
+                mass.
+              - Reproducibility: ARI hard = ARI arg-max path to +-.001 (.55-.86); path-weight vectors correlate .76-.94.
+              - Structural point: a hard tree evaluates a particle only along its own path, so the path arg-max can differ
+                from the hard leaf only where a node's marginal arg-max differs from its assignment.
+              - qtoyflex (3 seeds) and qtoynull are refining (~3 h). IgM stays unrun.
           - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
             the same binary.
             - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves

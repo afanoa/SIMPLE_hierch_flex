@@ -71,3 +71,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - 2026-11-09 SYNTHESIS for the user: on RNase P soft vs hard doesn't change reproducibility. Runs land in different splits at
   the top, and the variation below r13 is continuous. RNase P is the target, not a test bed: sharp responsibilities, weak
   minority, no truth. Fixture test of soft vs hard (qtoyflex, qtoy2, IgM 5 / 10 %) briefed to f2r (<= 150 core-h).
+- SOFT CARRY ON FIXTURES, interim (qtoy2, ten trees with evidence): beats hard on nothing even where nodes are softer than
+  RNase P (medians .83-.89). NMI is identical; the expected soft recall is .3-1.2 % below hard; cut losses are confident (2 : 1,
+  biggest at the root); carry keeps .08-.22 of the leavers' mass; ARI identical. qtoyflex x3 pending.
