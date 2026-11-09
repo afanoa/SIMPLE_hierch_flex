@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:05 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:13 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2681,6 +2681,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     unweighted.
                   - Validations repeated, plus a no-shrinkage check on a low-weight particle.
                   - Then r131 and qtoyflex at 3 seeds each, with all five r131 versions read side by side. ~40 core-h more.
+                - WEIGHT-1 CONTROL (members at 1, extras soft; ~15 core-h): keeps all 8 flex states and still concentrates.
+                  - x1.34 / x1.27 / x1.34 (recall .24); seeds 1 and 3 agree (ARI .72, closed child Jaccard .8), seed 2 differs
+                    (ARI .04). Latent AUROC .709.
+                  - So the 4-vs-8 state count is NOT the cause. The extras' 30k spike at the origin (median |z| .74-.85 vs
+                    19.8) and their .14-weight share of the basis and mean move the placement and the split.
+                  - No site gives a split in any arm: every arm seeds stage A from the two groups of its fflex states.
+                - Confident seeding is implemented in the fit's own diffusion k-center (`SIMPLE_FLEX_PLACE_ROWS`, `a86b61e20` +
+                  `94da4bbbb`, default off). A Python re-placement matched the fit's own partition at ARI .11 only, so it would
+                  have confounded the test. Targets on the 25,344 members at R >= .9; install4.
+                - Textbook weighting: the M-step sites are mapped and the implementation is under way (install5).
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG
