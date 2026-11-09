@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:03 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:10 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2361,6 +2361,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             at r1 (settle + evidence passes on the test install);
           - extremes-repro: an honest X2 read of a confident core from r131's stage B on X1, against same-size random bars;
           - the kept sets' own-data maps are running.
+        - R131 HONEST CORE READ (extremes-repro, `$H/handoff/extremes/CORE.md`, 24.8 core-h). Stage B on X1 with the
+          evidence writer (seed 2; argmax = hard label on .975); every group rebuilt from X2:
+          - hard closed-leaning state: 23,422 at .084 (x1.22), c +.247, z 3.7 / 3.1 (subsets / tails);
+          - core >= .9: 8,553 at .096 (x1.39), c +.266, z 2.6 / 2.0;
+          - core >= .95: 5,212 at .100 (x1.44), c +.325, z 3.4 / 2.6.
+          - All clear their bars, but the cores are no more significant than the hard state (the null widens as the group
+            shrinks) and lose most of the recall. Responsibilities buy little at r131 (x1.39 vs x2.47 at r13).
+          - The hard state's excess c (+.039 over the null) is ~13x what its closed rows predict: the split follows closed-arm
+            density beyond the reference rows. The own X1 maps read 1.04-1.07 (X2 .87-.88): selection imprint.
+        - PATH-WEIGHT CORE READ (f2r, user-approved 2026-11-09, zero compute): cores ranked by the Bishop-Tipping path
+          product of stage-B responsibilities vs the one-level responsibility, at matched sizes along the closed lineages.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

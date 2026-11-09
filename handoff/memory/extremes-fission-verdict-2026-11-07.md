@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: cc23038c-fea9-4b5f-b321-d58eb2942350
-  modified: 2026-11-08T22:39:40.077Z
+  modified: 2026-11-09T05:07:54.849Z
 ---
 
 extremes-repro session (user asked "Run it": can the latent cut out extremes that reproduce?). Write-up
@@ -74,3 +74,9 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
     flex weights at that strength just freeze the partition. IgM guard: the a1 tail grows at .97 purity, random groups shrink.
   - RULE: at r131 a group's honest contrast follows its membership; pose refinement or damped re-assignment on a fixed group
     does no better than random groups of its size.
+- 2026-11-09 confident core at r131 (`handoff/extremes/CORE.md`, 25 core-h):
+  - Setup: stage B rerun on X1 with `node_levers/install2` (SIMPLE_STATE_EVIDENCE=yes) from the pp_off s2 gate tree's inputs.
+  - Hard closed-leaning state: 23.4k at x1.22, honest c +.247 (z 3.1-3.7 vs matched-N bars).
+  - Cores >= .9 / >= .95: 8.6k / 5.2k at x1.39 / x1.44, c +.266 / +.325, z 2.0-3.4. All clear their bars, cores no more
+    significantly (the null's sd grows as N shrinks); recall .64 -> .27 / .17. r131 gains little from responsibilities
+    (r13's >= .9 core reached x2.47).

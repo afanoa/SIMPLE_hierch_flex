@@ -52,3 +52,7 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - Bishop-Tipping carry (2026-11-09): the path weight (product of node responsibilities) is the ranking for cores.
   - The r13 -> r131 soft-refit prototype was withdrawn: the hard cut keeps 93 % of r13's closed rows (.380 -> .353), and a
     frozen-pose XD at r131 gives one component under the noise model. The closed loss is at r131's own split (.353 -> .209).
+- R131 HONEST X2 READ (extremes-repro, `handoff/extremes/CORE.md`): hard state x1.22 c +.247 z 3.7; core >= .9 x1.39 c +.266
+  z 2.6; >= .95 x1.44 c +.325 z 3.4. All clear their bars, none more significant than the hard state, and recall is lost.
+  Responsibilities buy little at r131 (x1.39 vs x2.47 at r13); own X1 maps read 1.04-1.07 vs X2 .87-.88 (imprint).
+- Path-weight cores (Bishop-Tipping product) vs one-level cores: zero-compute read briefed to f2r (user-approved 2026-11-09).
