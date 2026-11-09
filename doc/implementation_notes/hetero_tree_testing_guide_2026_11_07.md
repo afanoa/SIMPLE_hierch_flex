@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:49 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2279,6 +2279,10 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
           - XD K reproduces within each arm: noise model off gives K = 3 at every replicate, noise model on K = 4. K is set
             by the flex noise model, not by the seed.
+          - XD at r1 (a-arm, 6 seeds) is IDENTICAL across runs: pi .321 / .432-.433 / .246-.247; MAP group sizes agree within
+            0.3 % (71.7k / 128.8k / 52.0k); the mm2 and r17d runs match seed 1 exactly. The hard splits of the same runs
+            agree at only ARI .29-.74. This confirms the user's thesis: the population-level solution reproduces where hard
+            partitions don't. Per-component closed share is pending in the readout.
         - Carrying the PDF instead of hard assignments (user, 2026-11-09). Status:
           - Read out, informative, reproducible within a basin. Weighting maps dilutes; selecting confident cores purifies.
           - Carrying responsibilities DOWN the tree is untested. Proposed cheap form: gated children. Confident particles go

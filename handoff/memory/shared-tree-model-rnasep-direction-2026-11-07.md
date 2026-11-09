@@ -153,3 +153,8 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
 - Soft vs hard maps at production r13 (2026-11-09): responsibility weighting DILUTES (closed-arm contrast .457 -> .406, -11 %,
   half maps +- .004) while resolution improves. Use responsibilities to rank and select particles, not to weight maps. Next: a
   confidence-threshold selection curve.
+- 2026-11-09 XD reproducibility (tree-latent, the user's population-level thesis): at r1 the deterministic XD on the flex latent
+  is IDENTICAL across 6 seeds and 3 builds (pi within .001; MAP sizes within 0.3 %), while the same runs' hard splits agree at
+  ARI .29-.74.
+  - Caveat: a Gaussian-null K splits continuous-heterogeneity nulls too (micnull, IgM null twin), so K needs a discreteness
+    test.
