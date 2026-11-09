@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2581,6 +2581,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Proposed (zero compute): evidence accumulation over the 7 existing root runs (plus production), using label
               tuples. Read each consensus cluster's closed share and recall, the consensus partition's leave-one-run-out
               stability, and the same on null replicates.
+            - APPROVED (user: "Yes, run it"; rnasep-misfit): co-association over the 8 root partitions via 8-tuples of labels;
+              average linkage, cut at the 0.5 majority and at the Fred-Jain lifetime.
+              - Readouts: each cluster's closed share, recall and concentration; leave-one-run-out stability; and the
+                decisive 4-vs-4 test (all 35 splits into disjoint halves).
+              - Null floor: independently permuted labels at the same group sizes.
+              - Bar: the halves' consensus closed clusters agree at Jaccard >= .5 at >= x3, well above the permutation floor.
             - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").
