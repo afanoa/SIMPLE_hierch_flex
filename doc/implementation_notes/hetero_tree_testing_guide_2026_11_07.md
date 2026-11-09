@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:01 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:03 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2042,6 +2042,27 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         closed child, unless the latent mixture forms that group itself. Part 2 (a joint mixture on z1 / z3) answers this.
       - OLE's October outputs are gone from scratch (only recipe4, recipe9, site_states and tools_backup remain). Tracing
         OLE needs a rerun.
+    - JOINT-SEEDING PROTOTYPE, part 2 (~10 core-h; Python + fixed-pose maps + the tree's split test):
+      - r1, seed 1 (the miss seed): a Gaussian mixture in the latent axes the tied sites' poles use (z1, z3), with K by
+        cross-half held-out likelihood (it reaches the cap, 6), holds a closed-enriched group: 53,559 at x1.66 / recall
+        .198, plus 15,832 at x1.56.
+        - After fixed-pose maps the tree's split test keeps 4 distinct children, one of 105,642 at x1.69 / recall .396.
+          Single-site seeding at this seed gave 2 children at x1.10.
+        - These are unrefined seed partitions; production's x2.12 and the hits' x1.90-2.00 are refined states.
+        - Seed 2 gives near-identical groups (x1.67 / .200 and x1.55): REPRODUCIBLE across seeds.
+      - The two sites' per-particle endpoint posteriors (8 dims) are the wrong coordinate: only a 5,990 hit, and K* 1.
+      - No single-site seed group in any run is closed-enriched (x0.8-1.25). The hits' enrichment forms in stage A / B
+        from the small z3hi pole.
+      - qtoy2 root (truth: 8 conformers + junk):
+        - the tree's split gives 5 children (NMI .756) with 4 / 8 conformers at purity >= .5;
+        - the joint mixture gives 6 distinct children with 6 different majority conformers, 4 at purity >= .5. That
+          includes closed conformer 18, which the tree's split merges, but holo 101 is lost at seed level.
+      - qtoyflex root: both routes isolate holo and nothing else.
+      - NOT NULL-SAFE: on qtoynull the held-out likelihood prefers K 2 by .003 nats per particle, and the two groups pass
+        the split test (z 4.97, effect .005 against .003). K needs a null-calibrated floor (the held-out gain of a shuffled
+        or Gaussian null) or the tree's RHOMIN-type effect gate.
+      - Read: joint seeding in the latent axes fixes r1's coin flip reproducibly and adds distinct states (r1 4 vs 2, qtoy2
+        6 vs 5 conformers). It needs a null-safe K and has to be shown through refinement.
     - User (2026-11-08): "you can [get] probability distributions out of the refinement. so basically you can just refine
       the pdf and get responsibilities out."
       - The probabilistic search already holds each particle's distribution over (state, direction); master's `cac010e40` even

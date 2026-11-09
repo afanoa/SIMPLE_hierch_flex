@@ -31,3 +31,13 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   - Refinement's switching is reproducible given the seeds, and it is HOW r1's closed state forms.
   - Never remove refinement's re-assignment at a node unless the latent mixture forms the group itself.
   - OLE's October outputs are gone, so tracing OLE needs a rerun.
+- JOINT-SEEDING PROTOTYPE (part 2): a Gaussian mixture in the latent axes the tied sites use (z1, z3), with K by cross-half
+  held-out likelihood.
+  - r1 miss seed: holds a closed-enriched group (x1.66, recall .20), reproducible at seed 2 (x1.67). After fixed-pose maps,
+    the split test keeps 4 distinct children (one 106k at x1.69, recall .40); single-site seeding gave 2 at x1.10.
+  - qtoy2 root: 6 distinct conformers against the tree's 5 children (it recovers closed conformer 18, which the tree merged;
+    loses holo 101 at seed level).
+  - The site endpoint posteriors are the wrong coordinate; the latent axes are the right one.
+  - TRAP: not null-safe. On qtoynull, K 2 wins by .003 nats per particle and passes the split test (z 4.97). K needs a
+    null-calibrated floor or an effect-size gate.
+  - Next: a null-safe K, then refinement (stage A / B) seeded from the joint groups, across seeds plus qtoy2 and the nulls.
