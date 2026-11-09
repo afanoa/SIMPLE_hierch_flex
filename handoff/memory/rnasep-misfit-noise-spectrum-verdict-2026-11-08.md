@@ -66,3 +66,5 @@ fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026
 - CAUTION 2026-11-08 ~20:30: in the r131 node replay (production's eight-state mask), the noise model sharpens the node latent
   (.698 -> .713), but the split no longer follows closed: concentration x1.00 against the baseline's x1.25. If r13 / r1 repeat
   this, revert the default to opt-in.
+- r13 replay: noise model x1.71 vs baseline x1.74 (r131's parent-mask variant: x1.36 / x1.36). r131's x1.00 does not repeat, so
+  there is no stable closed-alignment effect either way. The default stays on pending r1.

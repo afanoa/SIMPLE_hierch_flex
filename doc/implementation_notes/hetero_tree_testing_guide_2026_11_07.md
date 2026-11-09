@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:47 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:53 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1875,6 +1875,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         iteration 1, so one leaf. It is not the lever.
       - FLAG: the noise model is default-on on wip since this afternoon. If r13 / r1 also lose closed alignment, revert it
         to opt-in.
+    - r13 RESULT (closed share .0411):
+      - production .718, x1.69 / recall .353, z 17.2;
+      - baseline .722, x1.74 / .355, z 27.4;
+      - noise model .732, x1.71 / .354, z 27.9;
+      - class prior: one leaf (29 particles left; 22 with both levers).
+      - The noise model does NOT repeat r131's loss here. In r131's parent-mask variant the arms were also equal (x1.36 /
+        x1.36). So the noise model shows no stable effect on closed alignment, either way, and the default stays pending r1.
+      - The MAP class prior removes the split at both nodes: the seed minority is charged log(pi_min / pi_max) (3.6 nats at
+        r131) from the first iteration. A floored or tempered prior is not run: a 1/K floor is no prior for K = 2, and the
+        EM-prior rounds already showed a held minority with flat closed share.
+      - Cost ~5 core-h per r131 arm, ~9 per r13 arm. r1's four arms are running. The root stays on hold unless r1 shows a gain.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

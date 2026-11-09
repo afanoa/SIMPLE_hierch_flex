@@ -118,3 +118,8 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - Neither lever concentrates closed at r131. r13 and r1 pending.
   - FLAG: the noise model is default-on on wip. Revert it to opt-in if r13 / r1 also lose closed alignment
     ([[rnasep-misfit-noise-spectrum-verdict-2026-11-08]]).
+- r13 replays: baseline x1.74 (production x1.69), noise model x1.71, class prior one leaf. Neither lever concentrates closed.
+  - The noise model's r131 loss does not repeat at r13: no stable effect either way.
+  - The MAP class prior removes the split at both nodes. No floored or tempered prior: a 1/K floor is no prior, and the EM-prior
+    rounds already held minorities flat.
+  - r1 pending; the root is held unless r1 shows a gain.
