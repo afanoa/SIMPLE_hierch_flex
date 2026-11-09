@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2255,6 +2255,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - IgM panel for joint seeding (site-chain), nulls A (per-particle noise) and B (bin-wise): K* 6 at every root that
           fires, the 5 % null included. The groups carry no arm (NMI 0), and the split test returns one group only through
           its effect floor. Joint seeding in the root latent gains nothing on IgM; the null-C (f2r null) runs are pending.
+          - FINAL: under null C as well, the 5 % null gets K* 6 with armless groups. None of the three Gaussian nulls is
+            null-safe at the IgM roots, and joint seeding recovers no arm state there. Notes:
+            `$H/handoff/site-chain/joint-igm/`.
+          - Panel so far for joint seeding: qtoy2 + (6 vs 4 conformers); qtoyflex - (holo lost); IgM - (nothing, not
+            null-safe). RNase P r1 refinements and OLE are pending.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
         - Validation briefed:
           - f2r: reproducibility of the confident cores across seeds at r131, where the hard halves overlap at .22-.39, and

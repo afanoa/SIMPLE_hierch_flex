@@ -59,3 +59,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   - r1: joint seeds IDENTICAL across seeds (K 6; two hit groups x1.66 / x1.56); refinements at seeds 1-3 running.
   - Read: joint seeding fixes seeding reproducibility and adds states, but un-priored refinement swelling still drains small
     states.
+- IgM panel FINAL: joint seeding recovers no arm at the IgM roots, and no Gaussian null (A, bin-wise, f2r) is null-safe there
+  (the 5 % null gets K* 6). The split test returns one group only through its effect floor.
+  - Panel: qtoy2 +, qtoyflex -, IgM -; RNase P r1 and OLE pending.
+  - Joint seeding is not yet a general method.
