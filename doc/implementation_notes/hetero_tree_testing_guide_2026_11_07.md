@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:39 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:44 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1974,6 +1974,29 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Briefed first: a node trace on the r1 replays (cross-run agreement at each step, sites -> seed site -> stage-A seeds ->
         stage-A labels -> stage-B labels -> split; plus each run's switch rate from seed to stage B, overall and for the
         closed rows). It shows whether agreement drops at seeding or after refinement.
+    - User (2026-11-08): "sometimes refinement oscillates between solutions ... is there a more deterministic way ... Are particles
+      the best source of a latent variable model? ... a per particle embedding is primarily noise ... there is a gap between
+      flex and refinement that we must reconcile. We flatten responsibilities in an N-dimensional latent space to hard
+      assignments."
+      - Support from our own data: OLE's motions reproduce across seeds (|rho| .86-.99) while its depth-2 partitions are at
+        chance. At RNase P r1 the latent is identical across builds while the hard partition flips. The population-level
+        objects (basis directions, latent density) are stable; per-particle hard labels are not.
+      - Proposed reconciliation (population-level decisions, labels only as output):
+        1. States are components of the node's deconvolved latent density (XD, with each particle's posterior precision).
+           Fitted deterministically: moment / spectral start plus restarts, K by held-out likelihood. On a flat curve keep the
+           larger K if its components are honestly distinct (the diversity goal).
+        2. Membership is the XD responsibilities. Children's flex refits are responsibility-weighted, so subsetting conditions
+           the latent without a hard cut.
+        3. State maps are population estimates: consensus + W mu_k at the basis band; above it, responsibility-weighted
+           reconstructions unmixed by the confusion matrix. All read honestly.
+        4. Refinement refines poses only: no state re-labelling, so no oscillation. Hard labels are the final MAP output.
+      - Known limits from earlier tests:
+        - Soft weights alone dilute maps (M-est, 11-06), and confusion unmixing over-corrects on small leaves.
+        - Soft responsibilities add no per-particle separability (d' bound).
+        - So the gain sought is a reproducible, diverse landscape, not purer hard leaves.
+      - Cheap test (proposed): at RNase P r1, OLE's diverging depth-1 node and qtoy2 / mm3q, fit XD deterministically across
+        replay seeds. Compare how well components (pi_k, mu_k, latent-model maps) reproduce with how well hard partitions do;
+        report each component's responsibility-weighted closed share, and its map against the hard-partition maps.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
