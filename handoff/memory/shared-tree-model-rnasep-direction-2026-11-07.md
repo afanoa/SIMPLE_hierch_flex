@@ -123,3 +123,10 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - The MAP class prior removes the split at both nodes. No floored or tempered prior: a 1/K floor is no prior, and the EM-prior
     rounds already held minorities flat.
   - r1 pending; the root is held unless r1 shows a gain.
+- r1 replays (2026-11-08 ~21:30):
+  - Production: site 2 dominant (16.0 vs 4-5.6), closed child r13 x2.12.
+  - New-build baseline: near-tie sites (9.482 vs 9.466), x1.10, no concentration.
+  - Noise model: production's 3-way structure, x1.90, via a seed-site flip at the near-tie.
+  - Class prior: no gain or one leaf.
+  - HARD-GATE CONCERN: the wip build's baseline loses r1 -> r13. Checks briefed: arm a on production's own builds (stand-in
+    maps vs code), and a second seed for a / b.

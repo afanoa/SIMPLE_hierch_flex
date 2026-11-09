@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:53 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1886,6 +1886,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         r131) from the first iteration. A floored or tempered prior is not run: a 1/K floor is no prior for K = 2, and the
         EM-prior rounds already showed a held minority with flat closed share.
       - Cost ~5 core-h per r131 arm, ~9 per r13 arm. r1's four arms are running. The root stays on hold unless r1 shows a gain.
+    - r1 RESULT (closed share .0194; 23-30 core-h per arm):
+      - Production: 6 sites, site 2 dominant (margin 16.0 vs 4-5.6), 3 children, closed child r13 x2.12 / recall .380.
+      - Baseline a (off/off): 4 sites at a near-tie (9.482 vs 9.466), site 1 seeds, 2-way split 132k / 120k with NO
+        concentration (x1.10, recall .295). The new build's baseline does NOT reproduce production at r1.
+      - Noise model b: 5 sites (9.862 vs 9.675), site 4 seeds, 3-way split, closed child x1.90 / recall .389, i.e.
+        production's structure. The gain comes through the seed-site choice flipping at a near-tie.
+      - Class prior: a 4,867-particle state, not enriched, or one leaf.
+      - HARD-GATE CONCERN: the wip build loses production's r1 -> r13 concentration in its baseline. Possible causes: the
+        build's site layer, or r1's parent maps (regenerated stand-ins for the root).
+      - Briefed:
+        - arm a on production's own builds (r17d's or build_lf, and merge_master2) with the same inputs;
+        - arms a / b at a second SIMPLE_SEED.
+        About 100 core-h; the root stays on hold.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
