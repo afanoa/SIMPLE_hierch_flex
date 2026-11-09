@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:14 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:26 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1533,6 +1533,10 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
            - On `e4fbef54e` the box-36 fixtures reproduce exactly. The IgM 10 % fix now takes over cap 2's sites and reproduces
              the ladder (ring 36, 8 blocks in 5 sites, R^2 .523 / .400 / .485 / .442 / .400) in 1 h 23 instead of 2 h 13.
              A log-count fix makes the final commit `6aa8492cb`; it is building, with reruns after its gate.
+           - ON WIP as `2f41cbc76` (rebased `6aa8492cb`; fast gate 15/15). All seven fixtures match band3's picks and readouts.
+             The IgM 10 % fix runs in 1 h 23 instead of 2 h 13, the null in 2 h 03 instead of 3 h 10.
+             - Untested: ladder plus the new noise-on default on IgM / qtoy (the validation ran noise off). It is opt-in
+               through sparse_sites=yes, so wip's defaults are unchanged.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.

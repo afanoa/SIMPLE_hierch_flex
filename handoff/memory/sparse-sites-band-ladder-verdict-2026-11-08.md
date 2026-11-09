@@ -1,6 +1,6 @@
 ---
 name: sparse-sites-band-ladder-verdict-2026-11-08
-description: "BUILT: sparse_sites band ladder (pursued-gain argmax over quarter-octave caps, one octave down), patch band3 md5 b5d9c457 on wip 7ae8ba4b1, build wip_builds/band3_7ae8ba4 (gate 15/15); IgM 10 % fix 18.2 A 5/5 arms R^2 within .002, null 18.2 A (flat plateau, no disc), 5 % fix 25.2 A, qtoy/r131 full band (noise model on too); TRAPS: a cap must be a fresh run (raw samples + RNG reset); dropped rounds drift the kept blocks; cost 1.6-2.3x per site node, 4-4.7x null/rising"
+description: "COMMITTED 2f41cbc76 on wip dda3b3798 (= validated 6aa8492cb; not pushed; eb1d99ede/e4fbef54e superseded): sparse_sites band ladder (pursued-gain argmax over quarter-octave caps, one octave down), patch band3 md5 b5d9c457 on wip 7ae8ba4b1, build wip_builds/band3_7ae8ba4 (gate 15/15); IgM 10 % fix 18.2 A 5/5 arms R^2 within .002, null 18.2 A (flat plateau, no disc), 5 % fix 25.2 A, qtoy/r131 full band (noise model on too); TRAPS: a cap must be a fresh run (raw samples + RNG reset); dropped rounds drift the kept blocks; cost 1.6-2.3x per site node, 4-4.7x null/rising"
 metadata:
   node_type: memory
   type: project
@@ -61,3 +61,15 @@ Side session sparse-ppca, 2026-11-08. The coordinator's band rule built into fle
     set it too.
 - TRAP (IgM check, 2026-11-08 evening): eb1d99ede's cap-2 takeover renames a folder, and BeeGFS refuses the rename. The winning cap's
   sites were lost (0 sites on IgM 10 %). Fixed in e4fbef54e (on wip cc4af8a10), now re-validating. Never push eb1d99ede.
+- 2026-11-08 night: FINAL commit 6aa8492cb, branch sparse-sites-band-ladder on wip cc4af8a10, worktree /Users/atifao/SIMPLE_ladder.
+  Not pushed (the coordinator pushes). Build wip_builds/ladder_6aa8492cb, fast gate 15/15.
+  - It supersedes eb1d99ede (rename bug, [[beegfs-dir-rename-onto-existing-dir-fails]]) and e4fbef54e (done line miscounted;
+    SIMPLE's nlines already skips '#').
+  - All 7 fixtures reproduce band3's picks, gains, block counts and readouts. The IgM 10 % fix takes ring 36 from its cap job
+    (sites/blocks/rounds/modes byte-identical to band3).
+  - Walls: IgM 10 % fix 2h13 -> 1h20, null 3h10 -> 2h03, 5 % 2h27 -> 1h52; box 36 1.4-2.2x faster.
+  - Notes: handoff/sparse-ppca/band_ladder.md, section "Committed".
+- Rebased for the push: 2f41cbc76 on wip dda3b3798 (= 6aa8492cb + wip's 938ed9a8d, noise model on by default), build
+  wip_builds/ladder_2f41cbc76, fast gate 15/15. The ladder plus noise model on IgM/qtoy is not run (only r131: full band).
+- ON WIP 2026-11-08 ~23:00 as 2f41cbc76 (rebased 6aa8492cb; fast gate 15/15). All seven fixtures match band3; IgM fix 1 h 23 vs
+  2 h 13, null 2 h 03 vs 3 h 10. Untested: ladder plus noise-on default on IgM / qtoy. It is opt-in via sparse_sites=yes.
