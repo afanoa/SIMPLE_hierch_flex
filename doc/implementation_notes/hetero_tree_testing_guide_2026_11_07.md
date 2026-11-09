@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:47 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2612,6 +2612,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   branches.
                   - Bar: F1 | F2 carries closed in >= 6 / 7 seeds, and the gathered group reproduces better than the
                     unconditioned F1 closed side.
+                  - RESULT (`$H/handoff/ole-panel/CONDITIONAL_F1.md`, 1.6 core-h): MISSES the bar.
+                    - Seeds carrying closed: unconditioned F1 5 / 7; shared leading axis 2 / 7; shared discriminant 5 / 7
+                      (fails the same seeds 5 and 6); separate F1 per side 5 / 7.
+                    - Where the shared discriminant works (seeds 1-4, 7), the gathered group holds x1.26-1.39 at recall .79-.84,
+                      and both branch pieces carry closed. One shared F1 direction does cut closed on both sides of F2.
+                    - In seeds 5 and 6, F2's own split holds closed (x1.38 / x1.32), and F1's two-way axis isn't the closed
+                      direction, although closed reads on F1 with labels (LDA .70-.73).
+                    - Reproducibility: gathered-group Jaccard .68 against .66 unconditioned; 4-cell ARI .30 against .28; F2
+                      alone .41.
+                    - READ: no label-free F1 call at the 50k root finds closed in all 7 seeds. The deeper within-branch F1
+                      splits of the real trees separate closed better (AUROC .64-.77) than any root-level F1 call, so closed
+                      is best found deep in a branch and GATHERED afterwards, not called at the root.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):
@@ -2757,6 +2769,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     (5-8 %) local child state inside A only, and a null twin. Hard vs textbook soft at the child, 3 seeds per
                     level. The output is a curve of when soft refitting helps.
                   - Everything runs concurrently on norm and csbdevel. The bar is relative to the hard arm on the same node.
+                  - Overlap-toy CORRECTION (igm10-fixture): the first build's noise was 6.25x too strong (the SNR0 .0012 is per
+                    box-160 pixel, so box 64 needs .0075), and the poses were lost (98 deg median error).
+                    - All 131 jobs were cancelled by id, and the bad fixtures moved aside to `_bad_snr0012_box64`, not deleted.
+                    - Rebuilt (55124405) at SNR0 .0075: d' .75-3 at h +-1.37-7.43 deg (measured .75-2.98). The child is a
+                      40.6 deg hinge, matched to conf18 by per-particle information.
+                    - New gate: a fixture's trees start only if its refined median angle error is < 15 deg.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG

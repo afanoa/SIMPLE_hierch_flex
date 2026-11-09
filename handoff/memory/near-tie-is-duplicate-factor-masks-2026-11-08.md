@@ -145,3 +145,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   splits run along F1 in every branch (lf: r13 x4.9, r211 x3.9, r2112 x7.0; production r13, r131). r1 and r2 move the same way
   (.88-.99). An unconditioned F1 x F2 root product misses (ARI .28 median, F1 carries closed in 5 / 7 seeds). F1 works after
   conditioning on F2. Next idea: a shared F1 direction within each F2 branch plus cross-branch pooling. Prune trap: site masks.
+- CONDITIONAL F1 POOLED (`handoff/ole-panel/CONDITIONAL_F1.md`): MISSES. The shared discriminant carries closed in 5 / 7 seeds
+  (x1.26-1.39, recall ~.8, both branch pieces), as does unconditioned F1; in seeds 5 and 6 closed sits on F2's split. Jaccard .68
+  vs .66. Closed is best found deep in a branch (AUROC .64-.77) and gathered afterwards, not called at the root.

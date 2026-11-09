@@ -1,6 +1,6 @@
 ---
 name: closed-is-f1-factor-across-root-branches-2026-11-09
-description: "VERDICT: RNase P closed is an F1 (lower region, (30,-43,-41) A) factor crossing the root split: lf and r17d roots cut along F2, the closed-concentrating depth 1-3 splits cut along F1 in r1, r2, r5 (r1/r2 same shift cos .88-.99, r5 another direction); site masks all pruned in both trees, leaf maps used. F1 x F2 two-way product: states factorial (free table z <= 2.1), ARI .28 vs .23, F1 closed side only 5/7 seeds: pre-set bar not met"
+description: "VERDICT (+ conditional F1: 5/7, bar not met): RNase P closed is an F1 (lower region, (30,-43,-41) A) factor crossing the root split: lf and r17d roots cut along F2, the closed-concentrating depth 1-3 splits cut along F1 in r1, r2, r5 (r1/r2 same shift cos .88-.99, r5 another direction); site masks all pruned in both trees, leaf maps used. F1 x F2 two-way product: states factorial (free table z <= 2.1), ARI .28 vs .23, F1 closed side only 5/7 seeds: pre-set bar not met"
 metadata:
   node_type: memory
   type: project
@@ -28,6 +28,13 @@ Coordinator task (user: "Yes, run both"), 2026-11-09.
 - Product ARI .28 against today's root split .23 (minimum .06 against .13).
 - The F1 closed side carries closed in only 5/7 seeds (x1.23-1.40); in seeds 5 and 6 F1's bimodal axis is not closed.
 - Best product cell x1.29-1.85.
+
+**Conditional F1, later the same day** (`CONDITIONAL_F1.md`, 1.6 core-h): F2 first, then F1 within each F2 side along one direction
+shared by pooling both sides.
+- With the shared mixture discriminant, closed is carried in 5/7 seeds, the same failures (5, 6) as the unconditioned call.
+  Where it carries, both branch pieces hold closed (x1.14-1.89).
+- Gathered-group Jaccard .68 against .66 unconditioned. The shared leading axis is wrong (2/7).
+- In seeds 5 and 6, F2's split holds closed instead. No label-free root F1 call catches closed in 7/7. Bar not met.
 
 **Why:** this tests the K-way-root-by-sites redesign.
 
