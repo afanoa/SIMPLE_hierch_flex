@@ -70,6 +70,7 @@
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
 - [wip-refine3d-redraws-poses-each-iteration-2026-11-08](wip-refine3d-redraws-poses-each-iteration-2026-11-08.md) — wip refine3D samples poses (72 % re-drawn per iteration), r17d settles; cross-build evidence pass invalid
+- [responsibility-selection-beats-hard-child-2026-11-09](responsibility-selection-beats-hard-child-2026-11-09.md) — confidence selection on production evidence: r13 >= .9 gives x2.47 at recall .295, beating the hard child and the next level
 - [wip-settling-pass-prob-beta-cold](wip-settling-pass-prob-beta-cold.md) — settle wip poses/labels with one maxits=1 prob_beta=1e9 stage-B iteration (n_eff 1.00); no code change
 - [production-tree-has-per-node-state-evidence-files](production-tree-has-per-node-state-evidence-files.md) — production nodes keep prob_state_evidence.txt: responsibilities sharp, closed AUROC above the hard labels
 - [shared-tree-model-rnasep-direction-2026-11-07](shared-tree-model-rnasep-direction-2026-11-07.md) — shared-basis tree FAILED RNase P at 692k (carve tree 1.9 % vs production 6.9 %); USER 2026-11-08: per-node refits can't be avoided

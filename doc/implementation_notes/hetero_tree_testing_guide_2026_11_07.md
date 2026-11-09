@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:11 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2194,6 +2194,23 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - Next, cheap: a confidence-threshold selection curve at r13 / r1 (closed share and recall against the
           responsibility threshold), plus hard maps of the kept particles. Reference-row share leads, because confidence
           selection inflates own-data maps.
+      - SELECTION CURVE (production's own stage-B evidence, zero compute). A FIRST PURITY GAIN, by the reference labels:
+        - r13 (node share .041; hard child r131: .069, x1.69, recall .353):
+          - resp >= .9: 25,344 at .102 (x2.47), recall .295. That beats production's next level, r1312 (21,870 at .083,
+            recall .209), on both axes.
+          - >= .95: 20,155 at .113, recall .262.
+          - >= .99: 11,518 at .139 (x3.40), recall .184.
+          - The dropped part of the hard child sits at .013-.045 closed, below the node's .041.
+        - r1 (share .0194; hard child r13: .041, x2.12, recall .380):
+          - >= .9: 30,567 at .066 (x3.38), recall .230. Close to production's r131 (.069, recall .353), one level earlier.
+          - >= .99: 9,285 at .090 (x4.62), recall .095, the purest group in the lineage.
+        - Read: refinement's posterior, used to SELECT confident particles, gives purer closed groups than its hard labels
+          (the user's "refine the pdf and get responsibilities out", used for ranking).
+        - Validation briefed:
+          - f2r: reproducibility of the confident cores across seeds at r131, where the hard halves overlap at .22-.39, and
+            at r1 (settle + evidence passes on the test install);
+          - extremes-repro: an honest X2 read of a confident core from r131's stage B on X1, against same-size random bars;
+          - the kept sets' own-data maps are running.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
