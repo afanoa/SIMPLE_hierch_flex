@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:25 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:26 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2184,6 +2184,10 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - The fflex latent is stable (best dimension z3 in all four, closed AUROC .71-.74). Closed concentration depends on
           the draw: x1.54 (production) to x2.71-2.91 at recall .56-.62. Production's r1 is the weakest of the four.
         - Caveat: production differs in build (pthreads vs OpenMP OpenBLAS, codegen) and nodepar (12 vs 1).
+        - Residual once the choice is fixed (sparse-ppca2): refinement still costs ~.4 ARI at the RNase P root (seeds .76 ->
+          split .37) and .1-.2 at the OLE root. A stable choice rule alone can't make the RNase P root reproduce.
+        - Zero-compute read briefed (rnasep-misfit): does stage A / B concentrate closed beyond the seeds, or mainly move
+          memberships? If the seeds carry the concentration, a frozen-membership root keeps it at the seeds' agreement.
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
