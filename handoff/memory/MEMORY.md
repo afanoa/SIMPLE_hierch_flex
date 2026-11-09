@@ -77,6 +77,7 @@
 - [responsibility-selection-beats-hard-child-2026-11-09](responsibility-selection-beats-hard-child-2026-11-09.md) — confidence selection on production evidence: r13 >= .9 gives x2.47 at recall .295, beating the hard child and the next level
 - [wip-settling-pass-prob-beta-cold](wip-settling-pass-prob-beta-cold.md) — settle wip poses/labels with one maxits=1 prob_beta=1e9 stage-B iteration (n_eff 1.00); no code change
 - [production-tree-has-per-node-state-evidence-files](production-tree-has-per-node-state-evidence-files.md) — production nodes keep prob_state_evidence.txt: responsibilities sharp, closed AUROC above the hard labels
+- [autonomous-overnight-2026-11-09](autonomous-overnight-2026-11-09.md) — USER: work autonomously overnight; take recommended options, keep the heartbeat, morning summary
 - [shared-tree-model-rnasep-direction-2026-11-07](shared-tree-model-rnasep-direction-2026-11-07.md) — shared-basis tree FAILED RNase P at 692k (carve tree 1.9 % vs production 6.9 %); USER 2026-11-08: per-node refits can't be avoided
 - [mac-retired-handoff-2026-11-07](mac-retired-handoff-2026-11-07.md) — Mac retired: guide + handoff/ on fork/hetero-tree-wip; other refs in a batch2 bundle, untracked files in a batch2 tarball; fork PUBLIC
 - [site-mask-rework-direction-2026-11-07](site-mask-rework-direction-2026-11-07.md) — USER: site ranking/masks weakest; prove failure on IgM fixture; flex prior / depth wiener / global coordinate judged there; plan = guide 7.7

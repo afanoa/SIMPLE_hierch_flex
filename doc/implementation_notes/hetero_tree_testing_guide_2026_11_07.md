@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:27 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2422,6 +2422,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - The common cause is a near-tied discrete choice at the top of the tree: RNase P's site choice (root margins
               1.6-2.4, a different region per seed) and OLE's XD K (gaps <= .0007). Each choice is deterministic given its
               inputs but flat, so seeds and upstream noise decide it.
+          - TIE-ROBUST CHOICES (user 2026-11-09 ~01:40: "please work autonomously overnight"; coordinator's pick; sparse-ppca2):
+            never make a discrete choice on a difference below its own noise, with 2 SE as the only constant.
+            - K: the smallest K within 2 SE of the best held-out score (paired per-particle SE).
+            - Site: among sites within 2 SE of the top gain, take the one whose pole split replicates best across half-sets.
+              Stochastic discovery (site tables that differ across halves) is reported separately; a choice rule can't fix it.
+            - Stage A, zero compute: the rules on the logged scores of every panel node with several seeds (OLE root, RNase P
+              root and r1, IgM fix and qtoy roots). Do the choices agree?
+            - Stage B, if they do: implement the rule (local branch or harness hook; build plus fast gate) and replay the
+              OLE root at 4 seeds and RNase P r1 on the same rows at 3 or more. Bar: cross-seed split ARI rises where choices
+              tied, the nulls stay one leaf, and the fixtures are no worse than stock. Up to ~300 core-h approved.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry
