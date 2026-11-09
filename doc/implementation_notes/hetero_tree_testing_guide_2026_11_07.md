@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:45 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:25 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2172,6 +2172,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           ranges x1.54 (production) to x2.91 at similar recall (.56-.62): production's r1 was not the best this root gives.
         - THE INSTABILITY STARTS AT THE ROOT: both wip seeds choose between one region's two factor masks at a near-tie, as
           at r1. Production's root had a dominant site (63.3 vs 43.0). Seed 3 is pending.
+      - 692k ROOT REPLAY FINAL (rnasep-misfit, `$H/handoff/root-repro/ROOTREPRO.md`, ~300 core-h): the root split does NOT
+        reproduce.
+        - Seed 3 chose 9f2 at 23.9 vs 9f1 at 15.8. Its closed child: 149.5k at 3.42 % (x2.71), recall .59.
+        - Split ARI .08-.37 across the four roots (.08-.19 against production; .13-.37 among the three seeds of one build).
+          Every replay splits 6 ways; none reproduces production's dominant site or its 4-way split.
+        - The site layer drives it. The chosen candidate changes with the seed (8f1 in seed 1; 9f2 in seeds 2 and 3), and
+          the site tables themselves differ. The gaps (2.4, 1.6, 8.0) are wide next to r1's .016.
+        - Same choice, different split: seeds 2 and 3 share seeds at ARI .76 but their splits only at .37. At the root, stage
+          A / B moves memberships, unlike r1 (matching seeds -> splits .63-.74).
+        - The fflex latent is stable (best dimension z3 in all four, closed AUROC .71-.74). Closed concentration depends on
+          the draw: x1.54 (production) to x2.71-2.91 at recall .56-.62. Production's r1 is the weakest of the four.
+        - Caveat: production differs in build (pthreads vs OpenMP OpenBLAS, codegen) and nodepar (12 vs 1).
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
@@ -2518,6 +2530,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               - CONTROL: case (b). Draw 1's poses alone match or beat the settled poses at ring 16, but averaging 8 draws cuts
                 the round-1 seed gain from ~200 to ~30 nats. Any single plausible pose works; the average over poses loses the
                 signal. Stage 2 finishes (rings 22 / 26 had started) for the table against the bar.
+            - FINAL VERDICT: DROPPED by the pre-set bar (`$H/handoff/pose-weight/POSEWEIGHT.md`, ~59 core-h). At ring 16:
+              - settled single pose: gain .131 / .161, best block / span .735 / .763;
+              - draw 1's poses alone: .160 / .150, .739 / .769 and .713 / .744;
+              - 8 draws averaged: .006 / .007, .53-.63 / .53-.67.
+              - The pose-weighted arm also picks ring 16; its finer caps gain .004-.005. Gain falls ~20-fold and closed
+                separability falls. One plausible pose is as good as the settled one, and averaging over placements 2.9 deg
+                apart (a third of a period at ring 16) smears the data.
+              - Caveat: the draws were tempered (beta .3). Beta-1 draws would spread less, but nothing suggests the settled
+                poses are wrong, which pose weighting needs in order to help.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

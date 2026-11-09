@@ -29,3 +29,5 @@ late iteration) is not the source of cross-run label disagreement (see [[node-le
     not the search temperature's draws. A draw-1 control decides between redrawing at beta 1 and finishing.
   - CONTROL (case b): a single tempered draw's poses fit as well as the settled poses at ring 16; the 8-draw average cuts the
     round-1 seed gain ~200 -> ~30 nats. Pose precision is not the latent's bottleneck at r131; averaging over poses hurts.
+  - FINAL (2026-11-09, ~59 core-h): DROPPED by the pre-set bar. At ring 16, 8 averaged draws gain .006 / .007 vs .131 / .161
+    single-pose (closed block .53-.63 vs .735); the pick stays ring 16. Caveat: draws tempered at beta .3.

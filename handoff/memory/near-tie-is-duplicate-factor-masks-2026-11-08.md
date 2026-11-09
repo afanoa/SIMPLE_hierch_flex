@@ -95,3 +95,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   exactly on the same rows, so OLE diverges at the root. Joint seeding: root .34-.67 vs single-site .49-.95; depth 1 no gain.
 - PANEL VERDICT 2026-11-09: joint seeding + RNase P r1, + qtoy2; - qtoyflex, - IgM, - OLE. Not general: don't adopt it or run
   the r1 subtree with it. Common cause: flat (near-tied) discrete choices at the top (site choice, XD K).
+- 692k ROOT FINAL (3 wip seeds + production, `handoff/root-repro/ROOTREPRO.md`): split ARI .08-.37; the chosen site changes with
+  the seed (8f1 / 9f2 / 9f2; production 7f1) and the site tables differ. Seeds 2 and 3 chose the same site and share seeds at
+  .76, yet their splits agree only at .37: at the root, stage A / B moves memberships too. Closed child x1.54 (production) to
+  x2.71-2.91 (seeds 2, 3).
