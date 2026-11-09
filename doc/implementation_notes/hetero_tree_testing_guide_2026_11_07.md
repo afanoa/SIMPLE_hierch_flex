@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:19 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:25 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2206,6 +2206,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - >= .99: 9,285 at .090 (x4.62), recall .095, the purest group in the lineage.
         - Read: refinement's posterior, used to SELECT confident particles, gives purer closed groups than its hard labels
           (the user's "refine the pdf and get responsibilities out", used for ranking).
+        - Selection maps (own data, imprint caveat):
+          - r13's >= .95 core (20,155) reads closed / open 1.023 / .604 at recall .262. Production's best leaf r1311_s2
+            (12,010) read 1.004 / .577 at recall .094: corner-level occupancy at 2.8x the recall.
+          - r1: the contrast c rises with the threshold, +.107 (hard) -> +.285 (.9) -> +.335 (.95) -> +.423 (.99).
+          - The halves agree to +- .004; resolution drops 6.3 -> 7.6 A (r13) and 5.7 -> 7.8 A (r1) as the sets shrink.
         - IgM panel for joint seeding (site-chain), nulls A (per-particle noise) and B (bin-wise): K* 6 at every root that
           fires, the 5 % null included. The groups carry no arm (NMI 0), and the split test returns one group only through
           its effect floor. Joint seeding in the root latent gains nothing on IgM; the null-C (f2r null) runs are pending.

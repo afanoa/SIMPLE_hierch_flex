@@ -22,3 +22,9 @@ the cores reproduce across seeds (the hard r131 halves overlap at only .22-.39) 
 bars. Never weight maps by responsibilities.
 Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redesign-positives-only-2026-11-08]],
 [[extremes-fission-verdict-2026-11-07]].
+- Selection maps (own-data, imprint caveat; ~1.3 core-h):
+  - r13: the >= .95 core (20,155) reads closed / open 1.023 / .604 at recall .262. Production's best leaf r1311_s2 (12,010) read
+    1.004 / .577 at recall .094, so the core matches corner-level occupancy at 2.8x the recall. Halves agree to +- .004.
+  - r1: contrast c rises with the threshold: hard child +.107, >= .9 +.285, >= .95 +.335, >= .99 +.423 (resolution 5.7 -> 7.8 A).
+  - The confident cores are closed-enriched MAPS, consistent with the reference-row curve. Honest X2 read and cross-seed
+    reproducibility are pending.
