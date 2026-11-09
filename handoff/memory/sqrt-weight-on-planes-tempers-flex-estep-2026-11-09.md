@@ -12,6 +12,9 @@ k-center targets into one 65 % state, 4 states fall under the 2,000-n_eff floor,
 excluded from stA0 only). The soft arm's r131 split (x1.37-1.42 vs hard x1.00) follows this four-state seeding, not a better
 latent (AUROC .716 vs .713).
 
+Control (members at 1, extras at their weights): all 8 states kept, still x1.27-1.34, extras still collapsed (|z| .8 vs 19.8):
+the state count is not the cause; the tempered extras in the fit are.
+
 **Why:** at 15 A / box 64 a single particle's latent information A is far below the unit prior, so the posterior mean
 (wA + I)^-1 w b scales with w; Bishop-Tipping (eqs. 27, 31-36) weights only the M-step log-likelihood terms.
 

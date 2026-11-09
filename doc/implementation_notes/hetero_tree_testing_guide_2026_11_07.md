@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:13 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2571,6 +2571,21 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     a near-tie, and neither ordering reliably puts the closed-carrying F1 first.
                   - If F1 and F2 are factorial (as IgM's sites are), the split order should not matter: the depth-2 product
                     partition can reproduce even when the root's choice flips. That is the next read.
+              - TREE REORGANISATION (user 2026-11-09: "what do you think the role of lower depth models ... can we
+                reorganize the tree?" and "can lower level fits influence upper levels?").
+                - Proposed: sites first (sparse PPCA at the root); each top site's states called separately and combined into
+                  a data-derived K-way root; flex and refinement refit per combination, seeded from confident members; deeper
+                  splits only where they replicate, otherwise continuum leaves; restarts with consensus for residual ties.
+                - Bottom-up feedback, three routes:
+                  - re-routing (flat refit over leaves, October): helps separated states, churns on RNase P;
+                  - merge-up (exists);
+                  - NEW: promote a site that recurs across branches to the root's combination, then refit top-down, like EM
+                    over the tree's structure.
+                - Both checks approved (user: "Yes, run both"; sparse-ppca2, zero compute):
+                  1. Do lf's seven closed leaves (under r1, r2 and r5) and production's come from the same site? Matched to
+                     F1 / F2 / F4 and the r131 closed block.
+                  2. F1 x F2 product on the 7 seeds' pursuits: product ARI against the single-site split's, closed per group,
+                     and a coupling test.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):

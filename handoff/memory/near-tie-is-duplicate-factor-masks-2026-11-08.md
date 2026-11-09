@@ -134,3 +134,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   reproducible (top 3 blocks in the same 3 regions every seed), but the leading block flips F1 / F2 (4 / 3, .7-1.5 SE). Closed
   lives in F1 (the lower region, old site 1, never chosen by site_rank; AUROC .80 at 692k). Old f2 is not a pursuit block.
   Next idea: factorial F1 x F2 product, where split order shouldn't matter.
+- 2026-11-09 TREE REORGANISATION proposed to the user: sites first, then per-site states combined (K-way root), refit per
+  combination with confident seeding, deeper splits only if replicated, continuum leaves. Bottom-up: promote sites that recur
+  across branches to the root (closed appears under r1, r2 and r5 in lf). Checks briefed to sparse-ppca2: cross-branch site
+  identity of the closed leaves; F1 x F2 product reproducibility.
