@@ -27,3 +27,5 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[methods-must-gener
 - r131 split (3 seeds): NOT reproducible at the particle level. Every seed makes a near-half split with a closed-leaning half
   enriched x1.16-1.57, but those halves overlap at Jaccard .22-.39 (near chance).
   - So the closed lineage reproduces r13 -> r131 and is arbitrary below. The corner leaves are not reproducible sets.
+- r13 subtree FINAL (3 seeds, 127 core-h): 0 of 8 closed leaves reproduce in the other seeds; see
+  [[subtree-repro-r13-baseline-2026-11-09]].

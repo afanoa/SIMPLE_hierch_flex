@@ -70,6 +70,7 @@
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
 - [wip-refine3d-redraws-poses-each-iteration-2026-11-08](wip-refine3d-redraws-poses-each-iteration-2026-11-08.md) — wip refine3D samples poses (72 % re-drawn per iteration), r17d settles; cross-build evidence pass invalid
+- [path-weight-product-dilutes-closed-ranking-2026-11-09](path-weight-product-dilutes-closed-ranking-2026-11-09.md) — path product of responsibilities helps only below r131, hurts at r13/r131; the closed signal sits at r13
 - [null-safe-joint-seeding-replicates-at-r1-2026-11-09](null-safe-joint-seeding-replicates-at-r1-2026-11-09.md) — joint seeding at r1: ARI .68 across seeds, 3/3 hits x2.3-2.5, six children; recall .23 vs .38; toys mixed
 - [confident-cores-replicate-with-the-split-2026-11-09](confident-cores-replicate-with-the-split-2026-11-09.md) — cores Jaccard .88 at r13 (halves .91) but .13 at r131 (halves .33): selection adds purity, not reproducibility
 - [responsibility-selection-beats-hard-child-2026-11-09](responsibility-selection-beats-hard-child-2026-11-09.md) — confidence selection on production evidence: r13 >= .9 gives x2.47 at recall .295, beating the hard child and the next level

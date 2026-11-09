@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:13 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:17 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2155,7 +2155,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           Production has 2 (x2.03 / .209 and x1.65 / .094).
         - Best match of each closed leaf: Jaccard .15-.22, difference-map r .55-.68 (rule: Jaccard >= .5 or r >= .9). The
           seeds part at r131's split and split again at depth 4. The low-closed r132 leaves match better (.22-.41 / .73-.82).
-        - Seed 3's readout is running.
+        - FINAL, 3 seeds (`$H/handoff/subtree-repro/VERDICT.md`, 127 core-h): 0 of 8 closed leaves reproduce, and none matches
+          production's 2 (best Jaccard .13-.22, difference-map r .46-.78). Seeds end with 7-8 leaves against production's 5.
+          - The closed side as a whole is partly stable: each run's closed leaves together (22-34k) overlap at Jaccard .41-.55.
+          - Seed agreement concentrates closed: the 13,630 particles in all three seeds' closed leaves sit at x2.91 of r13's
+            closed share (recall .187), purer than any one seed's closed leaves taken together.
       - 692k root replay, seed 1 (rnasep-misfit, `$H/handoff/root-repro/ROOTREPRO.md`): NOT production's split.
         - Region 8's two factor masks lead at 24.9 vs 22.5 (production: region 7, 63.3 vs 43.0). The same duplicate-mask
           near-tie as r1. Six children, ARI .19 with production.
@@ -2391,6 +2395,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             density beyond the reference rows. The own X1 maps read 1.04-1.07 (X2 .87-.88): selection imprint.
         - PATH-WEIGHT CORE READ (f2r, user-approved 2026-11-09, zero compute): cores ranked by the Bishop-Tipping path
           product of stage-B responsibilities vs the one-level responsibility, at matched sizes along the closed lineages.
+          Tables: `$H/handoff/node-levers/PATH_WEIGHTS.md`.
+          - r13 and r131: the path ranking is LESS pure (r13 -9 to -28 %, r131 -8 to -22 %). The particles it drops are sure at
+            their own level (R .96-.97) but uncertain upstream (root factor median .61) and closed-rich (.061-.075).
+          - r1312 and the seeds' r131 children: the path ranking is purer (+18-21 %; seeds +18-43 %), and the seeds' cores
+            agree a little more (Jaccard .13 -> .18, still far from r13's .88).
+          - Read: the closed information sits at the r13 split (one-level closed AUROC .80, against .63 at the root and .75 at
+            r1). Upstream the closed state is a minority with uncertain membership, so a plain product dilutes the ranking.
+            Rank by the most informative level, or weight the factors by a label-free measure of their information.
+          - CORRECTION to "soft carry changes little": that holds only at r13 -> r131 (93 % of closed rows kept). The hard cuts
+            keep .56 of the closed rows at the root -> r1 cut, .68 at r1 -> r13 and .59 at r131 -> r1312. If the rows lost at the root are
+            uncertain rather than confidently elsewhere, a soft carry rescues them. f2r is checking (zero compute).
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

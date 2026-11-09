@@ -69,3 +69,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [near-tie-is-duplicate-factor-masks-2026-11-08](near-tie-is-duplicate-factor-masks-2026-11-08.md) — r1 (and OLE) seed-site near-ties are duplicate factor masks of one region; the z3 pole decides closed; merge them, keep the union of poles
 - [parallel-slate-2026-11-08](parallel-slate-2026-11-08.md) — six parallel tests launched at the user's request (joint seeding, XD repro, subtree and root reliability, IgM, OLE)
 - [confident-cores-from-refinement-posterior-2026-11-09](confident-cores-from-refinement-posterior-2026-11-09.md) — first RNase P purity gain: refinement-responsibility selection beats hard children (r13 x2.47 at recall .30); validation running
+- [subtree-repro-r13-baseline-2026-11-09](subtree-repro-r13-baseline-2026-11-09.md) — BASELINE: r13 subtree at 3 seeds, 0 of 8 closed leaves reproduce (r131 split arbitrary); closed-side unions .41-.55; all-seed intersection 13.6k at x2.91

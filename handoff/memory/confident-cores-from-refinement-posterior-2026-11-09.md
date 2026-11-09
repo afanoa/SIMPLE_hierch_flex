@@ -58,3 +58,8 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - Path-weight cores (Bishop-Tipping product) vs one-level cores: zero-compute read briefed to f2r (user-approved 2026-11-09).
 - Soft per-node refit, code status: weighted state maps exist (state weight set, reconstruct3D m_estimator=flex); flex's fit has
   no particle weights (M-step takes in / out rows), so a weighted flex M-step is the one new piece.
+- PATH-WEIGHT READ (f2r, `handoff/node-levers/PATH_WEIGHTS.md`): the plain Bishop-Tipping product ranks WORSE at r13 / r131
+  (-8 to -28 %; it drops closed-rich particles sure at their level but uncertain upstream, root factor ~.61) and better below
+  r131 (+18-43 %, seeds' Jaccard .13 -> .18). Closed AUROC by level: root .63, r1 .75, r13 .80. Rank by the informative level.
+  - Hard cuts keep .56 of closed rows at the root, .68 at r1, .93 at r13 -> r131, .59 at r131. Whether a soft carry rescues
+    the root's losses (uncertain vs confidently elsewhere) is being checked by f2r.
