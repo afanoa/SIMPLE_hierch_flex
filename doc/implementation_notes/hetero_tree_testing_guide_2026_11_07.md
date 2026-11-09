@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:52 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 09:19 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2522,6 +2522,30 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               - Every core involving a non-f2 run fails the bar (x1.76-2.60, Jaccard .45-.58).
               - So the f2 core reproduces whenever a run reaches f2, but reaching it is seed-dependent, including whether the
                 region is split into factor masks at all. That makes the factor-mask step the next target at the RNase P root.
+            - FACTOR MASKS (sparse-ppca2, zero compute, `$H/handoff/ole-panel/FACTOR_MASKS.md`):
+              - Split rule: a factor is kept if its half-to-half z >= 3 AND its share of the region's variance >= .2. The .2 is a
+                FIXED CONSTANT, a knob. At 692k every factor reproduces (r .98-1.00), so the share decides. It is not a
+                near-tie: factor 2 holds .23-.31 in the split seeds and .06-.13 in the rest.
+              - The real difference is the REGION, cut from the variance of the 8 stage-A0 states. In split seeds it reaches
+                inward over f2's territory; in seeds 4, 6 and 7 it is only the outer part (at most 22 % of f2's core).
+              - The 8 states differ by seed although flex's k-center has no randomness: it picks extreme points of the
+                embedding, so small embedding differences give different edge states, and stage A0 reshuffles them.
+              - f1 vs f2: site_rank margins 2.4 / 1.6 / 1.3 in seeds 1 / 2 / 5, all inside the 2.83 tie band (seed 3: 8.0).
+                f2's pole is the most stable element of the layer: 71.5-75.5k members at z 21-24 in all four split seeds.
+              - What f2 is: a compact inner sub-block at about (-19, 1, 27) A. f1 sits further out, and the unsplit region
+                outermost. f2 is NOT the r131 closed block: its core holds at most 5 % of the closed blocks' energy, ~40 A
+                away. f2 correlates with closed; it is not where closed is.
+              - f2 is in the data in every seed. Factorising the flex basis itself, with no states, puts factor 2 on f2 in
+                all 7 seeds (share .24, Jaccard .80-.96 across seeds, .89-.95 across halves).
+              - Fixes, priced:
+                - half-set replication of the flex basis fixes the factor step at no cost, but not the region;
+                - a consensus over restarts (pool the candidates of several state sets, keep those found >= 2 times) keeps f2
+                  with probability .94-.99 at 6-8 restarts. At ~13 core-h per restart that is 80-105 core-h per 692k node,
+                  doubling the root;
+                - a cheaper variant, three state sets from one flex run's two half fits and merged embedding, ~21 core-h
+                  (untested);
+                - for f1 / f2 ties: keep both sites and seed from both (+4 core-h; untested).
+              - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
             the same binary.
             - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves

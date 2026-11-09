@@ -37,3 +37,5 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
   - Consensus panel final: a filter, not a method. TRAP: the stock IgM 10 % null twin splits at seed 2.
   - Root pair test: the f2 core reproduces whenever a run reaches f2 (3 / 7 seeds); the factor-mask step is the next target.
     No new launches after 05:50 EST (open design choice; the user decides in the morning).
+  - Factor masks: the region cut from the stage-A0 states decides; the .2 share threshold is a knob. A consensus over
+    restarts is the priced fix. Morning summary delivered when the user returned (~07:xx EST).

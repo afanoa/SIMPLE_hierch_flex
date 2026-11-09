@@ -115,3 +115,8 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - ROOT PAIR TEST (seeds 4-7): the site layer reaches the f2 mask in 3 / 7 seeds (f1 1, whole region unsplit 3). Seed 5 (f2)
   contains 88 % of the seeds 2-3 core; the three f2 runs share 97k at x3.49, recall .49. Non-f2 runs fail. Next target:
   the factor-mask step (split or not, f1 vs f2).
+- FACTOR MASKS (sparse-ppca2, `handoff/ole-panel/FACTOR_MASKS.md`): the split uses a FIXED variance-share constant (.2, a
+  knob). The seed effect is the REGION, cut from the 8 stage-A0 states, which differ by seed (k-center picks edge points;
+  stage A0 reshuffles). f2 = a compact inner sub-block, a correlate of closed ~40 A from the r131 closed block, present in
+  the flex basis in all 7 seeds. Fix candidates: a consensus over restarts (+80-105 core-h per 692k node; the half-fit variant
+  ~21 core-h untested); keep both tied sites.
