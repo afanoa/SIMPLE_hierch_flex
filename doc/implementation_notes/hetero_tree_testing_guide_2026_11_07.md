@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:44 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:45 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1997,6 +1997,23 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Cheap test (proposed): at RNase P r1, OLE's diverging depth-1 node and qtoy2 / mm3q, fit XD deterministically across
         replay seeds. Compare how well components (pi_k, mu_k, latent-model maps) reproduce with how well hard partitions do;
         report each component's responsibility-weighted closed share, and its map against the hard-partition maps.
+    - FOUND (cheap test part 1, f2r session): r1's near-tie is between two factor masks of the SAME discovered region, not
+      between different motions.
+      - Sites 2f1 / 2f2: mask Jaccard .67-.68, centroids 6 A apart, poles on the same latent tails.
+      - They differ only in the pole set. 2f1 keeps one pole (a z1 tail); 2f2 keeps two (a z1 tail plus a z3 tail).
+      - Every 3-way, closed-concentrating hit came from a two-pole site. The seed-1 miss chose the one-pole 2f1 at 9.482 over
+        the two-pole 2f2 at 9.466.
+      - Production's site 2 (also 2f2, margin 16.0) had one merged pole z1hi + z3lo (172k seeds), whose "rest" (80k) became
+        the closed-enriched r13. No replay merges z1 with z3 that way.
+      - The margins tie at 9.4-9.9 because the two near-duplicate masks score the same pole almost identically: the tie is
+        built in.
+      - The same mechanism split OLE's runs in October (near-tie 3: one 63 A region factored into 1f1 / 1f2 with equal
+        margins), so it is general.
+      - Candidate deterministic fix: merge near-duplicate factor masks of one region into one site, and keep the union of
+        their poles (z1 and z3 tails). That removes the coin flip and adds states.
+      - Part 2 is running at seed 1 (jobs 55093342-3, ~8 core-h): a joint mixture on sites 2f1 + 2f2's endpoint posteriors
+        and on the z1 / z3 axes, with K <= 6 by cross-half held-out likelihood, the groups' fixed-pose maps, the split test
+        and the arm readout.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
