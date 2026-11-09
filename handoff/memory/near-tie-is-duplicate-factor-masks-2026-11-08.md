@@ -75,3 +75,5 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   A raw-latent (pre-XD) variant of f2r's rule is running.
 - XD (tree-latent): reproducible within an arm, but its components are soft (responsibility .5-.67). Every null splits under the
   Gaussian-null rule (non-Gaussianity, not discreteness).
+- 692k ROOT, replay seed 1 (2026-11-09): region 8's two masks tie (24.9 vs 22.5); 6 children, ARI .19 with production. Its two
+  closed-rich children hold 2.24 % at recall .72 (production r1: 1.94 % at .56). Seeds 2 / 3 (same build) pending.

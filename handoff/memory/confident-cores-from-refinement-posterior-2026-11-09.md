@@ -56,3 +56,5 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   z 2.6; >= .95 x1.44 c +.325 z 3.4. All clear their bars, none more significant than the hard state, and recall is lost.
   Responsibilities buy little at r131 (x1.39 vs x2.47 at r13); own X1 maps read 1.04-1.07 vs X2 .87-.88 (imprint).
 - Path-weight cores (Bishop-Tipping product) vs one-level cores: zero-compute read briefed to f2r (user-approved 2026-11-09).
+- Soft per-node refit, code status: weighted state maps exist (state weight set, reconstruct3D m_estimator=flex); flex's fit has
+  no particle weights (M-step takes in / out rows), so a weighted flex M-step is the one new piece.

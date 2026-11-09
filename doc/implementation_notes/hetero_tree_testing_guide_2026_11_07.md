@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:10 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:13 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2149,6 +2149,19 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - Read: below r131 the tree halves a continuum along a seed-dependent axis, as the r131 rounds did. The corner and
           its siblings are not reproducible particle sets.
         - The closed lineage reproduces through r13 -> r131 (given r13) and becomes arbitrary below.
+    - Results 2026-11-09 ~00:20 EST:
+      - r13 subtree leaves, seeds 1 and 2 (extremes-repro, ~42 core-h each): 0 of 5 closed leaves reproduce.
+        - Seed 1 has 3 closed leaves (x1.71-2.17, recall .094-.096 each). Seed 2 has 2: x2.98 at recall .154 and x2.45 at .125.
+          Production has 2 (x2.03 / .209 and x1.65 / .094).
+        - Best match of each closed leaf: Jaccard .15-.22, difference-map r .55-.68 (rule: Jaccard >= .5 or r >= .9). The
+          seeds part at r131's split and split again at depth 4. The low-closed r132 leaves match better (.22-.41 / .73-.82).
+        - Seed 3's readout is running.
+      - 692k root replay, seed 1 (rnasep-misfit, `$H/handoff/root-repro/ROOTREPRO.md`): NOT production's split.
+        - Region 8's two factor masks lead at 24.9 vs 22.5 (production: region 7, 63.3 vs 43.0). The same duplicate-mask
+          near-tie as r1. Six children, ARI .19 with production.
+        - Two closed-rich children (154k at 2.21 %, 126k at 2.28 %) hold 2.24 % at recall .72 together; production's r1 had
+          1.94 % at .56. The closed state is not diluted; it lands in a different partition.
+        - Caveat: seed 1 also differs in build and OpenBLAS. Seeds 2 and 3 share a build, so they isolate the seed.
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
@@ -2335,6 +2348,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - pi_{j|i} from soft responsibilities keeps small states;
             - weighted child fits only below an uncertain parent cut.
             - Zero-compute read, offered: path-product cores vs one-level cores, from production's evidence files.
+          - Per-node refit under soft membership, in code:
+            - Weighted state maps exist: the state weight set, rebuilt by reconstruct3D with m_estimator=flex.
+            - Stage B's state posterior gives each child's R (prob_state_evidence).
+            - Flex's own fit takes no particle weights: its M-step accumulates in / out rows only. That is the one new piece:
+              scale each row's E- and M-step statistics by its path weight.
+            - The gain is small where responsibilities are sharp, and it does not touch the splits that fail to reproduce.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:

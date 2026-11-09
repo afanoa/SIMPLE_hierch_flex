@@ -80,3 +80,5 @@ honest gate needs fission readouts and a threshold calibrated on them (decision 
   - Cores >= .9 / >= .95: 8.6k / 5.2k at x1.39 / x1.44, c +.266 / +.325, z 2.0-3.4. All clear their bars, cores no more
     significantly (the null's sd grows as N shrinks); recall .64 -> .27 / .17. r131 gains little from responsibilities
     (r13's >= .9 core reached x2.47).
+- r13 SUBTREE LEAVES (2026-11-09, seeds 1 / 2): 0 of 5 closed leaves reproduce (best Jaccard .15-.22, difference-map r
+  .55-.68 vs the >= .5 / >= .9 rule). The seeds part at r131's split; seed 3 pending.
