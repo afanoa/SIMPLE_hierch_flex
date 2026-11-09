@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:11 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:23 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2630,6 +2630,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 - r13 -> r131 weights, from production's r13 evidence: at epsilon .01 the soft child holds 74,665 of 80,775
                   particles (44,334 hard members plus 30,331 others with weight sum 5,448: 12 % extra mass, median weight .14).
                 - Price ~115 core-h: r131 hard vs soft x3 seeds ~36, X2 ~12, qtoyflex ~60.
+                - VALIDATED (install3, gate 15 / 15): weights 1.0 on every row = the unset fit (8 states, coordinates to 2e-5).
+                  Parent r13 with 1 / 0 weights reproduces the child's fit (eigenvalues within 1 %, axes |r| .96-.98 on eight
+                  of ten; the near-degenerate z6 / z7 pair .67 / .81; states within 3 %).
+                - CONFOUND: the soft arm reconstructs only 4 of 8 flex states. The 2,000-particle floor applies to weighted
+                  populations, and the hard members' weights (median .93) push small edge states under it. The old site layer
+                  cuts its regions from those stA0 states, so 4 vs 8 can change the site by itself.
+                  - Control added: hard members at weight 1 with the extras at their path weights, which keeps 8 states (+~21
+                    core-h). All three arms reported side by side, with each arm's stA0 state count and chosen site.
+                - qtoyflex node: seed-2 tree's r1 -> r12 (parent 27,344, apo-dominated; child 5,174, combo 18 at purity .46);
+                  21,719 kept by r1's own evidence.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").
             - On RNase P, no: five readouts (hard XD labels .98-.99 vs soft; cores replicate as the split does; responsibilities
