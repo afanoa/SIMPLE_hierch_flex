@@ -18,3 +18,9 @@ Launched ~00:30 2026-11-09, with about 1,000 cores free in our caps.
 read-only, scancel by id). Watch the caps, csbdevel 642 / norm 600.
 Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[methods-must-generalize-across-datasets-2026-11-08]],
 [[replicate-or-redesign-positives-only-2026-11-08]].
+- ~02:30 results:
+  - r13 subtree: r13's split reproduces at 3 / 3 seeds (r131 side x1.73-1.74; partition ARI .94 between seeds, .90 with
+    production). The instability is at r1, not r13.
+  - Gaussian-null K floor: NOT null-safe (nulls get K 4-5). K must be decided by the map-level split test.
+  - Site chain: IgM 5 % fix gains small over stock (.022 vs .001); nulls stay one leaf.
+  - User "Yes, test it": a final argmax settling pass at the end of stage B, on a test build, at r1 over 6 seeds.

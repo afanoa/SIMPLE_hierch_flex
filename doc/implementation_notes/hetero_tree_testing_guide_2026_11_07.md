@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:36 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:54 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2139,6 +2139,22 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - OLE: 4 trees at the root's fflex step; null-safe joint seeding is being checked on 5 fixture roots.
       - XD: the K ladder is computing. Every particle's information is positive-definite (median eigenvalues .03-.09
         against prior variances of 145-270): informative but noisy.
+    - Results ~02:30:
+      - r13 subtree (extremes-repro): r13's split REPRODUCES in all 3 seeds.
+        - The r131 side holds closed share .071 (x1.73-1.74, recall .355) every time; production had .069 (x1.69).
+        - The partitions agree .94 between seeds and .90-.91 with production.
+        - So the instability is at r1 (and possibly above), not at r13. Depth 3-4 nodes are running.
+      - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
+        - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
+        - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
+          fixtures.
+        - OLE roots are at steps 4-5.
+      - Site chain (IgM): on the 5 % fix the chain gains over stock (combination NMI .022 vs .001; a1 .053 vs .003), a
+        small gain. Both nulls stay one leaf. The 10 % fix chain tree is at depth 3, and joint seeding at the IgM roots is
+        running.
+      - Final settling pass approved (user: "Yes, test it"): one argmax stage-B iteration at the end, on a test build with the
+        evidence writer, at r1 over arm b's 6 seeds. Readouts: pose stability (r17d ~5 % vs wip 72 %), label and
+        responsibility reproducibility, hit / miss unchanged, and the closed child's contrast.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
