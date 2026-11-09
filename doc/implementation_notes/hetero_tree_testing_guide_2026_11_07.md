@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:35 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:42 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2166,6 +2166,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - Two closed-rich children (154k at 2.21 %, 126k at 2.28 %) hold 2.24 % at recall .72 together; production's r1 had
           1.94 % at .56. The closed state is not diluted; it lands in a different partition.
         - Caveat: seed 1 also differs in build and OpenBLAS. Seeds 2 and 3 share a build, so they isolate the seed.
+      - 692k root replay, seed 2: yet another split. ARI .08 with production and .125 with seed 1 (same build).
+        - Region 9's two masks tie (21.1 vs 19.5). Six children again.
+        - Its closed-leaning child, 148k at 3.67 % (x2.91) with recall .62, is the most concentrated so far. The closed child
+          ranges x1.54 (production) to x2.91 at similar recall (.56-.62): production's r1 was not the best this root gives.
+        - THE INSTABILITY STARTS AT THE ROOT: both wip seeds choose between one region's two factor masks at a near-tie, as
+          at r1. Production's root had a dominant site (63.3 vs 43.0). Seed 3 is pending.
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
@@ -2395,6 +2401,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             states (XD K near-ties, gaps .0001-.0033); there is no duplicate-mask tie for joint seeding to fix.
             - Mean ARI across seeds, r1 / r2: fallback seeds ~.00 / ~.09, refined split .33 / .08, joint groups .21 / .16.
             - Refinement from the joint seeds is running at r1 (tree seeds 1 and 2, jobs 55100411-2); the rest follow.
+            - Across independent trees the refined joint children don't agree (r1 ARI .03 with 2 vs 5 children; r2 .07). This
+              is confounded: the trees' depth-1 nodes hold different rows (J .73-.75). RNase P's .68 came from same-row
+              replays, so same-row OLE replays (`ole_replay.sbatch`) of seed 1's r1 / r2 at SIMPLE_SEED 2 are running.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry
@@ -2446,6 +2455,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Gate measurement (user: "Measure pose spread"; f2r): at r1, the drawn-vs-settled pose change of the map's
               projection at flex's band against the latent modes' own change, and the spread's correlation with z1-z4 and the
               closed rows. Prototype at r131 only if >= 20 % of particles reach a ratio >= .5, or a leading |r| >= .2.
+            - VERDICT: DROPPED (f2r, `node_levers/posespread/posespread.txt`, 1 min of compute; identical across seeds).
+              - Spread: direction p50 / p90 2.9 / 4.9 deg (42 % unchanged), in-plane .45 / 4.2 deg, shift .2 / .7 A.
+              - Effect at 15 A: pose 1 - r p50 .004, p90 .015, against a 1-sd latent step's .014-.024. The ratio is >= .5 for
+                12-16 % of particles (bar 20 %). The effect comes from the sub-pixel shift (r .91-.93), not the direction.
+              - Leakage: every spread measure correlates with z1-z4 within |r| .04, and with the closed rows within .02.
+              - The typical particle's pose spread is a tenth of a latent step at flex's band and carries no state information.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

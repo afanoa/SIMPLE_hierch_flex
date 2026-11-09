@@ -18,3 +18,6 @@ posterior instead of taking the argmax. Consequence: the r17d binary's prob_stat
 **How to apply:** per-particle state posteriors must come from the same binary that refined the poses; the wip tip needs
 write_state_evidence ported (code change) before any responsibility readout of its runs. Refinement churn (2-5 % of states per
 late iteration) is not the source of cross-run label disagreement (see [[node-levers-replay-verdict-2026-11-08]]).
+- POSE-WEIGHTED FLEX LATENT, DROPPED (user idea 2026-11-09; f2r measured drawn vs settled poses at r1): spread p50 2.9 deg
+  direction, .2 A shift. At flex's 15 A band the pose effect is a tenth of a 1-sd latent step (ratio >= .5 for 12-16 %, bar
+  20 %), driven by sub-pixel shift. It correlates with z1-z4 and closed within |r| .04. Don't revisit without new evidence.

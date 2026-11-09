@@ -83,3 +83,8 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - XD-REPRO FINAL: within one latent, hard labels reproduce as well as XD's components (ARI .98-.99; flex deconv labels
   .95-1.00), so flattening isn't the gap; the split's seed dependence is downstream (site / pole choice, stage-B seeding).
   flex's own deconv labels give a reproducible r1 group at x1.9-2.0, recall .28-.33, on every seed and both latents.
+- 692k ROOT seed 2 (same build as seed 1): region 9's masks tie (21.1 vs 19.5); split ARI .08 with production, .125 with seed 1.
+  Closed child 148k at 3.67 % (x2.91), recall .62: closed concentration x1.54-2.91 depending on the draw. Instability starts at
+  the root on wip; production's root had a dominant site (63.3 vs 43.0).
+- OLE depth 1: refined joint children disagree across independent trees (.03 / .07), confounded by different rows; same-row
+  replays running.
