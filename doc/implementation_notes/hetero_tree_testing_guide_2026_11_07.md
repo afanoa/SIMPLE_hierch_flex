@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:25 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 19:47 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1530,6 +1530,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
            - `eb1d99ede` must NOT go on wip. On the IgM 10 % check cap 2 won, but BeeGFS refuses the folder rename, so its
              sites were never taken over and both runs reported 0 sites. The fix is in `e4fbef54e` (on wip `cc4af8a10`):
              build 55088875, then six validation runs.
+           - On `e4fbef54e` the box-36 fixtures reproduce exactly. The IgM 10 % fix now takes over cap 2's sites and reproduces
+             the ladder (ring 36, 8 blocks in 5 sites, R^2 .523 / .400 / .485 / .442 / .400) in 1 h 23 instead of 2 h 13.
+             A log-count fix makes the final commit `6aa8492cb`; it is building, with reruns after its gate.
 8. Honest r131 gate (decision 9; extremes-repro, briefed 2026-11-08):
    - One fixed fission pair of the r131 project (X1 / X2), with the noise drawn at sigma2 x v (the per-particle band-wise noise
      model), checked with the fake-map null.
@@ -1857,6 +1860,21 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         to the user (`chmod -R a-w .../f692_r17d_s1/1_hetero_tree`, reversible with `u+w`).
       - The first four r131 arms ran with the parent's mask; they are kept as a variant, and the corrected arms run in fresh
         roots.
+    - r131 RESULT (corrected arms, production's eight-state mask):
+      | arm | noise | prior | best latent dim | children closed share | closed child | split |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | production | r17d | no | .699 | .056 / .083 | x1.20, recall .209 | z 13.1 |
+      | a | off | off | .698 | .087 / .051 | x1.25, recall .226 | z 13.8 |
+      | b | on | off | .713 | .069 / .070 | x1.00, recall .187 | z 14.9 |
+      | c | off | on | .698 | one leaf (12 particles left in state 2) | none | fail |
+      | d | on | on | .713 | one leaf (4 left) | none | trivial |
+      - The baseline reproduces production.
+      - The noise model sharpens the latent (.698 -> .713), but the node then splits on an axis unrelated to closed (x1.00).
+        The noise-model gate trees showed the same root-axis shift.
+      - The class prior as specified (MAP with current fractions) kills the 2.6 % seed: -3.6 nats per particle from
+        iteration 1, so one leaf. It is not the lever.
+      - FLAG: the noise model is default-on on wip since this afternoon. If r13 / r1 also lose closed alignment, revert it
+        to opt-in.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

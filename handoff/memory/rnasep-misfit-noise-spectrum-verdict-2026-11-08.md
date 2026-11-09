@@ -63,3 +63,6 @@ fission noise at sig2 x v_ib. Related: [[shared-tree-model-rnasep-direction-2026
 - ON WIP 2026-11-08 evening as 938ed9a8d (cherry-picked from dd02eff12; build nvon_dd02eff12, fast gate 15/15, build_lf's OpenBLAS
   pair). The smoke runs with the variable unset show the master estimating in both flex steps and all 4 workers adopting.
   SIMPLE_FLEX_NOISE_VAR=no turns it off.
+- CAUTION 2026-11-08 ~20:30: in the r131 node replay (production's eight-state mask), the noise model sharpens the node latent
+  (.698 -> .713), but the split no longer follows closed: concentration x1.00 against the baseline's x1.25. If r13 / r1 repeat
+  this, revert the default to opt-in.

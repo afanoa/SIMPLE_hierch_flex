@@ -111,3 +111,10 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   r1, root) in the f2r session (flex-refine-flex-weights): noise model on/off x class prior on/off in the state assignment
   (a new env-switched code path in assign_rows). Readouts: node latent closed AUROC and the children's closed share, recall and
   concentration. Notes in $H/handoff/node-levers/.
+- 2026-11-08 ~20:30, node-lever replays at r131 (corrected; guide 7.10 thread 13):
+  - Baseline: x1.25 closed concentration, reproducing production's x1.20.
+  - Noise model: sharper latent (.698 -> .713), but the split leaves closed (x1.00).
+  - Class prior (MAP with current fractions): kills the 2.6 % seed (-3.6 nats), so one leaf.
+  - Neither lever concentrates closed at r131. r13 and r1 pending.
+  - FLAG: the noise model is default-on on wip. Revert it to opt-in if r13 / r1 also lose closed alignment
+    ([[rnasep-misfit-noise-spectrum-verdict-2026-11-08]]).
