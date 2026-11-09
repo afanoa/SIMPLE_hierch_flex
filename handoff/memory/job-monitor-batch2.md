@@ -18,3 +18,8 @@ Related: [[halves-split-by-eo-break-refinement-trap]], [[klem-board-rewrites-sha
 TRAP (2026-11-06): macOS `seq 54980988 54981039` prints 5.4981e+07 for every id; an sacct-based waiter fed that range waited
 on nothing for hours (only the explicitly typed ids resolved). Build id ranges with `seq -f %.0f A B` (or take the ids from
 the submit output).
+
+TRAP (2026-11-09): a waiter that parses counts out of `ssh batch2 ...` reads a dropped NIH VPN (batch2.ncifcrf.gov NXDOMAIN
+while the internet works) as "0 failures, 0 done" and sleeps to its timeout. Make every waiter test reachability first
+(`ssh -o ConnectTimeout=15 -o BatchMode=yes batch2 'echo "|up"'`, quoted: a bare `echo |up` is a shell pipe and prints nothing)
+and say "unreachable" instead of zero; when the VPN is down, arm a reachability waiter. The batch2 job chains keep running without the Mac.

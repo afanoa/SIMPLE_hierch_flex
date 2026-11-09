@@ -92,3 +92,7 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - SOFT REFIT AT BETTER NODES (300 core-h): r1 -> r13 is level (x1.74 vs x1.71, the same split, Jaccard .90 both, latent .744
   vs .733). root -> r1: a different, more reproducible split (.83 vs .70-.84) but lower recall and a worse latent; production's
   r1 split (x2.12) is still best. The Bishop-Tipping soft refit buys nothing material on RNase P. The overlap toy is pending.
+- OVERLAP TOY (2026-11-09, 623 core-h): no systematic soft gain (mean -.06 F1 over 6 informative pairs; -.42 to +.43 per seed);
+  the weighting moves the child's flex states and so the stage-A seeding, flipping accept / reject both ways. The stock root
+  cuts A / B only from oracle d' 2. With RNase P (3 nodes) and qtoy2 / qtoyflex also level: soft refitting perturbs seeding,
+  it doesn't add information. Thread recommended closed.
