@@ -34,3 +34,6 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
   - f2r's turn hit an API error (ENOTFOUND); nudged to resume the X1 honest contrast.
   - f2r X1 honest contrast at r131: the split separates nothing closed on honest maps (imprint); node-levers thread closed.
   - Site chain reviewed and fast-forwarded onto wip as 596455884 (opt-in, default off); the key-on path on wip is untested.
+  - Consensus panel final: a filter, not a method. TRAP: the stock IgM 10 % null twin splits at seed 2.
+  - Root pair test: the f2 core reproduces whenever a run reaches f2 (3 / 7 seeds); the factor-mask step is the next target.
+    No new launches after 05:50 EST (open design choice; the user decides in the morning).

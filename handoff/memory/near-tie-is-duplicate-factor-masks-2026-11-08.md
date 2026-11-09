@@ -109,3 +109,9 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   disagreeing (OLE root 4 / 5 / 5 / 4, RNase P root 8 / 7 / 9: shallow, non-monotone curves). The site REGION already agrees
   in every replay, and discovery is stable; only the f1 / f2 masks tie. Most disagreement sits in the pole seed set (via XD K)
   and in refinement. Next: consensus of replicate refinements (pair-to-pair test, panel read).
+- CONSENSUS FINAL (2026-11-09): a filter, not a method. It helps only when runs made the same choice, at a recall cost, and is
+  null-safe only on delivered children. TRAP: the stock IgM 10 % null twin (b11) splits at SIMPLE_SEED 2.
+  Four-start XD + 2 SE gives K 6 / 6 / 6 at the RNase P root (not OLE).
+- ROOT PAIR TEST (seeds 4-7): the site layer reaches the f2 mask in 3 / 7 seeds (f1 1, whole region unsplit 3). Seed 5 (f2)
+  contains 88 % of the seeds 2-3 core; the three f2 runs share 97k at x3.49, recall .49. Non-f2 runs fail. Next target:
+  the factor-mask step (split or not, f1 vs f2).

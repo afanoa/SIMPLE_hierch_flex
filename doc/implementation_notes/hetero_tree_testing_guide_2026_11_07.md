@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:21 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:52 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2503,6 +2503,25 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 (~93 of 100 core-h).
             - Root seeds 4-7 are running (rnasep-misfit). Each is classified by the mask it chose; f1 and f2 differ (best-match
               Jaccard .53-.63 vs .38-.45).
+            - CONSENSUS PANEL FINAL (`$H/handoff/ole-panel/CONSENSUS.md`, 110 core-h): the 2-run consensus is NOT a method on
+              its own.
+              - Same choice: tiny gains on the toys (+.002-.005 purity); real gains on RNase P (root x3.28, r1 x4.29), always
+                at a recall cost. Different choices: true states are lost.
+              - Null safety holds only on delivered children (qtoynull, olenull and micnull keep one leaf at both seeds). On
+                stage-B states, replicates agree beyond random pairs on all four nulls (.60-.81 vs a .50 floor).
+              - STOCK-TREE TRAP: the IgM 10 % null twin on b11 splits its root at SIMPLE_SEED 2 (50.5k / 49.5k, no arm
+                information), though it keeps one leaf at seed 1. Stock null safety there depends on the seed.
+              - Four-start XD plus the 2-SE rule makes K 6 / 6 / 6 across the RNase P root replays, but not at the OLE root
+                (3 / 5 / 5 / 4).
+            - ROOT CONSENSUS, PAIR TEST (seeds 4-7, 391 core-h): only seed 5 landed on the f2 mask. 3 of 7 seeds take f2, 1 takes
+              f1, and 3 never split the region into factor masks. No new f2 pair, so the strict test couldn't run.
+              - Seed 5 (8f2, mask Jaccard .597): closed child 146k at 3.55 % (x2.82), recall .60. It contains 88 % of the
+                seeds 2-3 core.
+              - Cores with seed 2 or 3: 114k / 113k at x3.32 / x3.16, Jaccard .77 with the reference (pass, but each shares a
+                run). All three f2 runs: 97k at x3.49, recall .49.
+              - Every core involving a non-f2 run fails the bar (x1.76-2.60, Jaccard .45-.58).
+              - So the f2 core reproduces whenever a run reaches f2, but reaching it is seed-dependent, including whether the
+                region is split into factor masks at all. That makes the factor-mask step the next target at the RNase P root.
           - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
             the same binary.
             - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves
