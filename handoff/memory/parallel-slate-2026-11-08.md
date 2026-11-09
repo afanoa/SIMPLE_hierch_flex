@@ -24,3 +24,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[methods-must-gener
   - Gaussian-null K floor: NOT null-safe (nulls get K 4-5). K must be decided by the map-level split test.
   - Site chain: IgM 5 % fix gains small over stock (.022 vs .001); nulls stay one leaf.
   - User "Yes, test it": a final argmax settling pass at the end of stage B, on a test build, at r1 over 6 seeds.
+- r131 split (3 seeds): NOT reproducible at the particle level. Every seed makes a near-half split with a closed-leaning half
+  enriched x1.16-1.57, but those halves overlap at Jaccard .22-.39 (near chance).
+  - So the closed lineage reproduces r13 -> r131 and is arbitrary below. The corner leaves are not reproducible sets.

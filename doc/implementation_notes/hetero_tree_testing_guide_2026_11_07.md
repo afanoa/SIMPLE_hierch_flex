@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:55 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:03 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2144,6 +2144,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - The r131 side holds closed share .071 (x1.73-1.74, recall .355) every time; production had .069 (x1.69).
         - The partitions agree .94 between seeds and .90-.91 with production.
         - So the instability is at r1 (and possibly above), not at r13. Depth 3-4 nodes are running.
+      - r131's split does NOT reproduce at the particle level. Every seed makes a near-half split (e.g. 21.8k / 21.7k), each
+        with a closed-leaning half enriched x1.16-1.57, but those halves overlap at Jaccard .22-.39 between runs, near chance.
+        - Read: below r131 the tree halves a continuum along a seed-dependent axis, as the r131 rounds did. The corner and
+          its siblings are not reproducible particle sets.
+        - The closed lineage reproduces through r13 -> r131 (given r13) and becomes arbitrary below.
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five
