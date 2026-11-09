@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:44 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:45 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2270,6 +2270,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - OLE: all four roots split four ways (r1-r4). Depth-1 nodes run one at a time (~4 h more), a root-level trace is
             running, and jseed refinement is ready for the diverging nodes.
           - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
+          - XD K reproduces within each arm: noise model off gives K = 3 at every replicate, noise model on K = 4. K is set
+            by the flex noise model, not by the seed.
+        - Carrying the PDF instead of hard assignments (user, 2026-11-09). Status:
+          - Read out, informative, reproducible within a basin. Weighting maps dilutes; selecting confident cores purifies.
+          - Carrying responsibilities DOWN the tree is untested. Proposed cheap form: gated children. Confident particles go
+            to the child; uncertain ones stay in a parent-level boundary pool.
+          - Test: replay r131 with the r13 >= .9 core as the node, at 3 seeds. Does r131's split then reproduce (hard: .33)
+            and concentrate closed?
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
