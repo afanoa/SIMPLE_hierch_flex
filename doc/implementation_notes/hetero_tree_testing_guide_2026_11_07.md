@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:45 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:49 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2269,6 +2269,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           waits on the IgM and OLE refinement-from-joint-seeds results.
           - OLE: all four roots split four ways (r1-r4). Depth-1 nodes run one at a time (~4 h more), a root-level trace is
             running, and jseed refinement is ready for the diverging nodes.
+          - OLE ROOT TRACE (current code, 4 seeds):
+            - Chosen-site pole ARI .90-.96.
+            - Seed ARI .49-.53 between seed 1 and the others, .86-.95 among seeds 2-4.
+            - Split ARI .65 between seed 1 and the others, .73-.77 among seeds 2-4.
+            - Unlike October, matching seeds (seeds 2 and 4 at .95) lose agreement in stage A (.82) and the split (.75).
+              On OLE, refinement adds divergence after seeding, partly supporting the user's refinement hypothesis there.
+            - The root fflex ARI is .32-.49, near October's .39.
           - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
           - XD K reproduces within each arm: noise model off gives K = 3 at every replicate, noise model on K = 4. K is set
             by the flex noise model, not by the seed.
