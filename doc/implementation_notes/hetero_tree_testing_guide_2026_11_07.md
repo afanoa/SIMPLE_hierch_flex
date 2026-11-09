@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:26 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:29 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2188,6 +2188,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           split .37) and .1-.2 at the OLE root. A stable choice rule alone can't make the RNase P root reproduce.
         - Zero-compute read briefed (rnasep-misfit): does stage A / B concentrate closed beyond the seeds, or mainly move
           memberships? If the seeds carry the concentration, a frozen-membership root keeps it at the seeds' agreement.
+          - ANSWER: refinement does both. The seeds' closed-leaning group sits at x1.30-1.37 (seed 1's small group x2.48).
+            Stage A / B lifts seeds 2 and 3 to x2.71-2.91 at the same recall (.59-.62), and moves 50-66 % of all particles.
+          - Seeds 2 vs 3: seed groups Jaccard .859 (closed rows .904); closed children .591 (closed rows .763). Refinement
+            places the closed rows consistently and the rest arbitrarily. Where the roots chose different sites, refinement
+            raises agreement instead (.03-.19 -> .14-.36).
+          - So a frozen-membership root would keep .86 agreement but only x1.3: no.
+          - Next read (zero compute): the 2-run consensus of the refined closed children. Is it purer than either run's child?
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five

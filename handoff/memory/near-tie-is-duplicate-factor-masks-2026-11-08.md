@@ -99,3 +99,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   the seed (8f1 / 9f2 / 9f2; production 7f1) and the site tables differ. Seeds 2 and 3 chose the same site and share seeds at
   .76, yet their splits agree only at .37: at the root, stage A / B moves memberships too. Closed child x1.54 (production) to
   x2.71-2.91 (seeds 2, 3).
+- ROOT REFINEMENT READ: seeds carry only x1.30-1.37; stage A / B lifts seeds 2 and 3 to x2.71-2.91 at the same recall while
+  moving 50-66 % of particles. Seeds 2 vs 3: seed groups Jaccard .86, closed children .59 (closed rows .76). Freezing
+  membership would keep .86 but lose the concentration. Consensus-of-replicates read pending.
