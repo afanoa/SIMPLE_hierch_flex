@@ -21,3 +21,5 @@ launch several arms at once rather than one big one; check `squeue -u atifao -o 
 running total under ~642 including the user's jobs. Any new path must have a distributed form
 before it is tested on real data. Related: [[flex-nparts-spawns-slurm-workers]],
 [[batch2-shared-account-cpu-cap]].
+- 2026-11-09 user: "We have access to 1200+ cores. And we should be using many more cores." Run seeds, arms and variants
+  CONCURRENTLY across norm (-c <= 36) and csbdevel. Prefer 5 seeds over 3 when cheap. Price as you launch; don't serialize.

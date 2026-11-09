@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:49 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:54 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2722,6 +2722,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   of the hard split, ARI with hard .42-.53). The x1.4 came from the extras' spike at the latent origin moving
                   the k-means boundaries, not from soft weighting, and not principled. Many partitions fit the latent nearly
                   equally well; without labels nothing picks the closed-aligned one. The soft loop thread is CLOSED.
+                - REOPENED AT BETTER TEST CASES (user 2026-11-09: "is there a better test case? ... both. We have access to
+                  1200+ cores"). r131 could not show a gain: its parent cut keeps 93 % of the closed rows, and its split is a
+                  continuum.
+                  - f2r: the textbook soft refit at RNase P r1 -> r13, 5 seeds per arm. r1 -> r13 keeps only .68 of r1's closed
+                    rows, and r13's split is informative (AUROC .80) and reproducible (.94). In parallel, root -> r1 at 3 seeds.
+                  - igm10-fixture: a two-level synthetic family. A parent motion A / B at 5 overlap levels (d' .75-3), a rare
+                    (5-8 %) local child state inside A only, and a null twin. Hard vs textbook soft at the child, 3 seeds per
+                    level. The output is a curve of when soft refitting helps.
+                  - Everything runs concurrently on norm and csbdevel. The bar is relative to the hard arm on the same node.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG
