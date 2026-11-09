@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:56 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:22 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2775,6 +2775,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     - Rebuilt (55124405) at SNR0 .0075: d' .75-3 at h +-1.37-7.43 deg (measured .75-2.98). The child is a
                       40.6 deg hinge, matched to conf18 by per-particle information.
                     - New gate: a fixture's trees start only if its refined median angle error is < 15 deg.
+                    - SECOND FIX: the box-64 fixtures held their poses (3.1-3.4 deg), but every tree's root stage B failed
+                      ("the spectra do not cover the shells of the plane grid; set_sigma2"). Stage B crops to box_crop 88, which
+                      is larger than the native box 64.
+                      - Those jobs were cancelled by id and moved to `_box64_stageB_boxcrop88` (kept).
+                      - Rebuilt at native box 96 / 2.44 A (build 55127864; SNR0 .00333), with the same d' levels (.742-2.985)
+                        and a 45.2 deg child hinge.
+                      - My brief's "box 36-64" was wrong for the stock tree: fixtures need a native box >= the tree's box_crop.
                   - RNase P RESULT (f2r, 300 core-h; install5 both arms, untempered fits, all 8 states kept): no clear soft win
                     at either cut.
                     - r1 -> r13 (5 seeds): hard x1.70-1.71 (recall .354-.355); soft x1.73-1.74 (.354-.356); production x1.69 at

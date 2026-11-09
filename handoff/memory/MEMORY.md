@@ -123,6 +123,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [norm-partition-when-csbdevel-capped](norm-partition-when-csbdevel-capped.md) — STANDING 2026-11-08 user: "feel free to use both norm and csbdevel" (caps 600 / 642; -c <= 36 on norm)
 - [hear-the-target-sampling-not-the-import-number](hear-the-target-sampling-not-the-import-number.md) — repeated pixel-size…
 
+- [fixture-box-must-exceed-tree-box-crop](fixture-box-must-exceed-tree-box-crop.md) — TRAP: fixture box >= tree box_crop 88; SNR0 x (160/box)^2
 - [simple-chdir-failure-does-not-abort](simple-chdir-failure-does-not-abort.md) — TRAP: runs in project root
 - [job-monitor-batch2](job-monitor-batch2.md) — monitor long runs; re-arm
 - [half-maps-always-in-halves-subfolder](half-maps-always-in-halves-subfolder.md) — full maps only; halves/ subfolder

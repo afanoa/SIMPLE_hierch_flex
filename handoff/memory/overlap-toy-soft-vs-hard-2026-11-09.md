@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: fbba56ec-1a15-49c3-858f-0fa9e980370c
-  modified: 2026-11-09T19:47:01.799Z
+  modified: 2026-11-09T20:22:19.395Z
 ---
 
 2026-11-09: the coordinator, with the user's approval ("we should be using many more cores"), asked for a two-level fixture family
@@ -15,6 +15,10 @@ with tunable parent-cut overlap, to measure WHEN the soft child refit helps.
   - Child: an 8 % domain, a 40.6 deg rare state on 6 % of all (A only). Its per-particle RMS information is 4.93, matched to conf18's
     5.09 at the pool noise.
   - 60k particles, SNR0 .0075 at box 64, shared draws (paired).
+- **TRAP (cost a second build):** the stock tree crops stage B to box_crop=88 (smpd_crop 2.66 A at a 234 A field). A fixture
+  whose native box is below 88 fails every root stage B with "the spectra do not cover the shells of the plane grid; set_sigma2".
+  Keep native box >= 96 (box 96 / 2.44 A here, SNR0 .00333). Final box-96 design: d' .742-2.985 at h 1.36-7.53 deg, child 45.2 deg
+  (RMS information 5.07 vs conf18's 5.14).
 - **TRAP (cost one build):** SNR0 is per pixel. Binning by f averages f^2 pixels, so the box-64 equivalent of .0012 at box 160 is
   6.25 x .0012 = .0075. At .0012, refine3D lost the poses (median 98 deg). A strong reference still gave a 10 A FSC (noise
   aligned to it), so check the pose error, not the FSC. The refine job now gates trees on the median error < 15 deg.
