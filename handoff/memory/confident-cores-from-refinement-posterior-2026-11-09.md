@@ -68,3 +68,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   Answer: the tree is the hard (classification-EM) limit of Bishop-Tipping, and the soft parts change little on RNase P. Their
   full-PPCA E-step is barred by the frozen-pose gate. What we take is their single density, i.e. EM's best-of-restarts by
   likelihood. A likelihood ranking check on the 7 root replays (do the f2 runs win?) is briefed to rnasep-misfit.
+- 2026-11-09 SYNTHESIS for the user: on RNase P soft vs hard doesn't change reproducibility. Runs land in different splits at
+  the top, and the variation below r13 is continuous. RNase P is the target, not a test bed: sharp responsibilities, weak
+  minority, no truth. Fixture test of soft vs hard (qtoyflex, qtoy2, IgM 5 / 10 %) briefed to f2r (<= 150 core-h).

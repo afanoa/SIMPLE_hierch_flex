@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:19 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2561,6 +2561,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               "best of R by likelihood" can replace the consensus over restarts at the root.
             - For contrast: the split-test z does not pick f2 (seed 1, an f1 run, has the highest z, 33.5).
             - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
+          - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
+            reproducibility ... is RNase P even a good test?").
+            - On RNase P, no: five readouts (hard XD labels .98-.99 vs soft; cores replicate as the split does; responsibilities
+              r .95 within basin, .62 across; path carry .13 -> .18; soft recall below hard) say softness adds purity, not
+              reproducibility.
+            - RNase P is the target, not a test bed for this. Its responsibilities are sharp, closed is a weak minority (root
+              AUROC .63), the variation below r13 is continuous, there is no ground truth, and each test costs 100-400 core-h.
+            - FIXTURE TEST (user: "Yes, test datasets"; f2r, <= 150 core-h): qtoyflex, qtoy2, IgM 5 % and 10 % fix, and one
+              null, at 2-3 seeds with the evidence-writer build. Readouts: sharpness; truth recovery (hard leaves, arg-max path
+              weight, soft expected recall); cut losses (uncertain or confident); seed reproducibility, hard vs path.
           - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
             the same binary.
             - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves
