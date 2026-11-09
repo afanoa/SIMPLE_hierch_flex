@@ -1,6 +1,6 @@
 ---
 name: joint-seeding-igm-verdict-2026-11-08
-description: "VERDICT: joint seeding (latent mixture over tied sites' axes) at the IgM roots: K* 6 on the 5 % null under every Gaussian null (per-particle noise, bin-wise, f2r residual/contrast); groups carry no arm; only the split test's effect floor keeps one group; split runs need ../stageB or the floor is skipped"
+description: "VERDICT: joint seeding at the IgM roots: K* 6 on the 5 % null under every Gaussian null (A, bin-wise, f2r); groups armless; effect floor needs ../stageB. Refined through the root's own calls (2 seeds): nulls 1 leaf, fixes lose the stock split (1 leaf; 10 % stage B .068), cross-seed ARI .27-.39 (r1 .68)"
 metadata:
   type: project
 ---
@@ -16,6 +16,11 @@ metadata:
   on the 5 % fix).
 - The tree's split test returns one group only through its effect floor (P / N < 2): the shuffle test passes 350-1,403-particle
   children and the locality guard keeps them.
+
+- Refinement from the joint seeds (2026-11-09, f2r `nl_jseed.sbatch` on b11, SIMPLE_SEED 1 and 2): both nulls end one leaf
+  (split FAIL); both fix roots end one leaf where the stock split keeps 2 (10 % fix stage B reaches combination .068 vs stock .034,
+  but the effect floor merges, P / N .55-.62); no combination at purity >= .5; cross-seed stage-B ARI .27-.39 on fixes and nulls
+  alike (RNase P r1 reached .68), so the IgM six-way cut is seed-dependent. ~7.7 core-h per replay.
 
 **Why:** the effect floor reads `../stageB/recvol_stateNN_{even,odd}_unfil.mrc`; the prototype ran `state_split` without it, so
 its floor was skipped and its qtoynull PASS is what these roots would deliver.

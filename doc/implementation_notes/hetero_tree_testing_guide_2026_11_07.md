@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:19 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2309,6 +2309,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - The nulls still split: qtoynull K = 2, olenull 2, micnull 4, IgM twin 7. The Gaussian-null held-out criterion
               detects non-Gaussianity, not discreteness, so (d) fails as specified.
             - Fixtures so far: qtoyflex K = 2, qtoy2 >= 11, IgM fix 5.
+          - XD-REPRO FINAL (tree-latent, `$H/handoff/xd-repro/STATUS.md`, 92.7 core-h): flattening is NOT where
+            reproducibility is lost.
+            - Within one latent (57 run pairs): XD components identical (map r 1.000), XD MAP labels ARI .98-.99, flex's
+              deconvolution labels .95-1.00, the tree's split .20-.77. The split varies downstream of the latent: the site /
+              pole choice and the stage-B seeding.
+            - Noise model off vs on (63 pairs): XD maps r .956, labels ARI .24 (flex labels .32).
+            - Closed at r1 (base .0194): XD's best component x1.29 soft, x1.52-1.56 as hard labels, so flattening sharpens it.
+              flex's own deconvolution labels give one group (14-17 % of rows) at x1.9-2.0, recall .28-.33, on EVERY seed and
+              both latents. The tree's split: hits x1.84-2.00 at recall .67-.70, misses x1.08-1.24.
+            - Fixture truth: qtoy2 K = 11 NMI .502 (root split .665); qtoyflex K = 2 NMI .110 (.169); IgM 10 % fix K = 5
+              NMI <= .001. Nulls: K = 2 / 2 / 4 / 7.
+            - The interim map correlations were wrong: flex's bases and z flip sign per component between seeds. Now aligned.
           - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
           - XD K reproduces within each arm: noise model off gives K = 3 at every replicate, noise model on K = 4. K is set
             by the flex noise model, not by the seed.
@@ -2372,6 +2384,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             `$H/handoff/site-chain/joint-igm/`.
           - Panel so far for joint seeding: qtoy2 + (6 vs 4 conformers); qtoyflex - (holo lost); IgM - (nothing, not
             null-safe). RNase P r1 refinements and OLE are pending.
+          - IGM REFINEMENT FROM JOINT SEEDS (site-chain, 62 core-h, `$H/handoff/site-chain/joint-igm/STATUS.md`): null-safe,
+            but every fix root ends as ONE leaf at both seeds (stock: 2 leaves).
+            - The nulls are rejected by the split test's shuffle stage alone.
+            - At 10 % fix, stage B builds arm structure (combination NMI .068 vs stock .034; groups at a1 purity .86, a3 .83).
+              The split test then pairs the six groups into two, and the effect floor merges those.
+            - Stage-B ARI across seeds is .27-.39, with nulls in the same range (RNase P r1: .68). The six-way split follows
+              the seed, not a reproducible set of states. IgM: NEGATIVE.
+          - OLE DEPTH 1 (sparse-ppca2): no site keeps a pole at r1 or r2 in any tree, so the nodes seed from fflex's fallback
+            states (XD K near-ties, gaps .0001-.0033); there is no duplicate-mask tie for joint seeding to fix.
+            - Mean ARI across seeds, r1 / r2: fallback seeds ~.00 / ~.09, refined split .33 / .08, joint groups .21 / .16.
+            - Refinement from the joint seeds is running at r1 (tree seeds 1 and 2, jobs 55100411-2); the rest follow.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry

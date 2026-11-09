@@ -77,3 +77,9 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   Gaussian-null rule (non-Gaussianity, not discreteness).
 - 692k ROOT, replay seed 1 (2026-11-09): region 8's two masks tie (24.9 vs 22.5); 6 children, ARI .19 with production. Its two
   closed-rich children hold 2.24 % at recall .72 (production r1: 1.94 % at .56). Seeds 2 / 3 (same build) pending.
+- PANEL (2026-11-09): IgM refinement from joint seeds is null-safe but keeps NO root split (1 leaf vs stock 2) and its stage B
+  agrees across seeds only .27-.39 (nulls alike; RNase P r1 .68): NEGATIVE. OLE depth 1 has no kept pole at all (fallback
+  seeds, XD K near-ties); joint groups .21 / .16 vs refined split .33 / .08; refinement from joint seeds running.
+- XD-REPRO FINAL: within one latent, hard labels reproduce as well as XD's components (ARI .98-.99; flex deconv labels
+  .95-1.00), so flattening isn't the gap; the split's seed dependence is downstream (site / pole choice, stage-B seeding).
+  flex's own deconv labels give a reproducible r1 group at x1.9-2.0, recall .28-.33, on every seed and both latents.

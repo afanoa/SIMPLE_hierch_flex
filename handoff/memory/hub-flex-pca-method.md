@@ -1,6 +1,6 @@
 ---
 name: hub-flex-pca-method
-description: "Topic index (112 memories): flex_pca method findings (basis, latent, placement, states, PCG, regions, nuisance, speed, selection bias)"
+description: "Topic index (113 memories): flex_pca method findings (basis, latent, placement, states, PCG, regions, nuisance, speed, selection bias)"
 metadata:
   type: reference
 ---
@@ -122,3 +122,4 @@ Moved here verbatim from MEMORY.md on 2026-10-04 (the index had outgrown its rea
 Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read limit again).
 
 - [flex-pcg-pool-memory-fix-2026-10-16](flex-pcg-pool-memory-fix-2026-10-16.md) — flex PCG ~800 GB at box 420…
+- [flex-basis-and-z-signs-arbitrary-across-runs](flex-basis-and-z-signs-arbitrary-across-runs.md) — TRAP: basis files and z flip signs independently across seeds; align by per-particle W z agreement
