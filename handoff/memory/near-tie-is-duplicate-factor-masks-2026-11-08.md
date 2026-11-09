@@ -138,3 +138,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   combination with confident seeding, deeper splits only if replicated, continuum leaves. Bottom-up: promote sites that recur
   across branches to the root (closed appears under r1, r2 and r5 in lf). Checks briefed to sparse-ppca2: cross-branch site
   identity of the closed leaves; F1 x F2 product reproducibility.
+- CROSS-BRANCH (interim, sparse-ppca2): closed leaves differ from their branch-mates mainly in F1 in all three lf branches
+  and in production (energy cosine .43-.64 vs <= .21 elsewhere; halves r .94-.99); r1 and r2 share a pattern (.85), r5 partly
+  differs. Closed acts like an F1 factor crossing the root split. The F1 x F2 product read is pending.

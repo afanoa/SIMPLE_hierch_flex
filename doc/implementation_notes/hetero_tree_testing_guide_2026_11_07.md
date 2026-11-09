@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:49 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2706,6 +2706,22 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   `94da4bbbb`, default off). A Python re-placement matched the fit's own partition at ARI .11 only, so it would
                   have confounded the test. Targets on the 25,344 members at R >= .9; install4.
                 - Textbook weighting: the M-step sites are mapped and the implementation is under way (install5).
+                - FIVE-ARM VERDICT at r131 (`$H/handoff/node-levers/SOFT_LOOP.md`; ~55 core-h for the last three arms). Closed
+                  child concentration at seeds 1 / 2 / 3, with the agreement across seeds:
+                  - hard: x1.00 / 1.01 / 1.00; Jaccard .87;
+                  - soft, tempered: x1.42 / 1.38 / 1.37; Jaccard .84-.86. This is the artefact;
+                  - members at weight 1: x1.34 / 1.27 / 1.34; seeds 1 and 3 agree, seed 2 doesn't;
+                  - confident seeding: IDENTICAL to hard, label for label. The fit's GMM re-forms its regions by k-means over
+                    every member, so the targets only initialise it, and it lands in the same basin;
+                  - TEXTBOOK weighting (`b6cb5f258`, M-step sums only): x1.20 / 1.11 / 1.09; two seeds of three agree;
+                  - production's r131 split: x1.20.
+                  - The latent's closed AUROC is .709-.716 in every arm; no site gives a split in any arm.
+                - Textbook validations: unset = before; weights 1 = unset (1e-8); the subset fits reproduce the child fit; no
+                  shrinkage (corr(w, |z|) .018); all 8 states kept. qtoyflex r12: one leaf in every arm.
+                - READ: the faithful Bishop-Tipping soft refit is sound but only reaches production's level (a mild rotation
+                  of the hard split, ARI with hard .42-.53). The x1.4 came from the extras' spike at the latent origin moving
+                  the k-means boundaries, not from soft weighting, and not principled. Many partitions fit the latent nearly
+                  equally well; without labels nothing picks the closed-aligned one. The soft loop thread is CLOSED.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG

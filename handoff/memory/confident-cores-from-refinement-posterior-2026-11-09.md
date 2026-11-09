@@ -86,3 +86,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   x1.20). But the gain is an E-step tempering artefact: low-weight particles collapse to the origin, k-center states land on
   confident members, so the seeding is in effect a confident core. qtoyflex r12 level. Pending user decision: M-step-only
   weights vs stop vs testing confident-member seeding directly.
+- SOFT LOOP CLOSED (five arms at r131): textbook M-step-only weighting x1.09-1.20 (production x1.20, hard on the same build
+  x1.00); confident seeding = hard (k-means re-forms the regions); the tempered x1.4 was the origin-spike artefact. The faithful
+  soft refit is sound but buys only production level. Responsibilities: rank and select, not carry or weight.
