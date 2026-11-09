@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2560,6 +2560,27 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               does a per-particle likelihood rank the three f2 root runs above the four non-f2 runs (paired, > 2 SE)? If so,
               "best of R by likelihood" can replace the consensus over restarts at the root.
             - For contrast: the split-test z does not pick f2 (seed 1, an f1 run, has the highest z, 33.5).
+            - LIKELIHOOD CHECK RESULT (rnasep-misfit, 0.3 core-h, `rr_llh.py`): the likelihood does NOT pick f2.
+              - Score: the stage-B `corr` (euclid objective: exp(-L), L the sigma2-weighted residual over weighted power), in
+                classification form. merge_master2 writes no per-state evidence, so the mixture form isn't available.
+              - Ranking: seed 4 (whole region, x1.68) first, then seed 7 (whole, x1.71), seed 1 (f1, x1.81), then the f2 runs
+                3 / 2 / 5 (x2.71-2.91), and seed 6 last. Production (r17d, 4 children) scores above every replay.
+              - The paired differences are 1-5 x 10^-4 in L (<= .05 % of the score); z up to 48. That is smaller than the runs'
+                sigma2 differences (.07-.09 % per shell), so the score can't separate site choices in either direction. The
+                ranking roughly follows the split z.
+              - So "best of R restarts by likelihood" would keep a whole-region run at x1.68. The fit is flat across the
+                alternative splits, which means the choice has to come from stability or consensus, not fit.
+            - Literature for unstable classification (user: "what does the literature do?"):
+              - restarts plus the best likelihood (standard EM; fails here because the fit is flat);
+              - split-and-merge EM (Ueda et al. 2000), which needs a likelihood that discriminates;
+              - consensus over runs: cryo-EM practitioners (Sorzano) trust only particles grouped together consistently
+                across runs or algorithms;
+              - evidence-accumulation consensus clustering (Fred and Jain 2005: a co-association matrix over many runs, then
+                linkage) and resampling consensus (Monti 2003, with K chosen by stability). Caveat: Monti's stability can
+                look high on null data (Senbabaoglu et al.), so null replicates are required.
+            - Proposed (zero compute): evidence accumulation over the 7 existing root runs (plus production), using label
+              tuples. Read each consensus cluster's closed share and recall, the consensus partition's leave-one-run-out
+              stability, and the same on null replicates.
             - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").

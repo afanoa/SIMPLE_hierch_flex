@@ -120,3 +120,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   stage A0 reshuffles). f2 = a compact inner sub-block, a correlate of closed ~40 A from the r131 closed block, present in
   the flex basis in all 7 seeds. Fix candidates: a consensus over restarts (+80-105 core-h per 692k node; the half-fit variant
   ~21 core-h untested); keep both tied sites.
+- LIKELIHOOD CHECK (2026-11-09): the stage-B classification likelihood does NOT pick f2. f2 runs rank 4-6 of 7; seed 4
+  (whole region, x1.68) is best. The differences (<= .05 %) are smaller than the runs' sigma2 differences: the fit is flat across
+  the alternative splits, so "best of R by likelihood" fails. Literature route: consensus or evidence accumulation (Fred &
+  Jain) over restarts, with null replicates (Monti's stability can be high on nulls).
