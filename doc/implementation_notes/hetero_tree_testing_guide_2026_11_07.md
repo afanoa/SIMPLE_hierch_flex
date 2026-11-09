@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 13:54 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:27 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2586,6 +2586,27 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                      F1 / F2 / F4 and the r131 closed block.
                   2. F1 x F2 product on the 7 seeds' pursuits: product ARI against the single-site split's, closed per group,
                      and a coupling test.
+                - RESULTS (`$H/handoff/ole-panel/CROSS_BRANCH_F1F2.md`, 6.2 core-h; every site mask is pruned in both trees, so
+                  the checks use particle-level stand-ins plus the leaf maps):
+                  - CHECK 1, YES: closed is one F1 factor crossing the root split.
+                    - The root splits along F2 (AUROC .68-.81). The closed-concentrating splits run along F1: in lf, r1 -> r13
+                      x4.9, r21 -> r211 x3.9, r211 -> r2112 x7.0, plus r5 -> r51 and r511 -> r5111; in production, r1 -> r13 and
+                      r13 -> r131 (AUROC .64-.78).
+                    - r1 and r2 move the same way along F1 (cosine .88-.99); r5 sits on F1 but moves another way (-.16 to .62).
+                    - The leaf maps agree: the closed contrasts sit on F1 (.43-.64), not on F2, F4 or the r131 closed block
+                      (<= .21).
+                  - CHECK 2, MISSES the bar: the root product F1 x F2 (two-way split each).
+                    - Product ARI across seeds: median .28 against the root split's .23, but its minimum is lower (.06 vs .13).
+                      F2 alone reaches .41.
+                    - F1's closed side carries closed in only 5 / 7 seeds (x1.23-1.40, recall .78-.83). In seeds 5 and 6 F1's
+                      split falls on another axis.
+                    - The two sites are independent (a free 2 x 2 table is never > 2.1 SE better). The joint 4-D fit's win is
+                      untrusted: shared noise isn't deconvolved.
+                  - READ: F1 separates closed cleanly only AFTER conditioning on F2 (within a branch); unconditioned at the root
+                    it doesn't. So the tree's order (F2 first) is the right conditioning. What it lacks is gathering F1's closed
+                    sides across branches: a shared F1 direction within every F2 branch, then pooling across branches (a
+                    cross-branch merge-up).
+                  - TRAP: lineage checks need site masks kept at run time; production prunes them.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):

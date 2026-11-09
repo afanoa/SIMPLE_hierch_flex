@@ -1,6 +1,6 @@
 ---
 name: hub-hetero-tree-current
-description: "Topic index (52 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
+description: "Topic index (53 memories): hetero_tree current work: builds and branches, GO decisions, gate fixtures and nulls, open traps (2026-10-20 onward)"
 metadata:
   node_type: memory
   type: reference
@@ -70,3 +70,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [parallel-slate-2026-11-08](parallel-slate-2026-11-08.md) — six parallel tests launched at the user's request (joint seeding, XD repro, subtree and root reliability, IgM, OLE)
 - [confident-cores-from-refinement-posterior-2026-11-09](confident-cores-from-refinement-posterior-2026-11-09.md) — first RNase P purity gain: refinement-responsibility selection beats hard children (r13 x2.47 at recall .30); validation running
 - [subtree-repro-r13-baseline-2026-11-09](subtree-repro-r13-baseline-2026-11-09.md) — BASELINE: r13 subtree at 3 seeds, 0 of 8 closed leaves reproduce (r131 split arbitrary); closed-side unions .41-.55; all-seed intersection 13.6k at x2.91
+- [overlap-toy-soft-vs-hard-2026-11-09](overlap-toy-soft-vs-hard-2026-11-09.md) — overlap toy: 5 oracle-d' parent-cut levels x fix/null, rare A-only child; stock tree vs textbook soft child refit, 3 seeds (running)

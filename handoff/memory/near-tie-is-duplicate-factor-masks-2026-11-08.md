@@ -141,3 +141,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - CROSS-BRANCH (interim, sparse-ppca2): closed leaves differ from their branch-mates mainly in F1 in all three lf branches
   and in production (energy cosine .43-.64 vs <= .21 elsewhere; halves r .94-.99); r1 and r2 share a pattern (.85), r5 partly
   differs. Closed acts like an F1 factor crossing the root split. The F1 x F2 product read is pending.
+- CROSS-BRANCH + F1 x F2 FINAL (`handoff/ole-panel/CROSS_BRANCH_F1F2.md`): the root splits along F2, and the closed-concentrating
+  splits run along F1 in every branch (lf: r13 x4.9, r211 x3.9, r2112 x7.0; production r13, r131). r1 and r2 move the same way
+  (.88-.99). An unconditioned F1 x F2 root product misses (ARI .28 median, F1 carries closed in 5 / 7 seeds). F1 works after
+  conditioning on F2. Next idea: a shared F1 direction within each F2 branch plus cross-branch pooling. Prune trap: site masks.
