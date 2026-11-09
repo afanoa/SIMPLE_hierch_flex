@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:03 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:08 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2171,6 +2171,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           refinements are running (55095905-6). r1 seeds 1-3 are computing.
         - sparse-ppca2 (OLE) and site-chain (IgM) are told to use this null so the whole panel shares one rule.
         - Test build `nodelevers 2e4b50a24` (evidence writer plus importer, env-gated) is compiling.
+      - STEP 2, refinement from the joint seeds through the node's own calls (merge_master2), on the gate roots:
+        - micnull (3 seeds): stage B kept 3 states and the split test passed them (z 52), but the tree's locality guard
+          folded them to ONE LEAF. The null is caught end to end, by the guard rather than the mixture's floor.
+        - qtoy2 (6 seeds): the refined children recover 6 of 8 conformers at purity >= .5 (NMI .667), against 4 of 8 for
+          the single-site tree (NMI .756).
+          - More distinct conformers at lower per-child purity. The seeds alone recovered 3; refinement did the rest.
+          - Holo 101 is no longer isolated (39 % of another child).
+        - qtoyflex (2 seeds): WORSE. Both refined children are majority apo, and only 1 of 3 states is recovered (NMI .133
+          against .225). The 5,413-particle holo seed swelled to 23k in refinement.
+        - r1: K* = 6 at every seed (the cap binds), with groups IDENTICAL across seeds because the flex latent is
+          seed-independent. Two groups hit: 53.6k at x1.66 and 15.8k at x1.56. Refinements at SIMPLE_SEED 1-3 are running
+          (55096516-8).
+        - Read: joint seeding makes the seeds reproducible and adds distinct states (qtoy2 6 vs 4). But refinement's
+          un-priored swelling still drains small states (qtoyflex holo, qtoy2 holo); the refinement step remains the gap.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

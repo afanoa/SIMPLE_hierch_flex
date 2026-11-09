@@ -52,3 +52,10 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   the same mask can seed a hit or a miss. The pole labels decide.
   - The divergence is stochastic site discovery plus pole labelling, deeper than the duplicate-mask tie alone.
   - The latent axes are reproducible, so seeding from them (joint / XD) sidesteps it.
+- Step 2, refinement from the joint seeds:
+  - micnull: the locality guard folds it to one leaf (null caught end to end).
+  - qtoy2: 6 of 8 conformers recovered against the tree's 4 of 8, at lower purity; the holo merges.
+  - qtoyflex: WORSE (1 of 3; the holo seed swells 5.4k -> 23k).
+  - r1: joint seeds IDENTICAL across seeds (K 6; two hit groups x1.66 / x1.56); refinements at seeds 1-3 running.
+  - Read: joint seeding fixes seeding reproducibility and adds states, but un-priored refinement swelling still drains small
+    states.
