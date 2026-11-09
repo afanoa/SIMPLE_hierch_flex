@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:50 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:57 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2595,6 +2595,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 decisive 4-vs-4 test (all 35 splits into disjoint halves).
               - Null floor: independently permuted labels at the same group sizes.
               - Bar: the halves' consensus closed clusters agree at Jaccard >= .5 at >= x3, well above the permutation floor.
+            - RESULT (`ea_consensus.py`, ~4 core-h; 97,354 label tuples): FAILS the bar. 0 / 35 half splits pass.
+              - Lifetime cut (5 clusters): the closed cluster is 146k at x2.25, recall .47. It REPRODUCES between disjoint halves
+                at median Jaccard .505 (floor .003), but only at x2.30. Leave-one-out Jaccard .70-.81 (.44-.50 without seed 2
+                or 6).
+              - Majority cut (1,700 clusters): a closed cluster of 23k at x4.18 (recall .14) that does not reproduce (halves'
+                Jaccard .05).
+              - Why: averaging over all restarts mixes the f1 and whole-region runs (x1.7-1.8) with the f2 runs (x3.3-3.5).
+              - Against production's root (r1 252k at x1.54, recall .56), the lifetime cluster is a reproducible gain in
+                concentration at a slightly lower recall. It is still below the f2 cores. Caveat: heavy distance ties, so the
+                dendrogram isn't unique.
             - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
           - SOFT VS HARD, WHERE IT CAN MATTER (user 2026-11-09: "does refining the probability distribution improve
             reproducibility ... is RNase P even a good test?").

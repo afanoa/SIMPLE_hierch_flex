@@ -127,3 +127,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - 2026-11-09 user: "is there an alternative to this whole mask gymnastics?" The main split still uses the OLD site layer
   (regions from stage-A0 states, the factor share knob, site_rank); sparse PPCA is used only by the opt-in chain. Test briefed
   to sparse-ppca2: sparse sites on the 7 root flex fits (leading site in >= 6 / 7 seeds at Jaccard >= .5, closed >= the f2 seeds).
+- EVIDENCE-ACCUMULATION CONSENSUS over the 8 root runs (2026-11-09): FAILS the x3 bar (0 / 35 half splits). The lifetime cut's
+  closed cluster (146k, x2.25, recall .47) reproduces across disjoint halves (Jaccard .505 vs a .003 floor), better than
+  production's r1 (x1.54); the majority cut's x4 cluster doesn't reproduce. Mixing f1 / whole-region runs dilutes it.
