@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:29 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:31 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2195,6 +2195,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             raises agreement instead (.03-.19 -> .14-.36).
           - So a frozen-membership root would keep .86 agreement but only x1.3: no.
           - Next read (zero compute): the 2-run consensus of the refined closed children. Is it purer than either run's child?
+          - CONSENSUS READ (`rr_consensus.py`): YES.
+            - Seeds 2 and 3 (same site choice), both: 110,312 at 4.13 % (x3.28), recall .52, against x2.91 / x2.71 at .62 / .59
+              for each child alone.
+            - Particles only one run keeps (76k) sit near background (x1.47): the runs disagree about non-closed members.
+            - Across different site choices the intersections are smaller and purer: seed 1 with seed 2 or 3 x3.7-4.2 at
+              recall .20-.21; all three seeds 27k at x4.52, recall .18; all four 23k at x4.25.
+            - The seeds 2-3 core AT THE ROOT matches production's depth-2 node r13 (4.11 % at recall .38), with more recall.
+          - Candidate root procedure: a stable site choice (sparse-ppca2's stage A / B), then two replicate refinements and
+            their consensus as the child. Open question: does the consensus of one pair reproduce the consensus of another
+            pair? That needs two more root replays under the same choice (~200 core-h); it waits on stage A.
       - Null-safe K (sparse-ppca2): the Gaussian-null floor FAILS.
         - All three null roots get K > 1 (micnull 5, qtoynull 4), and qtoyflex's gain sits inside the nulls' range.
         - The latent likelihood can't decide K; the map-level split test must. It is running on fixed-pose maps at all five

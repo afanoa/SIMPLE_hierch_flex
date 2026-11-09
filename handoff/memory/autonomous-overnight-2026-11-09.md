@@ -24,3 +24,5 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
   - The pose-weighted latent ran in two stages (~59 core-h) and was DROPPED by its pre-set bar: averaged draws lose ~20x
     gain, and the single-pose ladder still picks 14.6 A with finer caps allowed.
   - Root replay final: no reproduction (ARI .08-.37), and the site choice and stage A / B both move.
+  - Root refinement: it concentrates closed (seeds x1.3 -> x2.7-2.9) and reshuffles the rest. The two-run consensus core
+    is 110k at x3.28, recall .52, matching production's r13 at the root. Two more root replays wait on stage A's choice rule.

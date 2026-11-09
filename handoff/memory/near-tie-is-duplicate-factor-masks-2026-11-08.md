@@ -102,3 +102,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - ROOT REFINEMENT READ: seeds carry only x1.30-1.37; stage A / B lifts seeds 2 and 3 to x2.71-2.91 at the same recall while
   moving 50-66 % of particles. Seeds 2 vs 3: seed groups Jaccard .86, closed children .59 (closed rows .76). Freezing
   membership would keep .86 but lose the concentration. Consensus-of-replicates read pending.
+- ROOT CONSENSUS (zero compute): seeds 2 and 3's closed children intersect in 110k at 4.13 % (x3.28), recall .52, purer than
+  either (x2.91 / x2.71); the one-run-only particles sit at x1.47. At the root this matches production's r13 (4.11 %, .38).
+  Candidate: stable site choice + two replicate refinements + consensus. Pair-to-pair reproducibility is untested.
