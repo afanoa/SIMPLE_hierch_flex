@@ -150,3 +150,6 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
     lacks the evidence writer.
   - Approved on a test build: a responsibility-table importer (soft vs hard maps at r13) and the writer port (responsibility
     reproducibility across the wip r1 replays).
+- Soft vs hard maps at production r13 (2026-11-09): responsibility weighting DILUTES (closed-arm contrast .457 -> .406, -11 %,
+  half maps +- .004) while resolution improves. Use responsibilities to rank and select particles, not to weight maps. Next: a
+  confidence-threshold selection curve.

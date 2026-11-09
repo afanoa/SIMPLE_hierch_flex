@@ -15,5 +15,9 @@ r131 .554 -> .580 AUROC). Maps at those nodes were pruned (only r1311 kept); b.s
 **Why:** the user asked for responsibilities out of the refinement; they already exist for production at zero cost, while a
 cross-build pass is invalid ([[wip-refine3d-redraws-poses-each-iteration-2026-11-08]]).
 
-**How to apply:** for soft-label tests on the production tree start from these files; soft maps need a responsibility-table
-importer into a state weight set (reconstruct3D m_estimator=flex), ~30 lines, not yet written.
+Soft maps tested at r13 (2026-11-09; test build's SIMPLE_STATE_WEIGHTS_TABLE importer + reconstruct3D m_estimator=flex): the
+responsibility weighting dilutes the closed-arm contrast between the two states from .457 to .406 (closed child .895 -> .875,
+other .438 -> .469; half maps agree to .004) while improving resolution (6.33 -> 6.01 A). Hard labels give the more contrasted maps.
+
+**How to apply:** use these files to rank particles (soft AUROC beats hard), not to weight reconstructions; the importer lives on
+the nodelevers test branch (9db93abb7), off by default.

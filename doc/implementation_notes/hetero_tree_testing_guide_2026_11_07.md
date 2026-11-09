@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:08 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:11 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2185,6 +2185,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           (55096516-8).
         - Read: joint seeding makes the seeds reproducible and adds distinct states (qtoy2 6 vs 4). But refinement's
           un-priored swelling still drains small states (qtoyflex holo, qtoy2 holo); the refinement step remains the gap.
+      - SOFT vs HARD MAPS at production r13 (its own responsibilities; test install gate 15/15; ~0.4 core-h): soft weighting
+        DILUTES.
+        - The closed-leaning map's closed arm goes .895 -> .875, and the other state's .438 -> .469. The between-state
+          contrast drops .457 -> .406 (-11 %); the open arm is unchanged.
+        - The half maps agree to +- .004, so this is real. Resolution improves (6.33 -> 6.01 A and 7.10 -> 6.51 A).
+        - Read: responsibilities are worth using to RANK particles (AUROC .80 vs .70), not to weight maps.
+        - Next, cheap: a confidence-threshold selection curve at r13 / r1 (closed share and recall against the
+          responsibility threshold), plus hard maps of the kept particles. Reference-row share leads, because confidence
+          selection inflates own-data maps.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
