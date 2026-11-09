@@ -88,3 +88,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   the root on wip; production's root had a dominant site (63.3 vs 43.0).
 - OLE depth 1: refined joint children disagree across independent trees (.03 / .07), confounded by different rows; same-row
   replays running.
+- Root tied pairs are less duplicate than r1's: seed 1's region-8 masks Jaccard .549 (centroids 12.8 A apart), seed 2's region-9
+  masks .365 (29.3 A); r1's pair .67-.68 at ~6 A. OLE depth 1: same-row replays reproduce the single-site split almost exactly,
+  so OLE's cross-tree disagreement comes from the root's divergence.

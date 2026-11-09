@@ -30,3 +30,6 @@ Use a fixed geometric ladder of caps and 2 SE as the only constants. Never propo
   - Otherwise the ladder is final, with its two cost cuts (concurrent first caps, a round-1 null screen).
 - 2026-11-08 evening: the 5th in-model form (seed-ball band) lost too. The quarter-octave ladder is the data-derived band
   (commit f4be24169, gating).
+- 2026-11-09 GAP (rnasep-misfit): the production ladder searches only COARSER than the node band (one octave down), so the node
+  lp (15 A at RNase P) is a fixed upper limit; r131 can never pick finer than ring 15. Stage 1 of the pose-weighted r131 test
+  runs the single-pose ladder at caps 15 -> 8.9 A to see whether the data want a finer band.

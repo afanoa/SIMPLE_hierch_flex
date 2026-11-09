@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:55 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:02 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2404,6 +2404,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Across independent trees the refined joint children don't agree (r1 ARI .03 with 2 vs 5 children; r2 .07). This
               is confounded: the trees' depth-1 nodes hold different rows (J .73-.75). RNase P's .68 came from same-row
               replays, so same-row OLE replays (`ole_replay.sbatch`) of seed 1's r1 / r2 at SIMPLE_SEED 2 are running.
+            - Mean cross-tree ARI at depth 1 (rows shared): single-site seeds .08, single-site split .19-.21, joint groups .19,
+              refined joint children .20. Joint seeding gains nothing across trees.
+            - SAME ROWS: the single-site splits replay almost exactly (r1 12,112 / 11,452 vs 12,088 / 11,476; r2 14,344 / 6,503
+              vs 14,293 / 6,554). OLE's depth-1 disagreement comes from the root's divergence, not from the node's seeding.
+              The same-row comparison of all arms (`ole_samerows.py`) is pending.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry
@@ -2468,6 +2473,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               copies). Arms: settled single pose vs pose-weighted latent (information average, w_k = 1/K), each with its own
               ladder band. Build the proper fit if pose weighting moves the pick finer or raises held-out gain or closed
               separability beyond the seed spread; otherwise drop it for good.
+            - Priced by rnasep-misfit: ~500-620 core-h as specified. The pose-weighted arm multiplies the pursuit's operator,
+              E- and M-step and memory by K. Approved in stages:
+              - stage 1, ~32 core-h: the 8 draws, plus the single-pose ladder with caps 15 -> 8.9 A, 2 seeds;
+              - then 8 poses with caps 15 -> 8.9 A and 2 seeds (~225 core-h), unless the draws barely move (median < 1 deg).
+            - FINDING: the production ladder searches only coarser than the node band, so at r131 it can never pick finer than
+              ring 15. The node lp is a fixed upper limit on the "data-derived" band. Stage 1's single-pose arm tests it.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
