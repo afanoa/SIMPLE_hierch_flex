@@ -3072,6 +3072,101 @@ Waiting for the user:
       these stacks are the 10 stack parts.
     - Port entry if it wins: a per-particle (or per-micrograph) sigma2 per shell in flex's observation operator.
 
+### 7.11 Proposal (2026-11-09): three extensions of the tree model, with gates
+
+User: "I do not like the current design in production because it's not elegant. We refine, flex, refine but there is no
+integration of the flex with the refinements ... propose some elegant extensions of the tree theory/mathematics that will
+actually make a difference. And with it we need a proper testing plan with gates." Also: RNase P may be too easy a molecule to
+show a major development; expect the gain on harder ones.
+
+Status: proposal only. Nothing run, nothing built. Overlap with earlier work was checked against section 6 and the memory
+notes, not against every handoff folder; each extension lists what is already known and what is new.
+
+All three keep the hard gate: flex fits at frozen poses, and no latent term enters the pose, shift or state draws.
+
+#### What the verdicts say together
+
+- The latent is deterministic and the tree is not. XD on a node's own flex cache reproduces exactly across seeds (map r 1.000);
+  the split children reach ARI .20-.77 (xd-repro).
+- Refinement adds the value, but only from good references. Pure references lift r1 from .756 to .839 (7.3); the instability is
+  site discovery and pole seeding, not refinement (node-levers).
+- Information flows almost one way. Flex gives refinement seeds. The only refinement -> flex signal is the site factors
+  (recB0 state deviations inside site masks; section 6), and nothing tells flex what stage B ended up separating.
+- Closed is a factor, not a branch. It sits on F1 while the root splits on F2, so closed is spread over r1, r2 and r5 before it
+  is tested (cross-branch check, 2026-11-09).
+
+#### E1. Close the loop between flex and refinement
+
+- Identity. At frozen poses, with r_i the residual against the node mean and mu_k - mu = V z_k inside the flex span:
+  - l_ik - l_i0 = z_k' b_i - 1/2 z_k' A_i z_k, with b_i = V' P_i' r_i and A_i = V' P_i' P_i V (CTF and noise whitening in P_i).
+  - So stage B's state evidence is flex's statistic wherever the state contrasts lie in the span. Refinement adds to flex only
+    through the out-of-span part of its contrasts.
+- Backward arrow (new): append stage B's state contrasts to the node's flex basis, then deconvolve along them.
+  - The contrasts are cross-half: half A's contrast scores half B and the reverse, or the fission copy. Same-data contrasts carry
+    the noise-locked factor (7.8).
+  - This differs from the site factors: those are recB0 deviations inside site masks, taken before stage B.
+- Forward arrow: references are mu + V z at the deconvolved atoms, not averages over hard-labelled subsets.
+  - Target: the mixed-reference fixed point (r1's 80/20 references, 7.3).
+  - Known and related: latent seeding of stage A did not help the finished stage B, and shrinking stage-B references toward the
+    node mean lost the r131 corner (section 6). This arrow goes the opposite way from shrinkage; it is still the riskier half.
+- Stopping rule: a node is converged when stage B's contrasts lie in the flex span (out-of-span evidence at the null's level) and
+  flex's atoms are stage B's states. One self-consistency condition replaces "refine, flex, refine".
+- Not this: refitting flex's class model from the refinement's posterior (self-reinforcing on olenull, section 6). E1 passes maps
+  across halves, never posteriors.
+
+#### E2. Rank poles by the third cumulant
+
+- A state of share p at separation delta (noise units along a latent direction) adds variance p (1 - p) delta^2. That cannot be
+  told from heteroscedastic noise, and variance ranking buries it (7.9, compressive classification).
+- Its third cumulant is p (1 - p) (1 - 2p) delta^3.
+  - Gaussian noise has none, whatever the per-particle A_i.
+  - A symmetric scale mixture has none either. That covers per-particle quality, which is what gives the nulls their heavy
+    tails (kurtosis 5-28) and fools the Gaussian-null ladders.
+  - Kurtosis is useless at d' ~1 (-0.08 for two states, -0.05 for an even continuum).
+- Detection: z ~ p delta^3 sqrt(N / 6) for small p. At 692k, p = 2 %, delta = .9: about 4.6 sigma. Against the measured
+  n / sqrt(N) ~16-17 limit the gain grows as delta^3, so it is small at delta < 1 and large above.
+- Limits:
+  - blind to balanced states (variance and the split test already see those);
+  - an asymmetric continuous motion and a one-sided amplitude tail also score, so it only ranks proposals. Acceptance stays
+    with the cross-half or fission test.
+- Use: order the site poles and the tails that seed a split by cross-half third cumulant, in place of the pole margin. The r1
+  hit or miss was decided at margins 9.482 vs 9.466.
+
+#### E3. A sum-product structure instead of a tree
+
+- Splits on independent factors commute. Nesting them is arbitrary: it halves the data for the second factor (sqrt(2) per
+  unnecessary level, detection-limit session) and makes the split order a source of irreproducibility.
+- Structure:
+  - sum node = a split, as now;
+  - product node = independent factors, each resolved at the node's full N.
+- Choice between them: a conditional-independence test on the cross-half table of the two factors' labels. Measured once
+  already: the F1 x F2 free table never beats the product by more than 2.1 SE.
+- Deliverable: per-factor extremes at full N. Joint cells are built only where the dependence test asks for them; multiplying
+  per-particle argmax labels over regions is too noisy (klem tuples, 2026-10-18).
+- Known and related: the factorial site layer (a post-leaf layer), the tree-latent five-arm product on IgM, sparse PPCA's
+  one-block-per-arm result, the conditional-F1 check of 2026-11-09. New: the independence test decides nest or product at
+  every node, the root included.
+- Expected: the largest effect on IgM (five arms) and mm3q, where the tree fragments. On RNase P it tests closed on F1 at the
+  root's N instead of after the F2 split.
+
+#### Gates
+
+Standing kill conditions at every stage: nulls stay one leaf; closed is read on the fission copy; input-free and knob-free;
+at least three seeds replicate; no 692k run before G4.
+
+| Stage | Data | E1 passes if | E2 passes if | E3 passes if |
+| --- | --- | --- | --- | --- |
+| G0: Python on existing caches, no SIMPLE runs | the 16 r1 replays, fixture roots, the 4 nulls | the out-of-span share of the state evidence is larger in hits than in misses | the closed-carrying tail tops the ranking in >= 14 of 16 replays; nulls within 3 SE of zero | the nest-or-product verdict is the same on every seed |
+| G1: truth fixtures and null twins | qtoy2, qtoyflex, mm3q, IgM 10 % and 5 % | qtoy2 r1 accuracy >= .80 (now .756; pure-reference bound .839) | rare-state limit n / sqrt(N) <= 12 (now 16-17) | mm3q not fragmented; IgM 10 % >= 4 of 5 arms (tree: one leaf) |
+| G2: RNase P node replays, 6 seeds | r1, r131 | hits 6 of 6 (now 2-4 of 6) | the same | closed child >= x2.1 at recall >= .38; cross-seed ARI >= .68 |
+| G3: panel | OLE, EMPIAR-10076 | OLE depth-1 seed divergence gone | the same | 10076 deposited-class recall not below the current tree |
+| G4: one 692k pair, two seeds | RNase P, landscape scorer | above the same-build seed floor; closed share >= 9 %; wall 5-7 h | the same | the same |
+
+- A failure at G0 or G1 drops that extension. G4 runs only for what passed G2 and G3.
+- The thresholds are today's baselines from the memory notes and section 6. Re-read each against its handoff VERDICT before a
+  run is judged on it.
+- Order: G0 for all three first (no cluster cost). If E3 passes, build it first: the existing checks already support it.
+
 ## 8. Decisions waiting for the user
 
 1. depth_wiener on by default: gated and cleared, but no truth-map benefit (section 6), so the measured case is for `depth_wiener=no`.
