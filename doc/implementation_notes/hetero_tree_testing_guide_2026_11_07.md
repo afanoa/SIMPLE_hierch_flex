@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:42 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:44 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2264,6 +2264,12 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - Against the user's rules: it REPLICATES where single-site seeding does not, and gives the most diverse r1
             partition seen.
         - r13 subtree: seed 1's r1311 splits into r1311_s1 (11,618) and r1311_s2 (11,645), mirroring production's corner.
+          Seed 3's does too (13,629 / 15,122); all three seeds' r1311 nodes are done.
+        - USER (2026-11-09): "Panel first". The r1 subtree method test (joint seeding at every node, three seeds, ~450 core-h)
+          waits on the IgM and OLE refinement-from-joint-seeds results.
+          - OLE: all four roots split four ways (r1-r4). Depth-1 nodes run one at a time (~4 h more), a root-level trace is
+            running, and jseed refinement is ready for the diverging nodes.
+          - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
