@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:36 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:37 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1952,6 +1952,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          occupancy, swing).
       - The question: does the joint mixture hold the closed group at the seed where single-site seeding missed, and give
         more distinct conformations?
+    - User (2026-11-08): "of course this method has to be generalizable and have an advantage across data sets".
+      - The failure mode already generalizes: OLE runs diverged only at depth-1 seeding near-ties in October
+        (`planned/hetero_tree_ole_reproducibility_2026_10_28.md`), as RNase P r1 does now.
+      - The cheap test is extended to OLE's diverging depth-1 node and to one truth fixture (mm3q or qtoy2 root, plus a null),
+        under ~40 core-h, report before building.
+      - Panel for any port:
+        - truth fixtures (qtoy2, qtoyflex, mm3q, IgM 10 / 5 % fix and nulls);
+        - RNase P;
+        - OLE;
+        - EMPIAR-10076 (deposited assembly classes).
+      - Metrics: seed reproducibility, the number of honestly distinct conformations, deposited-state recall, nulls at one
+        leaf.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
