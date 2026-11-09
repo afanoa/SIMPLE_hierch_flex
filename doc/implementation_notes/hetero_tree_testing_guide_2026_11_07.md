@@ -1852,8 +1852,9 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Restored: recB0/b.simple from a 19:10 copy, and both hetero_step.sh. The coordinator verified 0 links left.
       - Lost: the step logs, exit files, node_rows bookkeeping, and the pcg_support and RESOLUTION files in those two
         directories. No result, split, map, site or coordinate file was touched.
-      - The harness now refuses symlinked or reused destinations and never removes through a link. Production goes
-        read-only.
+      - The harness now refuses symlinked or reused destinations and never removes through a link.
+      - Production is NOT read-only: the session's permissions refused the recursive chmod. Making the tree read-only is left
+        to the user (`chmod -R a-w .../f692_r17d_s1/1_hetero_tree`, reversible with `u+w`).
       - The first four r131 arms ran with the parent's mask; they are kept as a variant, and the corrected arms run in fresh
         roots.
 Waiting for the user:
