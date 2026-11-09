@@ -64,3 +64,7 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
   - Hard cuts keep .56 of closed rows at the root, .68 at r1, .93 at r13 -> r131, .59 at r131. SOFT CARRY RECOVERS NOTHING:
     the leavers are confidently elsewhere (root: 2,842 of 3,826 at R < .2; soft recall .531 < hard .561; +1.5-2 % at matched
     mass). They sit in r2 at the root's average closed share: the root split is not aligned with closed.
+- 2026-11-09 user: "flex -> refine prob distribution -> carry down node -> refit; how do we compare to Bishop's hierarchical PCA?"
+  Answer: the tree is the hard (classification-EM) limit of Bishop-Tipping, and the soft parts change little on RNase P. Their
+  full-PPCA E-step is barred by the frozen-pose gate. What we take is their single density, i.e. EM's best-of-restarts by
+  likelihood. A likelihood ranking check on the 7 root replays (do the f2 runs win?) is briefed to rnasep-misfit.

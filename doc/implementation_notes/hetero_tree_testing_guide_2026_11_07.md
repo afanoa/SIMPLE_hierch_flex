@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 09:19 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:19 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2546,6 +2546,21 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   (untested);
                 - for f1 / f2 ties: keep both sites and seed from both (+4 core-h; untested).
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
+          - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
+            prob distribution -> carry down node -> refit"):
+            - The tree already runs that loop with hard membership: per node fflex, sites, seeds, stage A / B, split test, and
+              flex refit at each child. Bishop-Tipping's version would carry the posterior down and refit children with weights.
+            - The soft parts are tested on RNase P and change little: responsibilities are sharp (median .86-.92), soft
+              carrying recovers nothing (the closed rows lost are confidently elsewhere), and path products dilute. So the tree
+              is the hard-assignment (classification-EM) limit of their hierarchy, with those numbers as the justification.
+            - Their E-step uses each child's full PPCA (mean and W). Inside refinement that is Woodbury algebra, which the
+              frozen-pose gate forbids. Outside refinement it is the frozen-pose mixture, too weak at r131 (d' ~.9).
+            - Still to take: their hierarchy is ONE density, so EM's remedy for different optima applies: run several restarts
+              and keep the best likelihood. LIKELIHOOD CHECK (user: "Yes, check it"; rnasep-misfit, little or no compute):
+              does a per-particle likelihood rank the three f2 root runs above the four non-f2 runs (paired, > 2 SE)? If so,
+              "best of R by likelihood" can replace the consensus over restarts at the root.
+            - For contrast: the split-test z does not pick f2 (seed 1, an f1 run, has the highest z, 33.5).
+            - Not yet built: a weighted flex fit (per-particle weights in the M-step), which is the literal soft refit.
           - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
             the same binary.
             - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves
