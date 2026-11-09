@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 20:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1899,6 +1899,22 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         - arm a on production's own builds (r17d's or build_lf, and merge_master2) with the same inputs;
         - arms a / b at a second SIMPLE_SEED.
         About 100 core-h; the root stays on hold.
+      - CHECKS (55091355-8, ~25-30 core-h each): NOT a wip regression.
+        - Build check, arm a on the same inputs:
+          - production's own r17d binary (sha256 = the manifest's): 2-way split, x1.08, two sites (8.95 / 5.57);
+          - merge_master2 = the wip baseline exactly: x1.10, sites 9.48 / 9.47 / 7.34 / 5.45.
+          - The latent is identical across the three builds (.705). Every build misses production's dominant site-2 pole on
+            these inputs; the only stand-in is the parent's recB map.
+        - Seed check (new build, SIMPLE_SEED=2): baseline finds the 3-way split, x2.00 (recall .395); noise model x1.88.
+          - With seed 1 (baseline x1.10, noise x1.90): the baseline's miss was a coin flip at a near-tie.
+          - The noise model hit both seeds without beating the baseline's hit (x2.00) or production (x2.12). No gain; at most
+            a robustness hint (2 / 2 against 1 / 2).
+        - Reading: r1's closed concentration rests on the site layer's pole choice at near-tie margins. None of six replays
+          found a pole as dominant as production's (16.0 vs 4-5.6). This is a reproducibility weakness of node site
+          discovery and ranking, the same on r17d and on wip.
+    - VERDICT (r131, r13, r1; ~490 core-h): neither lever concentrates closed at any node. The MAP class prior removes the
+      split, and the noise model gives no gain. The root is not run. The open issue is reliability: the r1 closed split is a
+      near-tie seeding outcome.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

@@ -130,3 +130,12 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - Class prior: no gain or one leaf.
   - HARD-GATE CONCERN: the wip build's baseline loses r1 -> r13. Checks briefed: arm a on production's own builds (stand-in
     maps vs code), and a second seed for a / b.
+- NODE-LEVER VERDICT (2026-11-08 ~22:30, ~490 core-h): neither the noise model nor the MAP class prior concentrates closed at
+  r131, r13 or r1, so the root is not run.
+  - r1 build check: production's own r17d binary and merge_master2 match the wip baseline on the replay inputs, so this is not a
+    regression.
+  - r1 seed check: the baseline finds production's 3-way closed split at seed 2 (x2.00) but not at seed 1 (x1.10). The noise
+    model found it at both (x1.90 / x1.88): a robustness hint only.
+  - TRAP: r1's closed split rests on the site layer's pole choice at near-tie margins (9-10). None of six replays found
+    production's dominant margin (16 vs 4-5.6). Closed recovery at r1 is a reproducibility weakness of site discovery and
+    ranking.
