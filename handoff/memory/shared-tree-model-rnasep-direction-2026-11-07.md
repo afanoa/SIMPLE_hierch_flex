@@ -142,3 +142,11 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
 - 2026-11-08 user: "well test reliability. If this is not replicable, the methods must be redesigned". The r1 reliability test
   (seeds 3-6, arms a / b, hit = closed child >= 1.5x) is briefed to the f2r session. Robustness redesign options are in guide
   7.10 thread 14.
+- 2026-11-09 ~01:30, refinement responsibilities (the user's "refine the pdf and get responsibilities out"):
+  - Production's r17d build writes prob_state_evidence.txt every stage-B iteration.
+  - Responsibilities rank the closed rows better than hard labels at every node (r .600 -> .631, r1 .682 -> .746, r13 .697 ->
+    .804, r131 .554 -> .580). At r13 the closed rows are the most confident particles.
+  - TRAP: wip / master refine3D stores POSE DRAWS (72 % of directions re-drawn per iteration), not settled poses. The wip tip
+    lacks the evidence writer.
+  - Approved on a test build: a responsibility-table importer (soft vs hard maps at r13) and the writer port (responsibility
+    reproducibility across the wip r1 replays).
