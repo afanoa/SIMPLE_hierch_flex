@@ -26,3 +26,8 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   - Refinement's membership switching is not the source of run-to-run instability (the user's hypothesis); it keeps each run in
     its seed's basin.
   - The fix belongs in site discovery and pole selection.
+- Full trace switch rates (seed -> stage B): 26 % with two seeds (misses), 53 % with three (hits). The small z3hi seed
+  (4-6k) grows to ~75k = the closed-enriched child; closed rows switch at .28 in every run.
+  - Refinement's switching is reproducible given the seeds, and it is HOW r1's closed state forms.
+  - Never remove refinement's re-assignment at a node unless the latent mixture forms the group itself.
+  - OLE's October outputs are gone, so tracing OLE needs a rerun.

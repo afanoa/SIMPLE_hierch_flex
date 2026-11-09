@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:51 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:54 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2026,6 +2026,22 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - With part 1, the core is site discovery: near-duplicate factor masks with different pole sets, chosen at a near-tie.
         That is where the fix goes.
       - The stage-B column and per-run switch rates are being recomputed after a dump fix.
+      - FULL TRACE (job 55093658):
+        - Step 1, sites: hit and miss runs share only 0-2 of 7-8 candidate names. The two b seeds share 5 / 5, and a_s1
+          equals merge_master2 exactly.
+        - Step 3b: the fflex states (8) are only loosely reproducible in every pair (.30-.54).
+        - Switch rate, seed -> stage B:
+          - two-seed runs (the misses): 26 % of particles;
+          - three-seed runs (the hits): 53 %. The small z3hi seed (4-6k) grows to ~75k and becomes the closed-enriched
+            child.
+          - The closed rows switch at .28 in every run.
+        - So refinement's switching is reproducible given the seeds. It is also how the closed state FORMS at r1: it grows a
+          small latent tail seed into the third state.
+        - The instability is whether the site layer keeps that small second pole, and which duplicate factor mask wins.
+      - CAVEAT for the reconciliation proposal: a pose-only refinement (step 4 above) would remove the growth that makes r1's
+        closed child, unless the latent mixture forms that group itself. Part 2 (a joint mixture on z1 / z3) answers this.
+      - OLE's October outputs are gone from scratch (only recipe4, recipe9, site_states and tools_backup remain). Tracing
+        OLE needs a rerun.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
