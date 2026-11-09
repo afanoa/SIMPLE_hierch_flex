@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:11 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:14 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2085,6 +2085,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
         run's stage-B maps gives per-particle state scores, turned into responsibilities at the physical temperature.
         - Readouts: sharpness; the closed-child responsibility's AUROC on the closed rows against its hard purity and
           recall; responsibility correlation across runs against the hard-label ARIs; soft against hard maps.
+15. Parallel slate (user, 2026-11-08: "we have a lot of compute availble so please test many things in parallel"). At launch
+    our usage was norm 162 and csbdevel 32 cpus, so ~1,000 cores were free. Every session runs under the same rules: never rm,
+    fresh folders only, production trees read-only, scancel by id, waiters on every job, price first.
+    | session | test | question | budget |
+    | --- | --- | --- | --- |
+    | flex-refine-flex-weights | refined joint seeding (r1 x3 seeds, qtoy2, qtoyflex, nulls); responsibilities; r1 seeds 3-6 tally; r131 X1 honest arms | does joint seeding hold after refinement, null-safe? | ~120 + 20 core-h |
+    | tree-latent | population-level XD on full node latents (r1 replays, qtoy2, qtoyflex, IgM fix, nulls) | do XD components reproduce where hard partitions don't? | < 60 core-h |
+    | extremes-repro | r13 subtree to leaves, merge_master2, 3 seeds | how many closed leaves reproduce today (the baseline)? | ~300 core-h |
+    | rnasep-misfit | 692k root replay at maxdepth 0, merge_master2, 3 seeds | is the root split reproducible, or does instability start there? | ~750 core-h |
+    | site-chain | joint seeding at the IgM 10 % / 5 % fix roots and nulls | more true arm-state combinations than the tree's root split? | < 80 core-h |
+    | sparse-ppca2 | OLE: maxdepth-1 trees at 4 seeds, node trace, joint seeding at diverging nodes | does the October divergence reproduce, and does joint seeding fix it? | ~150 core-h |
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

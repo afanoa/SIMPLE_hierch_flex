@@ -67,3 +67,4 @@ Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [wip692-full-tree-vs-production-2026-11-08](wip692-full-tree-vs-production-2026-11-08.md) — full 692k tree on wip defaults vs f692_lf_s1 / r17d tonight; better/same/worse rules fixed before the run
 - [master-multistate-posterior-draw-2026-11-08](master-multistate-posterior-draw-2026-11-08.md) — master cac010e40: joint posterior state draw, no class prior, 10 % state never isolated, half the labels flip at 20 A; do not merge ungated
 - [near-tie-is-duplicate-factor-masks-2026-11-08](near-tie-is-duplicate-factor-masks-2026-11-08.md) — r1 (and OLE) seed-site near-ties are duplicate factor masks of one region; the z3 pole decides closed; merge them, keep the union of poles
+- [parallel-slate-2026-11-08](parallel-slate-2026-11-08.md) — six parallel tests launched at the user's request (joint seeding, XD repro, subtree and root reliability, IgM, OLE)
