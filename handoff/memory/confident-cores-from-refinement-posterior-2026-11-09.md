@@ -89,3 +89,6 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - SOFT LOOP CLOSED (five arms at r131): textbook M-step-only weighting x1.09-1.20 (production x1.20, hard on the same build
   x1.00); confident seeding = hard (k-means re-forms the regions); the tempered x1.4 was the origin-spike artefact. The faithful
   soft refit is sound but buys only production level. Responsibilities: rank and select, not carry or weight.
+- SOFT REFIT AT BETTER NODES (300 core-h): r1 -> r13 is level (x1.74 vs x1.71, the same split, Jaccard .90 both, latent .744
+  vs .733). root -> r1: a different, more reproducible split (.83 vs .70-.84) but lower recall and a worse latent; production's
+  r1 split (x2.12) is still best. The Bishop-Tipping soft refit buys nothing material on RNase P. The overlap toy is pending.

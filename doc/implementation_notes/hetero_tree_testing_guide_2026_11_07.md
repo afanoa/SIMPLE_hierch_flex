@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:47 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 14:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2775,6 +2775,20 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     - Rebuilt (55124405) at SNR0 .0075: d' .75-3 at h +-1.37-7.43 deg (measured .75-2.98). The child is a
                       40.6 deg hinge, matched to conf18 by per-particle information.
                     - New gate: a fixture's trees start only if its refined median angle error is < 15 deg.
+                  - RNase P RESULT (f2r, 300 core-h; install5 both arms, untempered fits, all 8 states kept): no clear soft win
+                    at either cut.
+                    - r1 -> r13 (5 seeds): hard x1.70-1.71 (recall .354-.355); soft x1.73-1.74 (.354-.356); production x1.69 at
+                      .353. The SAME split (hard vs soft closed-child Jaccard .92-.93); cross-seed Jaccard .90 in both. Latent
+                      AUROC .744 vs .733. Level: +.03 concentration, equal recall and reproducibility.
+                    - root -> r1 (3 seeds), read at r1's split:
+                      - hard: x1.79-1.90, recall .355-.389; seeds agree at Jaccard .70-.84;
+                      - soft: x1.92-1.93, recall .354-.358; Jaccard .83-.84;
+                      - production: x2.12, recall .380.
+                      - The soft split is a DIFFERENT split (Jaccard .17-.22 with hard): more reproducible, marginally more
+                        concentrated, but lower recall (~250 fewer closed rows) and a worse latent (.670 vs .722). Production's
+                        own r1 split is still the best seen.
+                    - READ: the faithful Bishop-Tipping soft refit buys nothing material on RNase P, even at the node where the
+                      parent cut drops closed signal. The overlap-toy curve decides whether it helps anywhere.
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG

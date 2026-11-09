@@ -70,6 +70,7 @@
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
 - [wip-refine3d-redraws-poses-each-iteration-2026-11-08](wip-refine3d-redraws-poses-each-iteration-2026-11-08.md) — wip refine3D samples poses (72 % re-drawn per iteration), r17d settles; cross-build evidence pass invalid
+- [textbook-soft-refit-r13-r1-no-clear-win-2026-11-09](textbook-soft-refit-r13-r1-no-clear-win-2026-11-09.md) — soft refit at r13 = hard; at r1 more reproducible but lower recall, worse latent; no clear win
 - [textbook-flex-weighting-production-level-2026-11-09](textbook-flex-weighting-production-level-2026-11-09.md) — M-step-only weights validated; soft child at r131 x1.1-1.2 only; confident seeding = hard; tempered x1.4 was an artefact
 - [sqrt-weight-on-planes-tempers-flex-estep-2026-11-09](sqrt-weight-on-planes-tempers-flex-estep-2026-11-09.md) — TRAP: sqrt(w) on the flex planes tempers the E-step; low-weight particles collapse at the latent origin and the state placement breaks; weights belong in the M-step sums only
 - [soft-carry-no-gain-on-fixtures-2026-11-09](soft-carry-no-gain-on-fixtures-2026-11-09.md) — soft label carrying gains nothing on qtoy2/qtoyflex truth or reproducibility; lost states leave confidently
