@@ -33,3 +33,4 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
   - Consensus panel interim: a filter. It helps only when runs made the same choice and loses states when they didn't.
   - f2r's turn hit an API error (ENOTFOUND); nudged to resume the X1 honest contrast.
   - f2r X1 honest contrast at r131: the split separates nothing closed on honest maps (imprint); node-levers thread closed.
+  - Site chain reviewed and fast-forwarded onto wip as 596455884 (opt-in, default off); the key-on path on wip is untested.

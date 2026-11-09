@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:23 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 05:21 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2514,6 +2514,11 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Worker memory: 0.65 GB + 0.125 MB per particle (fix: memmb = 1000 + nint(.14 nlive)).
             - Coordinator (overnight): prepare it as an OPT-IN wip commit (default off, today's behaviour when unset), with the
               memory fix, build and fast gate. Coordinator review, then fast-forward wip. Default-on is the user's call.
+            - ON WIP as `596455884` (CLI key `site_chain=yes`, default no; exclusive with `site_split=yes`). Fast gate 15/15.
+              With the key unset, qtoy2 at box 36 matches stock leaf for leaf; the root split's children are byte-identical.
+              - The review removed a run-measurement comment; the measurement now sits in the commit message.
+              - Untested: with the key on, the chain calls wip's later band ladder (2f41cbc76, caps as separate jobs) instead
+                of the band3 version b11 passed with. Re-run one IgM fix chain tree on wip before turning it on anywhere.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry

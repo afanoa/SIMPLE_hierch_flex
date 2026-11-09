@@ -57,3 +57,8 @@ balanced site states; batch2 does not enforce memory, so size its worker from Ma
 - 2026-11-09 COMMIT CRITERION MET (b11 vs stock twin, same binary): IgM 10 % fix 10 leaves, NMI .158 vs .034 (all five arms
   found); 5 % fix .022 vs .001; nulls one leaf; the gate battery passes (r131 corner kept). Cost: 26x core-h, 16 h wall at the
   10 % fix (serial sparse fits), which breaks the 5-7 h goal. Being prepared as an OPT-IN wip commit with the worker-memory fix.
+- 2026-11-09 04:2x: opt-in commit prepared for the coordinator: local branch `site-chain-optin` 596455884 (amended from 1f64f8f9c: comment moved to the message) on fork/hetero-tree-wip
+  878bb338f (not pushed; upstream unset); off switch = CLI key site_chain (default no); fast gate 15 / 15; switch-unset qtoy2
+  identical to stock. Built from a git bundle into batch2 `site_chain/src12` (b12) and `src12s` (stock b12s).
+- ON WIP 2026-11-09 as 596455884 (site_chain=yes, default no). Fast gate 15/15; unset = stock leaf for leaf (qtoy2 box 36).
+  Untested on wip with the key on: the chain now calls the later band ladder (2f41cbc76), not band3; rerun an IgM fix tree first.
