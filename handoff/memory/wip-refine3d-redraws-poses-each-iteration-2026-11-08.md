@@ -24,3 +24,6 @@ late iteration) is not the source of cross-run label disagreement (see [[node-le
   - REOPENED by the user ("flex band should be data derived ... 2.9 degrees is quite a bit"): the proxy fixed 15 A, and the
     ladder's 15 A pick was made at single poses. Direct test at r131 (8 posterior draws, information-averaged latent vs
     settled pose, ladder band per arm) briefed to rnasep-misfit.
+  - Stage 1 at r131: draws median 2.92 deg from the TEMPERED posterior (beta .3, N_eff 5.3 vs 2.3 at beta 1). Early stage 2:
+    the equal-weight 8-draw latent is far weaker than single pose. TRAP: pose weights must be the beta-1 posterior,
+    not the search temperature's draws. A draw-1 control decides between redrawing at beta 1 and finishing.

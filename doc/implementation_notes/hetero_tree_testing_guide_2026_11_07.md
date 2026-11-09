@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 01:40 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2505,6 +2505,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Stage 1, first readout: the r131 draws move a median 2.92 deg per particle (one grid step, 4.6 A at 90 A), above
               the 1 deg stop and unrelated to closed. The pose-loop code reproduces the single-pose operator exactly, so stage 2
               is running. The single-pose ladder's pick is pending.
+            - STAGE 1 (13 core-h): with finer caps allowed, the single-pose ladder still picks ring 16 (14.6 A) at both seeds.
+              - Ring 16: held-out gain .131 / .161, best block .735, span .763. Ring 19: .06, one block. Rings 22 and 26: no site.
+              - Finer caps lose because the best seed's gain falls (200 -> 156 nats) while the solvent controls' bar rises
+                (15 -> 53). So at r131 the node-lp ceiling is not what holds the band at ~15 A.
+              - The draws come from the TEMPERED posterior (beta .3, N_eff 5.3 candidates vs 2.3 at beta 1). Only 18 % of
+                particles get the same pose in any two draws; the spread is unrelated to closed (AUROC .466).
+            - Stage 2, early: the pose-weighted arm is far weaker (no-site held-out LL -.008 / ptcl vs +.009; seed gains 2-3
+              nats vs ~200). Likely the tempered draws are poor poses, averaged.
+              - A control (single pose at draw 1, ring 16) decides the next step. If the draws are worse poses, redraw at beta 1
+                (refinement's actual posterior) and run rings 16 and 19 only; otherwise finish stage 2 at 16 and 19.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

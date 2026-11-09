@@ -33,3 +33,5 @@ Use a fixed geometric ladder of caps and 2 SE as the only constants. Never propo
 - 2026-11-09 GAP (rnasep-misfit): the production ladder searches only COARSER than the node band (one octave down), so the node
   lp (15 A at RNase P) is a fixed upper limit; r131 can never pick finer than ring 15. Stage 1 of the pose-weighted r131 test
   runs the single-pose ladder at caps 15 -> 8.9 A to see whether the data want a finer band.
+- 2026-11-09 STAGE 1 (rnasep-misfit): with caps down to 9 A allowed, the single-pose ladder at r131 still picks ring 16
+  (14.6 A) at both seeds; finer caps lose (seed gain falls, solvent-control bar rises). The node-lp ceiling isn't binding at r131.
