@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:34 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 22:36 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1932,6 +1932,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
       - Upside: arm a seed 6 split 4-way, and its closed child (58,372 particles, 4,057 closed rows = 6.95 %, x3.59, recall
         .465) matches what production reached only at r131. r1 can concentrate closed far more in one step when seeding
         catches the right directions.
+      - 14-RUN TRACE (`trace/trace_2218.txt`): site discovery's CANDIDATE SET itself varies with the seed.
+        - Arm b hits found {2f1, 1f1, 1f2, 2f2, 5} and chose 2f2; its misses found only {1f1, 1f2, 4} and chose 1f2.
+        - The same mask seeds a hit in one run and a miss in another: 2f2 in every b hit but in the a_s4 / a_s5 misses; 2f1
+          in the a_s1 / a_s3 / r17d misses but the a_s6 hit. What decides is the pole labels.
+        - Seed ARIs: hit-hit .72-.98, hit-miss .16-.26.
+        - Refinement switches 26-53 % of members the same way in every run and moves no run toward another.
+        - Read: the divergence is set by stochastic site discovery and pole labelling. Seeding from the node's latent axes,
+          which are reproducible (AUROCs seed-independent), sidesteps both. That strengthens the joint / XD seeding
+          redesign.
       - Per the user's rule, single-site seeding is not replicable, so the redesign is required. The joint-seeding refined
         test (thread 14) is that candidate.
     - Diagnosis: every split rests on hard, greedy, single-choice decisions taken from one noisy statistic:

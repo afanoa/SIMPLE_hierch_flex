@@ -48,3 +48,7 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   reliable, so single-site seeding must be redesigned (user rule [[replicate-or-redesign-positives-only-2026-11-08]]).
   - Upside: one seed split 4-way with a 58k child at 6.95 % closed (x3.59, recall .47), r131-level in one step.
   - A trace over all 14 runs (55094636) places the divergence.
+- 14-RUN TRACE: site discovery's candidate set varies with the seed (b hits {2f1,1f1,1f2,2f2,5}; b misses {1f1,1f2,4}), and
+  the same mask can seed a hit or a miss. The pole labels decide.
+  - The divergence is stochastic site discovery plus pole labelling, deeper than the duplicate-mask tie alone.
+  - The latent axes are reproducible, so seeding from them (joint / XD) sidesteps it.

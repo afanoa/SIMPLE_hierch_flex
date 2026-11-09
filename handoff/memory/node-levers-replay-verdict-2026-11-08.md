@@ -17,6 +17,13 @@ table at the node's production depth (parent maps regenerated: recB0 halves exac
 - Class prior as specified (log of the previous iteration's fractions on the nat scale, no floor): a 2.6 % seed is charged 3.6 nats
   per particle at the first stage-A iteration and empties (4-29 particles left), the re-test fails, one leaf at all three nodes. A
   1/K floor is no prior for K = 2 and a tempered prior sits between dying and swelling (coordinator): not run.
+- Reliability (6 seeds at r1): arm a 2/6 hits, arm b 4/6 (Fisher p .57); the candidate masks (3-6) and the chosen pole labels vary
+  with the seed; hit-hit seed ARI .72-.98, hit-miss .16-.26, stage B follows the seeds; refinement churn 2-5 % per late iteration.
+  The instability is site discovery + pole seeding, not refinement. Seed 6 arm a: 4-way split with a 58k child at 6.95 % closed.
+- Joint seeding (one mixture over the tied sites' latent coordinates) hits at r1 on both seeds (x1.66-1.69) and gives qtoy2 six
+  children / six conformers, but splits the qtoynull root (not null-safe as designed).
+- Responsibilities: production's own prob_state_evidence.txt at every node, sharper and more closed-informative than hard labels
+  ([[production-tree-has-per-node-state-evidence-files]]); not readable for wip ([[wip-refine3d-redraws-poses-each-iteration-2026-11-08]]).
 - Cost: r131 ~5 core-h per arm, r13 ~8, r1 ~25 (production's node steps 11 / 19 / 72 with their fuller site layer); X1 arms at
   r131 run ~15x slower in the flex fit (paired PCG probe on the noisier copy, ~50 min per probe iteration).
 
@@ -24,6 +31,7 @@ table at the node's production depth (parent maps regenerated: recB0 halves exac
 finding redirects attention to the site layer's near-tie fragility.
 
 **How to apply:** do not port the class prior; do not count the noise model as a closed lever; treat the r1 site choice (and any
-node whose pole margins tie within ~0.2) as a reproducibility risk and test it with seeds, not with new levers. Replay vehicle and
+node whose pole margins tie within ~0.2) as a reproducibility risk and test it with seeds, not with new levers; the fix is a seed-independent site choice or a
+null-safe joint seeding, not a prior inside refinement. Replay vehicle and
 traps: [[never-mirror-into-reused-roots-with-production-symlinks]]; related [[stageb-oracle-references-limit-2026-11-07]],
 [[oversplit-junk-ref-merge-verdict-2026-11-07]].
