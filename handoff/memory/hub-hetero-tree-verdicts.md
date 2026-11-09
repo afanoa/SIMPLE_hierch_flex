@@ -90,7 +90,7 @@ Moved here verbatim from MEMORY.md on 2026-11-06 (the index was over its read li
 - [fission-split-test-verdict-2026-11-07](fission-split-test-verdict-2026-11-07.md) — VERDICT: fission + locality guard passes the gate nulls and keeps qtoy2 but fails the r131 hard gate at tau 0.6 and 1 (the root near-tie never splits honestly)
 - [tree-latent-shared-basis-verdict-2026-11-07](tree-latent-shared-basis-verdict-2026-11-07.md) — VERDICT: shared-basis latent tree passes every null, isolates qtoyflex closed (.558), IgM 10 % .26; IgM 5 % one leaf
 - [site-coupling-factorial-verdict-2026-11-07](site-coupling-factorial-verdict-2026-11-07.md) — VERDICT: sites factorial across, joint within; product beats joint by ~2,000 held-out nats on IgM; profile nuisances
-- [site-chain-verdict-2026-11-08](site-chain-verdict-2026-11-08.md) — VERDICT: site chain recovers IgM's balanced arms (.348/.148) but not r131's 7 % closed (near-half groups, maps = node mean); v8 table built
+- [site-chain-verdict-2026-11-08](site-chain-verdict-2026-11-08.md) — VERDICT: site chain on b11 gains in the IgM trees (10 % fix .158 vs .034, 5 % .022 vs .001; nulls 1 leaf; gates pass: commit criterion met), cost 26x core-h; no r131 closed split
 
 Moved here verbatim from MEMORY.md on 2026-11-08 (index over its limit).
 - [data-fission-merge-test-verdict-2026-11-07](data-fission-merge-test-verdict-2026-11-07.md) — VERDICT: data fission (labels X1, maps X2) removes the merge test's self-selection: null merges 4 -> 1, qtoy2 keeps real states; cost -.08/-.02 accuracy at tau 1/0.6; TRAP: purity splits (5 % conformer admixture) stay kept by any map-level test

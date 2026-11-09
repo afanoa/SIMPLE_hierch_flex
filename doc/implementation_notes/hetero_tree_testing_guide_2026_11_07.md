@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 02:36 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 03:22 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2482,6 +2482,29 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
               - the root consensus core's pair-to-pair reproducibility: root seeds 4 and 5 with the f2 mask (rnasep-misfit,
                 <= 400 core-h; bar Jaccard >= .5 at >= x3);
               - a panel read of 2-run consensus children against truth and nulls (sparse-ppca2, zero compute or <= 100 core-h).
+            - CONSENSUS PANEL, interim (sparse-ppca2): the consensus is a FILTER, not new information. It drops the particles two
+              runs disagree on.
+              - It raises purity only when the two runs already made the same choice, always at a recall cost:
+                - RNase P root, seeds 2 / 3: x3.28 vs x2.91 / x2.71, recall .52 vs .62 / .59;
+                - RNase P r1, both hits: x4.29 vs x2.00 / x3.59, recall .62 vs .70 / .83;
+                - qtoy2 at the same K: no change; qtoyflex at the same K: NMI +.01-.02.
+              - When the two runs chose differently, it loses true states: qtoy2 drops one state, qtoyflex purity falls, and
+                at r1 a hit with a miss can drop the closed group (x.22).
+              - Consensus sizes on real data are far above random pairs (OLE .85-.91 vs .25). Null replicates are running
+                (~93 of 100 core-h).
+            - Root seeds 4-7 are running (rnasep-misfit). Each is classified by the mask it chose; f1 and f2 differ (best-match
+              Jaccard .53-.63 vs .38-.45).
+          - SITE CHAIN COMMIT CRITERION MET (site-chain, `$H/handoff/site-chain/VERDICT.md`): b11 against its stock twin on
+            the same binary.
+            - IgM 10 % fix: 10 leaves, combination NMI .158 vs .034. All five arms are found somewhere (a1 up to .34); leaves
+              plus per-site tables reach .178.
+            - IgM 5 % fix: 3 leaves, .022 vs .001. Both IgM nulls: one leaf.
+            - The b11 gate battery passes, keeping the r131 corner on its own data at depths 1 and 2 on both seeds.
+            - COST: 26x the stock core-h at the 10 % fix (1,381 vs 52; 16.1 h wall), because the sparse fits run in series down
+              the tree. That breaks the 692k 5-7 h goal.
+            - Worker memory: 0.65 GB + 0.125 MB per particle (fix: memmb = 1000 + nint(.14 nlive)).
+            - Coordinator (overnight): prepare it as an OPT-IN wip commit (default off, today's behaviour when unset), with the
+              memory fix, build and fast gate. Coordinator review, then fast-forward wip. Default-on is the user's call.
         - XD on full latents (tree-latent): deterministic. qtoy2 accepts K = 7 (8 true conformers).
           - After its subsample fix the null bars are negative everywhere (-57 to -72), but two null roots still take
             K >= 2 by a wide margin: micnull (gain 6,548 against -57) and the IgM null twin (4,413 against -67). Both carry

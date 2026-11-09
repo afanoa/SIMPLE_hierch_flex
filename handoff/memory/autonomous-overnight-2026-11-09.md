@@ -28,3 +28,7 @@ Related: [[autonomous-build-and-submit-2026-10-27]], [[coordinator-arms-own-wake
     is 110k at x3.28, recall .52, matching production's r13 at the root. Two more root replays wait on stage A's choice rule.
   - Tie-robust rule stage A: NEGATIVE (dropped). Launched: root seeds 4 / 5 for consensus pair-to-pair reproducibility
     (rnasep-misfit, <= 400 core-h) and a panel read of 2-run consensus (sparse-ppca2, <= 100 core-h).
+  - Site chain met its commit criterion (IgM 10 % NMI .158 vs .034; 5 % .022 vs .001; nulls one leaf; gate passes) at 26x
+    the core-h. It is being prepared as an OPT-IN wip commit (default off) for coordinator review; default-on is the user's call.
+  - Consensus panel interim: a filter. It helps only when runs made the same choice and loses states when they didn't.
+  - f2r's turn hit an API error (ENOTFOUND); nudged to resume the X1 honest contrast.

@@ -1,6 +1,6 @@
 ---
 name: site-chain-verdict-2026-11-08
-description: "VERDICT: site chain (sparse sites -> K=2 tied seed -> one masked cross-half round -> GAPw) recovers IgM's balanced arms (.348 / .148, nulls 0) but does NOT split RNase P r131's 7 % closed minority: no block DISCRETE, near-half groups, maps = node mean .89 / .59; v8 per-site table built (commit waits on the band rule)"
+description: "VERDICT: site chain recovers IgM arms in the tree on b11 (band rule in): 10 % fix .158 / 10 leaves vs stock .034, 5 % .022 vs .001, nulls 1 leaf, gates pass -> commit criterion met (2026-11-09); cost 26x core-h, 16 h wall at 10 % fix; does NOT split RNase P r131's closed minority"
 metadata:
   node_type: memory
   type: project
@@ -48,3 +48,12 @@ balanced site states; batch2 does not enforce memory, so size its worker from Ma
     time: the battery shows no harm, not benefit.
   - IgM stock twins: 10 % fix 2 leaves (combo NMI .034), 5 % fix .001, nulls 1 leaf.
   - The 4 IgM chain trees are still running; `sc11_igm_score.sbatch` scores them. Commit only if IgM gains in the tree.
+
+- 2026-11-09, b11 IgM chain trees vs stock twins (same binary): 10 % fix 10 leaves combination .158 (leaves x tables .178) vs 2
+  leaves .034; 5 % fix 3 leaves .022 vs .001; nulls 1 leaf each; every gate row passes, so the coordinator's commit criterion is
+  met. Cost: the 32-thread sparse fits (2-4.5 h per would-be leaf, serial along depth) make the 10 % tree 16.1 h / 1,381 core-h vs
+  2.9 h / 52; site-split worker RSS 0.65 GB + 0.125 MB per particle (proposed request 1000 + 0.14 n MB). Related:
+  [[joint-seeding-igm-verdict-2026-11-08]], [[tree-runtime-goal-5-7h-at-700k]].
+- 2026-11-09 COMMIT CRITERION MET (b11 vs stock twin, same binary): IgM 10 % fix 10 leaves, NMI .158 vs .034 (all five arms
+  found); 5 % fix .022 vs .001; nulls one leaf; the gate battery passes (r131 corner kept). Cost: 26x core-h, 16 h wall at the
+  10 % fix (serial sparse fits), which breaks the 5-7 h goal. Being prepared as an OPT-IN wip commit with the worker-memory fix.
