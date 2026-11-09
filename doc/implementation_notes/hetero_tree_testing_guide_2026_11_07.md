@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:22 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 15:26 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2624,6 +2624,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                     - READ: no label-free F1 call at the 50k root finds closed in all 7 seeds. The deeper within-branch F1
                       splits of the real trees separate closed better (AUROC .64-.77) than any root-level F1 call, so closed
                       is best found deep in a branch and GATHERED afterwards, not called at the root.
+                - PUSH RNase P PURITY (user 2026-11-09: "Push RNase P purity", chosen over a reproducible-tree focus;
+                  extremes-repro, <= 400 core-h):
+                  - 0) The provenance of the 8,720 reference rows first, since lf readouts are circular if lf defined them.
+                  - 1) Confident cores per closed leaf's node.
+                  - 2) Gather across branches: r1 + r2, and with r5 separately.
+                  - 3) Re-refine: a pooled closed reference against the branch-mates' open references; score the closed-
+                    carrying branches' particles 2-state at their poses (settled), take the confident set; 3 seeds.
+                  - 4) Purity, recall and F1 against production's r1312 (.083 / .209), lf's purest leaf (.095) and the lf union
+                    (F1 .137); an honest X1-select / X2-read.
+                  - Bar: purer than .083 at equal or higher recall, or F1 above .137, holding on X2 and across seeds.
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):

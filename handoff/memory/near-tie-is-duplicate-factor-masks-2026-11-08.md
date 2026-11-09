@@ -148,3 +148,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
 - CONDITIONAL F1 POOLED (`handoff/ole-panel/CONDITIONAL_F1.md`): MISSES. The shared discriminant carries closed in 5 / 7 seeds
   (x1.26-1.39, recall ~.8, both branch pieces), as does unconditioned F1; in seeds 5 and 6 closed sits on F2's split. Jaccard .68
   vs .66. Closed is best found deep in a branch (AUROC .64-.77) and gathered afterwards, not called at the root.
+- 2026-11-09 USER CHOSE "Push RNase P purity" over a reproducible-tree focus. Briefed to extremes-repro: confident cores per
+  closed leaf, gathered across branches (r1 + r2; r5 separate), re-refined against open, scored 2-state, honest X2. Bar: beat
+  r1312 .083 / .209 or the lf union F1 .137. First, establish the 8,720 reference rows' provenance (circularity on lf).
