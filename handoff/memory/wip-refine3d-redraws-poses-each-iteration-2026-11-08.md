@@ -20,4 +20,7 @@ write_state_evidence ported (code change) before any responsibility readout of i
 late iteration) is not the source of cross-run label disagreement (see [[node-levers-replay-verdict-2026-11-08]]).
 - POSE-WEIGHTED FLEX LATENT, DROPPED (user idea 2026-11-09; f2r measured drawn vs settled poses at r1): spread p50 2.9 deg
   direction, .2 A shift. At flex's 15 A band the pose effect is a tenth of a 1-sd latent step (ratio >= .5 for 12-16 %, bar
-  20 %), driven by sub-pixel shift. It correlates with z1-z4 and closed within |r| .04. Don't revisit without new evidence.
+  20 %), driven by sub-pixel shift. It correlates with z1-z4 and closed within |r| .04.
+  - REOPENED by the user ("flex band should be data derived ... 2.9 degrees is quite a bit"): the proxy fixed 15 A, and the
+    ladder's 15 A pick was made at single poses. Direct test at r131 (8 posterior draws, information-averaged latent vs
+    settled pose, ladder band per arm) briefed to rnasep-misfit.

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:42 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 00:55 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2461,6 +2461,13 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 12-16 % of particles (bar 20 %). The effect comes from the sub-pixel shift (r .91-.93), not the direction.
               - Leakage: every spread measure correlates with z1-z4 within |r| .04, and with the closed rows within .02.
               - The typical particle's pose spread is a tenth of a latent step at flex's band and carries no state information.
+            - REOPENED (user 2026-11-09: "flex band should be data derived ... 2.9 degrees is quite a bit"). The proxy fixed
+              15 A. That matches the ladder's r131 pick (ring 15), but the pick was itself made at single poses, so pose noise
+              may be what holds the band at ~15 A. 2.9 deg moves density 90 A from the center by ~4.5 A: half a period at 9 A.
+            - Direct test briefed to rnasep-misfit: at r131, K = 8 posterior draws per particle (wip sampling, fresh root of
+              copies). Arms: settled single pose vs pose-weighted latent (information average, w_k = 1/K), each with its own
+              ladder band. Build the proper fit if pose weighting moves the pick finer or raises held-out gain or closed
+              separability beyond the seed spread; otherwise drop it for good.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
