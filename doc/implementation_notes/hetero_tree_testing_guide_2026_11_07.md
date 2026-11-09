@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:26 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1919,6 +1919,30 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
     - VERDICT (r131, r13, r1; ~490 core-h): neither lever concentrates closed at any node. The MAP class prior removes the
       split, and the noise model gives no gain. The root is not run. The open issue is reliability: the r1 closed split is a
       near-tie seeding outcome.
+14. Robustness of the tree's decisions (user, 2026-11-08: "If this is not replicable, the methods must be redesigned ...
+    considering the model itself how can we make it more robust").
+    - Reliability test at r1, briefed: arms a / b at SIMPLE_SEED 3-6, 8 runs, ~225 core-h. HIT = a child at >= 1.5x r1's
+      closed share. So far a 1 / 2, b 2 / 2.
+    - Diagnosis: every split rests on hard, greedy, single-choice decisions taken from one noisy statistic:
+      - the seed site (r1: 9.48 vs 9.47);
+      - one site's poles as the seeds;
+      - K;
+      - accept / reject.
+      Particles never move between branches afterwards. An error at a near-tie near the top removes the closed lineage, and
+      nothing later can repair it.
+    - Redesign options, cheapest first:
+      1. Uncertainty-aware seed choice. Score each site on half-sets or seeds and compare the top site's margin with its own
+         spread. Seed as now only when the top site is clearly ahead; otherwise use option 2. This is stability selection
+         applied to the split choice; it adds no knob beyond the replicate count.
+      2. Joint seeding over tied sites (the user's 7.5 idea). A mixture in the joint coordinate of the tied sites' focused
+         flexes, with K by held-out likelihood and the map-level honest test deciding. It removes the coin flip
+         structurally: the closed direction can't be dropped because it ranked second.
+      3. Lookahead at uncertain nodes. Develop the top two candidate splits one level and keep the one whose children carry
+         the stronger reproducible (honest) structure. Costs x2, at uncertain nodes only.
+      4. Not now: a global re-assignment over all leaves at the end. Today's results (re-assignment dilutes, the MAP prior
+         drains) argue against it until 1-3 are in.
+    - Test: the same r1 seeds as the reliability test. Target: hit at every seed with nulls at one leaf. Then the closed subtree
+      (r1 to leaves) at three seeds, reproducible closed leaves being the publishable claim.
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);

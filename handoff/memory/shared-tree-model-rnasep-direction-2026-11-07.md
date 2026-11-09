@@ -139,3 +139,6 @@ Related: [[site-coupling-factorial-verdict-2026-11-07]], [[sparse-ppca-pursuit-v
   - TRAP: r1's closed split rests on the site layer's pole choice at near-tie margins (9-10). None of six replays found
     production's dominant margin (16 vs 4-5.6). Closed recovery at r1 is a reproducibility weakness of site discovery and
     ranking.
+- 2026-11-08 user: "well test reliability. If this is not replicable, the methods must be redesigned". The r1 reliability test
+  (seeds 3-6, arms a / b, hit = closed child >= 1.5x) is briefed to the f2r session. Robustness redesign options are in guide
+  7.10 thread 14.

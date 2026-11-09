@@ -114,6 +114,7 @@ Topic indexes (project/reference memories, one line each inside; open the hub, t
 - [job-monitor-batch2](job-monitor-batch2.md) — monitor long runs; re-arm
 - [half-maps-always-in-halves-subfolder](half-maps-always-in-halves-subfolder.md) — full maps only; halves/ subfolder
 - [sbatch-export-splits-at-commas](sbatch-export-splits-at-commas.md) — TRAP: VAR cut at comma
+- [replicate-or-redesign-positives-only-2026-11-08](replicate-or-redesign-positives-only-2026-11-08.md) — USER: not replicable = redesign; negatives are not publishable; judge by seed replicates
 - [full-runs-only-for-meaningful-change-2026-11-08](full-runs-only-for-meaningful-change-2026-11-08.md) — no 692k safety checks; full runs only when a lever is expected to change the RNase P result
 - [coordinator-arms-own-wakeup-while-sessions-wait](coordinator-arms-own-wakeup-while-sessions-wait.md) — reports sat unread 2 h: keep a Monitor heartbeat armed while jobs run
 - [relay-intermediate-results-from-background-schedulers](relay-intermediate-results-from-background-schedulers.md) — background loops never no…
