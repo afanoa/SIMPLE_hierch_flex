@@ -39,3 +39,8 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
     - confident cores with responsibilities as the deliverable;
     - a settling pass.
   - The settling pass reaches a fixed point after 2 cold passes (3-4 % of directions moving).
+- r1 cores (6 settled arm-b runs):
+  - Within the hit basin, >= .9 cores are 22.6k at .069-.076 (x3.5-3.9), Jaccard .77-.87; across basins .18.
+  - The intersection over all 6 runs is 12,308 at .0825 (x4.25), recall ~.12. A seed-consensus core is reproducible by
+    construction and purer than production's r131.
+  - Cores remain a purity lever conditional on a replicating split.

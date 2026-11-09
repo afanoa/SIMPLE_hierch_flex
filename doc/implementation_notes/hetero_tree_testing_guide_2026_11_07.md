@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:27 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:28 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2225,6 +2225,16 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             by all four runs. Each seed's r131 split is a different partition, and the cores inherit that.
           - VERDICT: confidence selection adds PURITY, not reproducibility. Cores replicate exactly where the split
             replicates.
+        - r1 cores (six arm-b settled runs; seeds 1, 2, 3, 6 hits, 4, 5 misses):
+          - Within the hit basin the >= .9 cores are 22.5-22.7k at .069-.076 (x3.5-3.9), recall .18-.20, Jaccard .77-.87
+            (the hard states .83-.90). Across basins they agree at only .18-.19.
+          - The intersection of all six runs' >= .9 sets is 12,308 particles at .0825 (x4.25). The hit core lies 98.7 % inside
+            the other hits' closed state and 91 % inside the misses' big state.
+          - A CONSENSUS core over seeds is reproducible by construction and purer than production's r131 (.069), at recall
+            ~.12.
+          - Same verdict as r13 / r131: cores are a purity lever conditional on a replicating split.
+        - XD on full latents (tree-latent): qtoyflex stops at K = 3 (arm / holo / closed). The r1 b-arm replicates stop at
+          K = 3 (seeds 4, 6) and K = 4 (seed 3), so K varies near the boundary.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
