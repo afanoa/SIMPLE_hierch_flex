@@ -11,6 +11,10 @@ refine3D call once with `maxits=1 prob_beta=1e9` from the final maps is a poster
 "POSTERIOR DRAW N_EFF: 1.00 at beta 1e9, 2.53 at beta 1.00" (r1, 252k particles, 2026-11-09). prob_beta is an existing CLI key
 (stage A uses 0.3); its other uses are readouts and neff logging. Test harness: node_levers/nl_settle.sbatch (+ nl_settle_summary.sh).
 
+Tested on the six arm-b r1 replays (2026-11-09): the first cold pass moves 58 % of directions, a second 5.2-5.7 % (fixed point);
+hit / miss unchanged, settled-label ARI +.03 within a basin (.74-.77) and .26 across; matched-state responsibility correlation .95
+within basins either way; the closed child's map gains closed-arm +.016 / open-arm -.03.
+
 **Why:** the wip refinement re-draws 72 % of directions per iteration ([[wip-refine3d-redraws-poses-each-iteration-2026-11-08]]);
 the user wants stored poses and labels deterministic, and no new switch was needed.
 

@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:28 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:30 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2235,6 +2235,17 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
           - Same verdict as r13 / r131: cores are a purity lever conditional on a replicating split.
         - XD on full latents (tree-latent): qtoyflex stops at K = 3 (arm / holo / closed). The r1 b-arm replicates stop at
           K = 3 (seeds 4, 6) and K = 4 (seed 3), so K varies near the boundary.
+        - SETTLING PASS (six arm-b r1 runs; one stage-B call at maxits=1, prob_beta=1e9; ~17 core-h):
+          - Poses settle to r17d's fixed point: a second cold pass moves 5.2-5.7 % of directions (p50 0 deg), against 61-72 %
+            for a drawn iteration.
+          - The hit / miss calls are unchanged. The closed child rises slightly (x1.96 vs x1.90) at the same recall, and its
+            own-data contrast improves by .05 (c -.23 vs -.28). r1's closed-leaning state is still intermediate: its open arm
+            is above its closed arm.
+          - Label ARI within a basin is .74-.77 settled against .71-.73 unsettled; across basins .26 against .25.
+          - Responsibilities correlate at r .95 within basins (.94 unsettled) and .62 across. They were already more
+            reproducible than the hard labels.
+          - Read: cheap, deterministic and slightly sharper, but it does not touch the seeding basins. It's part 4 of the
+            design.
         - EMERGING DESIGN, to be confirmed at r1 and on the panel:
           1. Joint seeding in the latent axes (reproducible seeds).
           2. Accept a split only if it REPLICATES across seeds or half-sets. A single-run z passes non-reproducible splits:
