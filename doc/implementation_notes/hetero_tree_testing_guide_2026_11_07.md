@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:36 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 11:50 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2545,6 +2545,14 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                 - a cheaper variant, three state sets from one flex run's two half fits and merged embedding, ~21 core-h
                   (untested);
                 - for f1 / f2 ties: keep both sites and seed from both (+4 core-h; untested).
+              - SPARSE SITES AS THE ROOT'S SITE LAYER (user 2026-11-09: "is there an alternative to this whole mask
+                gymnastics?" -> "Yes, test it"; sparse-ppca2, <= 100 core-h). The main split still uses the old layer; wip
+                uses sparse PPCA only in the opt-in chain.
+                - Test: the sparse pursuit (noise model, ladder band) on the 7 replays' root flex fits. Readouts: does the
+                  leading site and site set match across seeds; the top site's closed AUROC and pole-split share; the pursuit's
+                  own seed spread (3 pursuit seeds on one fit).
+                - Bar: the leading site matches in >= 6 / 7 seeds (Jaccard >= .5), and its split carries closed at least as
+                  well as the f2 starting groups (x1.3).
               - Held-out gain with an SE doesn't work: the SE is near zero, so every factor passes.
           - BISHOP-TIPPING, WHAT ELSE TO TAKE (user 2026-11-09: "shouldn't we refit the model at each node ... flex -> refine
             prob distribution -> carry down node -> refit"):

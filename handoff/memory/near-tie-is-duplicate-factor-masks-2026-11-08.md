@@ -124,3 +124,6 @@ That is the candidate deterministic fix, and it adds states rather than choosing
   (whole region, x1.68) is best. The differences (<= .05 %) are smaller than the runs' sigma2 differences: the fit is flat across
   the alternative splits, so "best of R by likelihood" fails. Literature route: consensus or evidence accumulation (Fred &
   Jain) over restarts, with null replicates (Monti's stability can be high on nulls).
+- 2026-11-09 user: "is there an alternative to this whole mask gymnastics?" The main split still uses the OLD site layer
+  (regions from stage-A0 states, the factor share knob, site_rank); sparse PPCA is used only by the opt-in chain. Test briefed
+  to sparse-ppca2: sparse sites on the 7 root flex fits (leading site in >= 6 / 7 seeds at Jaccard >= .5, closed >= the f2 seeds).
