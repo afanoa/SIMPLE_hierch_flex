@@ -48,3 +48,8 @@ end through the most extended open conformer), which the tree already achieves o
   landscape. This could be compositional or conformational." So small leaves are WANTED; do not impose the research note's
   "OLE >= 2,000 per state" floor or skip sub-2*minpop nodes in a way that drops them. Judge a split/merge rule by how well
   its state set covers the landscape (conformational and compositional), not by K.
+- 2026-11-08 user, on the robustness redesign: "remember we are trying to produce the most diverse set of conformations possible".
+  - Robustness fixes must ADD states at uncertain decisions (joint seeding over tied sites, keeping both candidates), never trade
+    diversity for a single safe choice.
+  - Judge a fix on two things: the closed-state hit rate across seeds, and the number of distinct, honestly different
+    conformations (span and extremes).

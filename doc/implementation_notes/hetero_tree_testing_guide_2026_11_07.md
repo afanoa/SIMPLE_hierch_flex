@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:30 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 21:36 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -1943,6 +1943,15 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
          drains) argue against it until 1-3 are in.
     - Test: the same r1 seeds as the reliability test. Target: hit at every seed with nulls at one leaf. Then the closed subtree
       (r1 to leaves) at three seeds, reproducible closed leaves being the publishable claim.
+    - User (2026-11-08): "if there are cheap tests for this go ahead. but remember we are trying to produce the most diverse set
+      of conformations possible". A fix must ADD states at a near-tie, not pick one.
+    - Cheap test briefed (f2r session, Python on the replay outputs, < 30 core-h, no Fortran):
+      1. Are r1's tied sites different motions? Their masks, overlap, and pole-map differences across all replays.
+      2. A joint-coordinate mixture over the tied sites at r1's entry poses, K <= 6 by cross-half held-out likelihood.
+         Readouts: closed share and recall per group (1.5x rule), and the number of honestly distinct group maps (arm
+         occupancy, swing).
+      - The question: does the joint mixture hold the closed group at the seed where single-site seeding missed, and give
+        more distinct conformations?
 Waiting for the user:
 - decision 1 (depth_wiener default);
 - decision 3 (state_eval port; not needed by the chain);
