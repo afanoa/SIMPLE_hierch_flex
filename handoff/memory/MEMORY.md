@@ -70,6 +70,7 @@
 - [tree-launch-fast-defaults-2026-10-25](tree-launch-fast-defaults-2026-10-25.md) — tree launch defaults (nodepar superseded by t…
 
 - [wip-refine3d-redraws-poses-each-iteration-2026-11-08](wip-refine3d-redraws-poses-each-iteration-2026-11-08.md) — wip refine3D samples poses (72 % re-drawn per iteration), r17d settles; cross-build evidence pass invalid
+- [sqrt-weight-on-planes-tempers-flex-estep-2026-11-09](sqrt-weight-on-planes-tempers-flex-estep-2026-11-09.md) — TRAP: sqrt(w) on the flex planes tempers the E-step; low-weight particles collapse at the latent origin and the state placement breaks; weights belong in the M-step sums only
 - [soft-carry-no-gain-on-fixtures-2026-11-09](soft-carry-no-gain-on-fixtures-2026-11-09.md) — soft label carrying gains nothing on qtoy2/qtoyflex truth or reproducibility; lost states leave confidently
 - [pose-weighted-flex-dropped-pose-spread-2026-11-09](pose-weighted-flex-dropped-pose-spread-2026-11-09.md) — pose spread at r1 is a tenth of a latent sd at 15 A; 15-16 % of particles above half; no leakage: dropped
 - [path-weight-product-dilutes-closed-ranking-2026-11-09](path-weight-product-dilutes-closed-ranking-2026-11-09.md) — path product of responsibilities helps only below r131, hurts at r13/r131; the closed signal sits at r13

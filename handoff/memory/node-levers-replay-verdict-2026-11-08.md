@@ -41,3 +41,7 @@ traps: [[never-mirror-into-reused-roots-with-production-symlinks]]; related [[st
 - r131 X1 HONEST CONTRAST (2026-11-09, ~110 core-h): splits selected on X1 (arms a / b) miss closed (x1.09 / x0.89; x0.95 / x1.06).
   Rebuilt on X2, the children's closed-arm occupancy is identical (difference .000 / .002) where X1's own maps showed .084 / .011.
   The r131 split's own-data closed contrast is imprint. Caveat: X1's latent carries less closed signal (AUROC .51-.63 vs .61-.70).
+
+Soft loop 2026-11-09 (SOFT_LOOP.md): the weighted-flex soft arm at r13 -> r131 gives x1.37-1.42 (reproducible) vs hard x1.00,
+but through a collapsed state partition caused by the sqrt(w) E-step tempering, not a better latent
+([[sqrt-weight-on-planes-tempers-flex-estep-2026-11-09]]); qtoyflex r12 level; Bishop-Tipping proper (M-step-only weights) untested.

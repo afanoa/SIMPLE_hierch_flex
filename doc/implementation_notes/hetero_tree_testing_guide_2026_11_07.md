@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:31 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 12:43 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2650,6 +2650,24 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
                   hard tree.
               - The soft-loop run (weighted flex refit at the child) is a separate test and still running. qtoyflex r12's hard
                 arm stays one leaf in 3 / 3. The soft fits need hard members floored at the epsilon and are being rerun.
+              - SOFT LOOP VERDICT (f2r, `$H/handoff/node-levers/SOFT_LOOP.md`, ~41 core-h): the bar is met LITERALLY, but the gain
+                is an artefact of the E-step tempering, not of Bishop-Tipping weighting.
+                - r131, 3 seeds per arm, install3:
+                  - hard: x1.00-1.01 (recall .17-.19), the same split at every seed (ARI .73-.75), nothing closed;
+                  - soft: x1.37-1.42 (recall .24-.25; .68-.71 of r131's own closed rows), reproducing at Jaccard .84-.86;
+                  - production's r131 split: x1.20.
+                  - Hard vs soft ARI is .00: independent partitions. The latent's closed AUROC is identical (.713 vs .716).
+                - Mechanism: with weights in the E-step, the posterior mean is (wA + I)^-1 w b, and a particle's A is far below
+                  I at 15 A. So |z| scales with w (median |z| .77 at w < .05 against 24.5 at w >= .9). The ~30k extras sit in
+                  a spike at the origin.
+                - k-center then merges 5 of 8 targets into one state of 48,750; four states fall under the n_eff floor and
+                  948 particles stay unlabelled. r131 is seeded from four states, one of which (closed .118) goes 79 % to the
+                  closed-leaning child.
+                - So the weighted fit's states sit on the high-weight (confident) particles: in effect, seeding from a
+                  confident core.
+                - qtoyflex r1 -> r12: one leaf in all six runs (level). The weighted latent is worse for combo 18 (AUROC .645
+                  vs .691). No honest X2 read: labels selected on full data.
+                - f2r's question: build M-step-only weights (about a day) and rerun (~36 core-h), or stop?
               - BUILT (f2r, branch `nodelevers` at `7d51f644d`, off the writer build; install3; gate pending).
                 - `SIMPLE_FLEX_WEIGHTS=<file>` ("pind weight"; unset = untouched). The weight enters at the single whitening
                   point: sqrt(w) on the planes and w on the transfer / CTF^2 densities. Every E-step precision, M-step sum, PCG

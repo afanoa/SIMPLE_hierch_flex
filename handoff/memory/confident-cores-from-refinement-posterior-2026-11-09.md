@@ -82,3 +82,7 @@ Related: [[near-tie-is-duplicate-factor-masks-2026-11-08]], [[replicate-or-redes
 - SOFT CARRY FIXTURES FINAL: no gain on qtoy2 or qtoyflex, even with qtoyflex's softer responsibilities (deep nodes 21-30 % below
   .7). Completing factors trades purity for recall (combo 18 F1 .49-.52 -> .40-.45). IgM skipped. Responsibilities: rank and
   select, don't carry. The soft-LOOP test (weighted flex refit) is separate and still running.
+- SOFT LOOP (weighted flex refit at r13 -> r131): soft x1.37-1.42, reproducing at Jaccard .84-.86, vs hard x1.00 (production
+  x1.20). But the gain is an E-step tempering artefact: low-weight particles collapse to the origin, k-center states land on
+  confident members, so the seeding is in effect a confident core. qtoyflex r12 level. Pending user decision: M-step-only
+  weights vs stop vs testing confident-member seeding directly.
