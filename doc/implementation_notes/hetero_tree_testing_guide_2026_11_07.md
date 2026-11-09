@@ -541,7 +541,7 @@ Tests, in order:
 
 ### 7.8 Levers (2026-11-07; the user excluded signal subtraction)
 
-Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:55 EST:
+Each writes to `$H/handoff/<name>/` (VERDICT.md, or STATUS.md with job ids and resume commands). State at 23:56 EST:
 - `igm-masks` (levers 1 + 7): data-only arm masks from reconstructions binned along the focused coordinate (the arm's swept
   volume, after cryoDRGN's landscape analysis), and lower bands per site (lp 20/25/30 A); IgM 5 % and 10 %.
   VERDICT (`$H/handoff/igm-masks/VERDICT.md`, tables in `results.md`): lever 1 works at 10 %, where the root's islands find the
@@ -2276,6 +2276,18 @@ REFINED PLAN (2026-11-08 ~00:30; each thread has "if -> then" rules the coordina
             - Unlike October, matching seeds (seeds 2 and 4 at .95) lose agreement in stage A (.82) and the split (.75).
               On OLE, refinement adds divergence after seeding, partly supporting the user's refinement hypothesis there.
             - The root fflex ARI is .32-.49, near October's .39.
+          - OLE JOINT SEEDING at the root: it reproduces WORSE across seeds than single-site seeding.
+            - Joint groups agree at ARI .34-.67, against .49-.95 for the single-site seeds and .65-.77 for the splits; at a
+              fixed K, seed 3 still cuts elsewhere.
+            - Suspected cause: OLE's per-run latent axes. RNase P r1's node latent is identical across seeds, but OLE's
+              fflex is not. A short job is testing per-run axes against single-start fits.
+          - XD-REPRO interim (corrected K start and acceptance rule):
+            - At r1, K = 3 in both arms, with weights identical to 3 decimals across seeds and builds and MAP sizes within
+              0.3-1 %.
+            - The components are close and soft: .07-.41 prior sd apart, mean maximum responsibility .67 / .50.
+            - The nulls still split: qtoynull K = 2, olenull 2, micnull 4, IgM twin 7. The Gaussian-null held-out criterion
+              detects non-Gaussianity, not discreteness, so (d) fails as specified.
+            - Fixtures so far: qtoyflex K = 2, qtoy2 >= 11, IgM fix 5.
           - XD: r1 c_v3 stops at K = 3, and qtoyflex at K = 3 narrowly.
           - XD K reproduces within each arm: noise model off gives K = 3 at every replicate, noise model on K = 4. K is set
             by the flex noise model, not by the seed.
